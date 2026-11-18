@@ -183,6 +183,19 @@ func CaddySite(s Snapshot) string {
 	return b.String()
 }
 
+// CaddyHTTPRedirect is what the dashboard's plain-HTTP site (:80) does
+// first once the host has a domain: send the browser to the dashboard's
+// HTTPS name, so the password never crosses the network in the clear.
+// Empty without a domain: :80 serves the dashboard itself.
+func CaddyHTTPRedirect(s Snapshot) string {
+	h := DashboardHost(s.Domain)
+	if h == "" {
+		return ""
+	}
+	return "# Written by homelab-daemon from the host settings; changes here are lost.\n" +
+		"redir https://" + h + "{uri}\n"
+}
+
 func (a *ImageApplier) caddy(ctx context.Context, s Snapshot) error {
 	p := a.path("/var/lib/homelab/caddy/site.caddy")
 	var changed bool
@@ -193,7 +206,18 @@ func (a *ImageApplier) caddy(ctx context.Context, s Snapshot) error {
 	} else {
 		changed, err = remove(p)
 	}
-	if err != nil || !changed {
+	if err != nil {
+		return err
+	}
+	// dashboard.caddy's :80 site imports this directory.
+	r := a.path("/var/lib/homelab/caddy/http/redirect.caddy")
+	var rchanged bool
+	if redir := CaddyHTTPRedirect(s); redir != "" {
+		rchanged, err = a.write(r, redir, 0o644, "")
+	} else {
+		rchanged, err = remove(r)
+	}
+	if err != nil || !(changed || rchanged) {
 		return err
 	}
 	return a.run(ctx, "systemctl", "try-reload-or-restart", "caddy.service")

@@ -86,6 +86,11 @@ func Unprocessable(code, f string, a ...any) *Problem {
 	return newProblem(http.StatusUnprocessableEntity, code, f, a...)
 }
 
+// TooManyRequests is a 429.
+func TooManyRequests(code, f string, a ...any) *Problem {
+	return newProblem(http.StatusTooManyRequests, code, f, a...)
+}
+
 // Unavailable is a 503.
 func Unavailable(code, f string, a ...any) *Problem {
 	return newProblem(http.StatusServiceUnavailable, code, f, a...)

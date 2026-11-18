@@ -175,6 +175,12 @@ func TestRendered(t *testing.T) {
 	if CaddySite(Snapshot{}) != "" {
 		t.Error("a site without a domain")
 	}
+	if r := CaddyHTTPRedirect(s); !strings.Contains(r, "redir https://homelab.home.example.com{uri}\n") {
+		t.Errorf("plain HTTP redirect = %q", r)
+	}
+	if r := CaddyHTTPRedirect(Snapshot{}); r != "" {
+		t.Errorf("a redirect without a domain: %q", r)
+	}
 	rules := Ruleset(s)
 	for _, want := range []string{"policy drop;", "tcp dport { 22, 80, 443 } accept", "udp dport 51820 accept", `iifname "ve-*" accept`, "ip saddr { 192.168.1.0/24 } tcp dport 8443 accept", "udp dport 41641 accept"} {
 		if !strings.Contains(rules, want) {

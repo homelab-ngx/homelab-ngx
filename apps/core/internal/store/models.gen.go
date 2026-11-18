@@ -4,6 +4,19 @@
 
 package store
 
+type AuthPassword struct {
+	ID    int64
+	Hash  string
+	SetAt int64
+}
+
+type AuthSession struct {
+	TokenHash string
+	CreatedAt int64
+	LastSeen  int64
+	ExpiresAt int64
+}
+
 type Backup struct {
 	ID             int64
 	Name           string

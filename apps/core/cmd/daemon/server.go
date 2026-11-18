@@ -8,6 +8,7 @@ import (
 
 	"homelab-ngx.com/core/internal/ask"
 	"homelab-ngx.com/core/internal/audit"
+	"homelab-ngx.com/core/internal/auth"
 	"homelab-ngx.com/core/internal/backups"
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/config"
@@ -50,6 +51,7 @@ type deps struct {
 	ask           *ask.Service
 	audit         *audit.Service
 	installer     *installer.Service // nil: only the installer stick runs it
+	auth          *auth.Service
 }
 
 func features(d deps) []feature {
@@ -69,14 +71,16 @@ func features(d deps) []feature {
 		ask.NewHTTP(d.ask),
 		audit.NewHTTP(d.audit),
 		installer.NewHTTP(d.installer),
+		auth.NewHTTP(d.auth),
 	}
 }
 
-// handlers builds the operator API (served on the unix socket) and the
-// stack API (served on the stack listener), with every feature registered.
-// The stack API checks each request's token, source address and scope
-// before any operation runs.
-func handlers(d deps) (operator, stack http.Handler) {
+// handlers builds the operator API, once as the CLI's socket serves it and
+// once behind the dashboard's sign-in for the web socket, and the stack API
+// (served on the stack listener), with every feature registered. The stack
+// API checks each request's token, source address and scope before any
+// operation runs.
+func handlers(d deps) (operator, web, stack http.Handler) {
 	version, _ := system.BuildInfo()
 	opMux, stackMux := http.NewServeMux(), http.NewServeMux()
 	apis := httpx.APIs{
@@ -92,7 +96,7 @@ func handlers(d deps) (operator, stack http.Handler) {
 	if d.drafts != nil {
 		opMux.HandleFunc("GET "+httpx.Prefix+"/drafts/{name}/lsp", d.drafts.LSP)
 	}
-	return httpx.Middleware(nil)(opMux), httpx.Middleware(nil)(stackMux)
+	return httpx.Middleware(nil)(opMux), httpx.Middleware(nil)(auth.Gate(d.auth)(opMux)), httpx.Middleware(nil)(stackMux)
 }
 
 // runOpenAPI prints an API's OpenAPI document: the operator API by default,

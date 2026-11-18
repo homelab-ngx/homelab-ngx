@@ -2,7 +2,10 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { fetchAssistant, keys } from "#lib/api/queries.ts";
   import Help from "#lib/components/Help.svelte";
+  import PasswordForm from "#lib/components/PasswordForm.svelte";
   import Pill from "#lib/components/Pill.svelte";
+  import { describe } from "#lib/api/client.ts";
+  import { session } from "#lib/auth.svelte.ts";
   import { assistantLabel } from "#lib/assistant.ts";
   import { fetchAudits, POSTURE, RESULT, securityKeys } from "#lib/security.ts";
 
@@ -10,6 +13,17 @@
   const assistantOn = $derived(!!assistant.data && assistant.data.provider !== "none");
   const audits = createQuery(() => ({ queryKey: securityKeys.audits, queryFn: fetchAudits }));
   const lastAudit = $derived(audits.data?.[0]);
+
+  let changing = $state(false);
+  let signOutError = $state("");
+  async function signOut() {
+    signOutError = "";
+    try {
+      await session.signOut();
+    } catch (e) {
+      signOutError = describe(e);
+    }
+  }
 
   type Theme = "system" | "light" | "dark";
   const read = (): Theme => {
@@ -88,6 +102,20 @@
     <a class="btn mt-3" href="/settings/logs">Open logs</a>
   </section>
 
+  <section class="card" aria-labelledby="signin-h">
+    <h2 id="signin-h" class="font-semibold">
+      <Help label="Sign-in">
+        One password unlocks the dashboard. A forgotten one is removed on the host with homelab auth reset; the next visitor sets
+        a new one.
+      </Help>
+    </h2>
+    <div class="mt-3 flex flex-wrap gap-2">
+      <button type="button" class="btn" onclick={() => (changing = true)}>Change password…</button>
+      <button type="button" class="btn" onclick={signOut}>Sign out</button>
+    </div>
+    {#if signOutError}<p role="alert" class="mt-3 rounded-md bg-bad-soft px-3 py-2 text-bad">{signOutError}</p>{/if}
+  </section>
+
   <section class="card" aria-labelledby="theme-h">
     <h2 id="theme-h" class="font-semibold">Theme</h2>
     <div class="mt-2 flex gap-2" role="radiogroup" aria-labelledby="theme-h">
@@ -99,3 +127,5 @@
     </div>
   </section>
 </div>
+
+{#if changing}<PasswordForm onClose={() => (changing = false)} />{/if}

@@ -6,12 +6,20 @@
   import { NAV, SETTINGS, current } from "#lib/nav.ts";
   import Shell from "#lib/components/Shell.svelte";
   import Installer from "#lib/components/installer/Installer.svelte";
+  import SignIn from "#lib/components/SignIn.svelte";
   import { api, call, type Schema } from "#lib/api/client.ts";
+  import { session } from "#lib/auth.svelte.ts";
 
   let { children }: { children: Snippet } = $props();
 
   const client = new QueryClient({
     defaultOptions: { queries: { staleTime: 5_000, retry: 1, refetchIntervalInBackground: false } },
+  });
+
+  // One password unlocks the dashboard; until it is given, the sign-in
+  // screen is all the page shows.
+  $effect(() => {
+    void session.check();
   });
 
   // The installer stick's daemon serves only the installer: the page is
@@ -34,7 +42,11 @@
 </script>
 
 <QueryClientProvider {client}>
-  {#if installer}
+  {#if session.gate === "setup" || session.gate === "login"}
+    <SignIn setup={session.gate === "setup"} />
+  {:else if session.gate === "checking"}
+    <!-- Not known yet. -->
+  {:else if installer}
     <Installer initial={installer} />
   {:else if ready}
     <Shell active={current(page.url.pathname)} nav={NAV} settings={SETTINGS} wide={page.url.pathname.startsWith("/stacks/drafts/")}>

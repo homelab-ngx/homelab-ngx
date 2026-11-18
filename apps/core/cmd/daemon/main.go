@@ -22,6 +22,7 @@ import (
 	"homelab-ngx.com/core/internal/agefile"
 	"homelab-ngx.com/core/internal/ask"
 	"homelab-ngx.com/core/internal/audit"
+	"homelab-ngx.com/core/internal/auth"
 	"homelab-ngx.com/core/internal/backups"
 	"homelab-ngx.com/core/internal/cloudflare"
 	"homelab-ngx.com/core/internal/cmdrunner"
@@ -226,15 +227,20 @@ func run(configPath string) error {
 		Runner: r, Stacks: stacksSvc, Secrets: sec, Backups: bk, Updates: sysMod, Problems: notify, Assistant: assistant,
 	}, notify, logging.Logger("llm"))
 
-	handler, stackHandler := handlers(deps{
+	handler, webHandler, stackHandler := handlers(deps{
 		services: svcs, backups: bk, storage: stor, stacks: stacksSvc, secrets: sec,
 		sysupdates: sysMod, notifications: notify, channels: channels, hostcfg: hostSvc, config: cfg, runner: r, metrics: met,
 		drafts: draftsSvc, assistant: assistant, ask: askSvc, audit: auditSvc,
+		auth: auth.New(st, logging.Logger("auth")),
 	})
 
 	// ── Run ─────────────────────────────────────────────────────────────
 	g, gctx := errgroup.WithContext(ctx)
-	g.Go(func() error { return httpx.Serve(gctx, nix.Paths.Socket, handler, log) }) // first: the API is up while the pools mount
+	g.Go(func() error { return httpx.Serve(gctx, nix.Paths.Socket, "", handler, log) }) // first: the API is up while the pools mount
+	// Caddy's way in: the same API behind the dashboard's sign-in.
+	g.Go(func() error {
+		return httpx.Serve(gctx, httpx.WebSocketPath(nix.Paths.Socket), httpx.WebGroup, webHandler, log)
+	})
 	// The image host's files are written again at every start: the firewall
 	// table and the transient host name are gone after a reboot.
 	// On an installed host's first start the installer's host name becomes

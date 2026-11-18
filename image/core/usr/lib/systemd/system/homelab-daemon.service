@@ -11,7 +11,9 @@ EnvironmentFile=-/var/lib/homelab/daemon.env
 Restart=on-failure
 RestartSec=5s
 RuntimeDirectory=homelab-daemon
-RuntimeDirectoryMode=0750
+# Traversable, not listable: daemon.sock is the CLI's (group homelab-daemon),
+# web.sock is Caddy's (group caddy), and each socket's mode guards it.
+RuntimeDirectoryMode=0751
 RuntimeDirectoryPreserve=yes
 UMask=0027
 StateDirectory=homelab-daemon

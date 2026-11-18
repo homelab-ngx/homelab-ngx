@@ -17,7 +17,7 @@ tags: [cli, json, secrets, automation, problem-json, git]
 
 ## Context
 
-`homelab` talks to the daemon over `/run/homelab-daemon/daemon.sock` and is never exposed over TCP. `homelab COMMAND --help` documents each command. This doc covers the behavior a script depends on that `--help` does not explain.
+`homelab` talks to the daemon over `/run/homelab-daemon/daemon.sock` and is never exposed over TCP. That socket needs no sign-in; the dashboard's API goes through `web.sock`, which does (`architecture-patterns/dashboard-sign-in.md`). `homelab COMMAND --help` documents each command. This doc covers the behavior a script depends on that `--help` does not explain.
 
 ## Guidance
 

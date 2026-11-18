@@ -46,12 +46,24 @@ export class ProblemError extends Error {
 
 type Result<T> = { data?: T; error?: unknown; response: Response };
 
+/** Why the daemon wants the browser to sign in. */
+export type SignInNeeded = "setup_required" | "login_required";
+
+let signedOut: ((code: SignInNeeded) => void) | null = null;
+
+/** Called whenever an answer says the session is gone or no password is set yet. */
+export function onSignedOut(fn: (code: SignInNeeded) => void) {
+  signedOut = fn;
+}
+
 /** The answer's body, or a ProblemError. */
 export async function call<T>(request: Promise<Result<T>>): Promise<T> {
   const { data, error, response } = await request;
   if (error !== undefined || !response.ok) {
     const p = (error ?? {}) as { code?: string; detail?: string; title?: string };
-    throw new ProblemError(response.status, p.code ?? "", p.detail ?? p.title ?? response.statusText);
+    const code = p.code ?? "";
+    if (response.status === 401 && (code === "setup_required" || code === "login_required")) signedOut?.(code);
+    throw new ProblemError(response.status, code, p.detail ?? p.title ?? response.statusText);
   }
   return data as T;
 }

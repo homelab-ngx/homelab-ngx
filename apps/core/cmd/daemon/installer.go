@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"syscall"
 
+	"golang.org/x/sync/errgroup"
+
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/httpx"
 	"homelab-ngx.com/core/internal/installer"
@@ -26,5 +28,11 @@ func runInstaller(ctx context.Context, socket string, log *slog.Logger) error {
 	apis := httpx.APIs{Operator: httpx.NewAPI(mux, "homelab-daemon", version)}
 	system.RegisterVersion(apis) // the image's boot check waits for it
 	installer.NewHTTP(installer.New(cmdrunner.OS{}, installer.UDisks{}, logging.Logger("installer"))).Register(apis)
-	return httpx.Serve(ctx, socket, httpx.Middleware(nil)(mux), log)
+	// The stick has no password: the installer's pages reach the same API
+	// through Caddy on the web socket, ungated.
+	h := httpx.Middleware(nil)(mux)
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error { return httpx.Serve(gctx, socket, "", h, log) })
+	g.Go(func() error { return httpx.Serve(gctx, httpx.WebSocketPath(socket), httpx.WebGroup, h, log) })
+	return g.Wait()
 }

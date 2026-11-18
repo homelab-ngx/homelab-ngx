@@ -48,9 +48,11 @@ on its own. A dashboard and a CLI manage both.
    With a screen and keyboard on the host, the stick also gives you a root
    shell there, without a password, to look around before installing. The
    installed host asks for a login.
-4. Remove the stick and reboot. The host answers at `<hostname>.local`. Set
-   up the rest in the dashboard: the domain, a storage pool, notifications,
-   remote access and stacks.
+4. Remove the stick and reboot. The host answers at `<hostname>.local`. The
+   first visit to the dashboard sets its password, so make it soon after the
+   install. Then set up the rest in the dashboard: the domain, a storage pool,
+   notifications, remote access and stacks. A forgotten password is removed
+   on the host with `homelab auth reset`.
 
 ## Build
 

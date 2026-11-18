@@ -8,20 +8,32 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/user"
+	"path/filepath"
+	"strconv"
 	"time"
 )
 
 // shutdownGrace is how long in-flight requests get to drain on shutdown.
 const shutdownGrace = 10 * time.Second
 
+// WebSocketPath is the socket Caddy proxies the dashboard's API to: next to
+// the CLI's socket, owned by Caddy's group. Only the web socket asks for a
+// session (auth.Gate); the CLI's socket is root's and its group's.
+func WebSocketPath(socket string) string { return filepath.Join(filepath.Dir(socket), "web.sock") }
+
+// WebGroup is the group that may open the web socket.
+const WebGroup = "caddy"
+
 // Serve listens on the unix socket sockPath (mode 0660, any stale socket
 // removed) and serves h until ctx is cancelled, then drains in-flight
-// requests for up to 10 s. It returns nil on a clean shutdown.
+// requests for up to 10 s. It returns nil on a clean shutdown. A group other
+// than "" owns the socket instead of the process's group.
 //
 // WriteTimeout is deliberately 0: a stack update or a subvolume usage scan
 // can take minutes. ReadHeaderTimeout and IdleTimeout still bound slow or
 // idle clients.
-func Serve(ctx context.Context, sockPath string, h http.Handler, log *slog.Logger) error {
+func Serve(ctx context.Context, sockPath, group string, h http.Handler, log *slog.Logger) error {
 	if err := os.Remove(sockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove stale socket: %w", err)
 	}
@@ -29,11 +41,28 @@ func Serve(ctx context.Context, sockPath string, h http.Handler, log *slog.Logge
 	if err != nil {
 		return err
 	}
-	// Let other members of the socket's group (caddy) connect.
+	// Let other members of the socket's group connect.
 	if err := os.Chmod(sockPath, 0o660); err != nil {
 		log.Warn("chmod socket failed", "socket", sockPath, "error", err)
 	}
+	if group != "" {
+		if err := chgrp(sockPath, group); err != nil {
+			log.Warn("socket group not set", "socket", sockPath, "group", group, "error", err)
+		}
+	}
 	return ServeListener(ctx, ln, h, log)
+}
+
+func chgrp(path, group string) error {
+	g, err := user.LookupGroup(group)
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(g.Gid)
+	if err != nil {
+		return err
+	}
+	return os.Chown(path, -1, gid)
 }
 
 // ServeListener serves h on ln until ctx is cancelled, with the same timeouts

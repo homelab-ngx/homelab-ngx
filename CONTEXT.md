@@ -225,8 +225,12 @@ The OpenAPI document the daemon emits from its handlers (`api/openapi.json`), fr
 _Avoid_: schema, API definition, spec (there is no hand-written spec)
 
 **Scope**:
-Who may call an API operation, set when it is registered: `operator` (the unix socket only), `read` or `control` (also on the stack listener).
+Who may call an API operation, set when it is registered: `operator` (the unix sockets only), `read` or `control` (also on the stack listener).
 _Avoid_: permission, role
+
+**Sign-in**:
+The dashboard's one password and the browser session it starts. It guards the web socket Caddy uses; the CLI's socket has none.
+_Avoid_: login, user, account (there is one password, no users)
 
 **Outside view**:
 Observation of the host from a vantage independent of the daemon.

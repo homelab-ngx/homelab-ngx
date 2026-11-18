@@ -218,9 +218,39 @@ booted() {
   vssh 'findmnt -no SOURCE / | grep -q /dev/mapper/root' || die "/ is not on the verity device"
 }
 
+# signin: through Caddy the dashboard's API wants a session; the first visitor
+# sets the password, a second cannot, and the CLI can remove it.
+signin() {
+  local u="https://homelab.$domain" r="--resolve homelab.$domain:443:127.0.0.1"
+  local post="-H 'Origin: $u' -H 'Content-Type: application/json' -d '{\"password\":\"image-check-pw\"}'"
+  [ "$(vssh "curl -sk $r $u/api/stacks" | jq -r .code)" = setup_required ] || die "the API answers before a password is set"
+  vssh "curl -sk $r -c /tmp/jar $post $u/api/auth/setup" | jq -e .signed_in >/dev/null || die "the first password was refused"
+  vssh "curl -skf $r -b /tmp/jar $u/api/stacks" >/dev/null || die "signed in, the API still refuses"
+  [ "$(vssh "curl -sk $r $u/api/stacks" | jq -r .code)" = login_required ] || die "the API answers without a session"
+  [ "$(vssh "curl -sk $r $post $u/api/auth/setup" | jq -r .code)" = password_set ] || die "a second visitor could set the password"
+  vssh 'homelab auth status' | grep -q 'has a password' || die "the CLI does not see the password"
+  vssh 'homelab auth reset' >/dev/null || die "the CLI could not remove the password"
+  [ "$(vssh "curl -sk $r -b /tmp/jar $u/api/stacks" | jq -r .code)" = setup_required ] || die "a session outlived the reset"
+}
+
+# stackrefused NAME: from inside the stack's network the dashboard is refused
+# and the stack's own route is not. (A probe from the host's side of the veth
+# would leave through lo and be masqueraded to 127.0.0.1.)
+stackrefused() {
+  local leader host code
+  leader=$(vssh "machinectl show $1 -p Leader --value")
+  host=$(vssh "ip -4 -o addr show dev ve-$1" | awk '{print $4}' | cut -d/ -f1 | grep '^10\.99\.' | head -1)
+  [ -n "$leader" ] && [ -n "$host" ] || die "no leader or host address for $1"
+  probe() { vssh "nsenter -t $leader -n curl -sk -o /dev/null -w '%{http_code}' --max-time 10 --resolve $2.$domain:443:$host https://$2.$domain$3"; }
+  code=$(probe "$1" homelab /api/auth)
+  [ "$code" = 403 ] || die "the dashboard answered $code inside $1, not 403"
+  code=$(probe "$1" "$1" /)
+  [ "$code" = 200 ] || die "$1's own route answered $code inside $1, not 200"
+}
+
 # hostcheck: everything the host settings asked for is in place.
 hostcheck() {
-  https homelab /api/version >/dev/null || die "the dashboard is not served at homelab.$domain"
+  https homelab /api/auth >/dev/null || die "the dashboard is not served at homelab.$domain"
   https site / | grep -q image-check || die "the stack's route is not served at site.$domain"
   vssh 'wg show wg-homelab peers' | grep -q . || die "the VPN has no device"
   vssh 'ip -4 -o addr show wg-homelab' | grep -q 10.10.0.1/24 || die "the VPN interface has no address"
@@ -309,9 +339,10 @@ vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
 curl -sf "http://127.0.0.1:$httpport/" | grep -q '<html' || die "the dashboard does not answer over HTTP"
 [ "$(api http://x/api/host-settings | jq -r .managed)" = image ] || die "the daemon does not see an image host"
 put host-settings/domain "{\"domain\":\"$domain\"}" || die "domain refused"
-for _ in $(seq 1 15); do https homelab /api/version >/dev/null 2>&1 && break; sleep 2; done
-https homelab /api/version >/dev/null || die "the dashboard is not served at homelab.$domain"
-ok "daemon $(api http://x/api/version | jq -r .version), dashboard over HTTP and at https://homelab.$domain"
+for _ in $(seq 1 15); do https homelab /api/auth >/dev/null 2>&1 && break; sleep 2; done
+https homelab /api/auth >/dev/null || die "the dashboard is not served at homelab.$domain"
+signin
+ok "daemon $(api http://x/api/version | jq -r .version), dashboard over HTTP and at https://homelab.$domain behind its sign-in"
 
 step "5. a bcachefs pool through the daemon"
 vssh 'bcachefs format -q --replicas=2 /dev/vdb /dev/vdc >/dev/null'
@@ -338,7 +369,8 @@ for _ in $(seq 1 120); do
 done
 [ "$(jq -r .running <<<"$s")" = true ] || die "the stack did not start in 10 minutes"
 https site / | grep -q image-check || die "the stack's route is not served at site.$domain"
-ok "stack site built, serving the page from the pool at https://site.$domain"
+stackrefused site
+ok "stack site built, serving the page from the pool at https://site.$domain; the dashboard refuses it"
 
 step "7. host settings: VPN, tunnel, firewall, name and time zone"
 peer=$(vssh 'wg genkey | wg pubkey')

@@ -42,7 +42,7 @@ func TestServeSocketModeStaleRemovalAndGracefulShutdown(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	served := make(chan error, 1)
-	go func() { served <- Serve(ctx, sock, mux, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
+	go func() { served <- Serve(ctx, sock, "", mux, slog.New(slog.NewTextHandler(io.Discard, nil))) }()
 
 	c := unixClient(sock)
 	var resp *http.Response
@@ -100,7 +100,7 @@ func TestServeSocketModeStaleRemovalAndGracefulShutdown(t *testing.T) {
 }
 
 func TestServeListenError(t *testing.T) {
-	err := Serve(context.Background(), filepath.Join(t.TempDir(), "no", "such", "dir", "s.sock"), http.NotFoundHandler(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	err := Serve(context.Background(), filepath.Join(t.TempDir(), "no", "such", "dir", "s.sock"), "", http.NotFoundHandler(), slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err == nil {
 		t.Fatal("expected a listen error")
 	}

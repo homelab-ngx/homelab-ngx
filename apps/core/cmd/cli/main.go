@@ -36,6 +36,7 @@ func main() {
 			servicesCmd(),
 			backupCmd(),
 			secretCmd(),
+			authCmd(),
 			configCmd(),
 			daemonCmd(),
 			doctorCmd(),
