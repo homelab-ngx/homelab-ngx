@@ -197,6 +197,11 @@ on 2026-11-18:
   `\e[H\e[2J`. On the plain console a 512-glyph font (Terminus `ter-v`)
   takes the bright-colour bit and garbles coloured text: `ter-i` has the box
   drawing in 256.
+- Both console units run agetty through `usr/lib/homelab/console-login`,
+  which adds `--autologin root` while the installer marker exists. The
+  installed disk's `/var` (`repart.sysinstall.d/30-var.conf`) does not copy
+  the marker, so only the stick logs root in. Serial consoles get no getty
+  (`systemd.getty_auto=0`), so this stays at the screen and keyboard.
 - The prompt's icons are literal UTF-8 in `usr/share/homelab/shell.bash`:
   bash expands `$'\U...'` only in a UTF-8 locale, and `/etc/profile.d`
   sets the locale after `homelab.sh`.

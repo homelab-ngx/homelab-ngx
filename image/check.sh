@@ -159,6 +159,11 @@ off() {
   rm -f "$vm/qemu.pid"
 }
 api() { vssh "curl -s --fail-with-body --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json' $*"; }
+# console_users: who is logged in on the console (a login session, not SSH).
+console_users() {
+  vssh 'for s in $(loginctl list-sessions --no-legend | awk "{print \$1}"); do
+    [ "$(loginctl show-session "$s" -p Service --value)" = login ] && loginctl show-session "$s" -p Name --value; done; true'
+}
 # put PATH JSON: PUT a body to the daemon's API, the body over stdin.
 put() { vssh "cat > /tmp/body.json" <<<"$2" && api -X PUT "http://x/api/$1" -d @/tmp/body.json >/dev/null; }
 # stage_image V / stage_core V: put version V's files in the host's update
@@ -253,7 +258,9 @@ st=$(api http://x/api/installer) || die "the installer does not answer"
 jq -e '.active and (.disks[] | select(.name == "vda") | .in_use) and (.disks[] | select(.name == "vdb") | .erase.ok)
   and (.disks[] | select(.name == "vdc") | .beside.ok)' <<<"$st" >/dev/null || die "unexpected disks: $(jq -c '[.disks[] | {name, in_use, erase, beside}]' <<<"$st")"
 curl -sf "http://127.0.0.1:$httpport/" | grep -q '<html' || die "the dashboard does not answer over HTTP"
-ok "$((size / 1000000)) MB; verity root, boot-complete, no failed units; the medium in use, a blank disk and free space beside Windows offered"
+for _ in $(seq 1 15); do console_users | grep -qx root && break; sleep 2; done
+console_users | grep -qx root || die "the installer's console does not log root in"
+ok "$((size / 1000000)) MB; verity root, boot-complete, no failed units; the medium in use, a blank disk and free space beside Windows offered; root logged in on the console"
 
 step "2. install into the free space next to the other system"
 # The large free region after the NTFS partition, not the 2 GB gap before it.
@@ -279,6 +286,7 @@ vssh 'systemd-sysext status --no-legend' | grep -q homelab-core || die "the core
 for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
 api http://x/api/version >/dev/null || die "the daemon does not answer"
 [ "$(api http://x/api/installer | jq -r .active)" = false ] || die "the installed host runs the installer"
+console_users | grep -q . && die "the installed host logs $(console_users | tr '\n' ' ')in on the console" || true
 [ "$(vssh cat /proc/sys/kernel/hostname)" = installed ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname), not the installer's"
 [ "$(api http://x/api/host-settings | jq -r .host.hostname)" = installed ] || die "the installer's host name is not in the settings"
 vssh 'readlink /etc/localtime' | grep -q Europe/Stockholm || die "the installer's time zone is not set"

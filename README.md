@@ -45,6 +45,9 @@ on its own. A dashboard and a CLI manage both.
 3. Open the address the console prints, from another device on the same
    network. Pick a blank disk or a free region, set the host name, time zone,
    SSH keys and network, and install.
+   With a screen and keyboard on the host, the stick also gives you a root
+   shell there, without a password, to look around before installing. The
+   installed host asks for a login.
 4. Remove the stick and reboot. The host answers at `<hostname>.local`. Set
    up the rest in the dashboard: the domain, a storage pool, notifications,
    remote access and stacks.
