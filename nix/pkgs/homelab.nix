@@ -54,6 +54,8 @@ let
     version = goArgs.version;
     src = final.lib.cleanSource ../../apps/backup-runner;
     vendorHash = null;
+    # Go names the binary after the module path's last element (backup-runner).
+    postInstall = "mv $out/bin/backup-runner $out/bin/homelab-backup-runner";
   };
 
   backupRunner = final.buildGoModule (
