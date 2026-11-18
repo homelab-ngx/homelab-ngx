@@ -142,8 +142,11 @@ ON_HOST ?=
 # The image targets refuse to run where homelab-daemon is running: a build
 # there takes the memory the host's services need (2026-11-18, an installer
 # build on the host ran it out of memory). Run them with scripts/builder, or
-# set ON_HOST=1. The daemon's own update builds call image/build.sh directly.
-core_host_guard = @if [ -z "$(ON_HOST)" ] && systemctl is-active --quiet homelab-daemon.service 2>/dev/null; then echo "make $@: this machine runs homelab core; run scripts/builder $@, or set ON_HOST=1 to build here" >&2; exit 1; fi
+# set ON_HOST=1. A host kept for building marks itself with
+# $(build_machine_marker) and is let through. The daemon's own update builds
+# call image/build.sh directly.
+build_machine_marker = /var/lib/homelab/build-machine
+core_host_guard = @if [ -z "$(ON_HOST)" ] && [ ! -e $(build_machine_marker) ] && systemctl is-active --quiet homelab-daemon.service 2>/dev/null; then echo "make $@: this machine runs homelab core; run scripts/builder $@, mark a build machine with $(build_machine_marker), or set ON_HOST=1 to build here" >&2; exit 1; fi
 
 image:
 	$(core_host_guard)

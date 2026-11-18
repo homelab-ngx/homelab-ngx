@@ -6,7 +6,9 @@
 #   scripts/builder image-check BUILD=1 KEEP=1
 #   scripts/builder daemon-test PKG=./internal/x
 # The build machine needs Nix with flakes, KVM for the VM checks, and for
-# `make image` passwordless sudo for the commands image/build.sh runs as root.
+# `make image` passwordless sudo for the commands image/build.sh runs as root
+# (or a login as root). An image host used as one is marked with
+# /var/lib/homelab/build-machine, or the image targets refuse to run there.
 # Its output (image/out) stays there.
 #
 # Set in the environment or in ~/.config/homelab/builder.env:

@@ -44,8 +44,9 @@ x86_64 Linux and on Apple silicon Macs; the image builds only on Linux.
   log under `~/.local/state/homelab/runs/`. It prints a heartbeat and a footer
   with the exit code.
 - `make image` and `make image-check` are heavy. They refuse to run on a
-  machine that runs homelab-daemon. `scripts/builder <target>` runs them on
-  another machine over SSH, with its settings in
+  machine that runs homelab-daemon, unless `/var/lib/homelab/build-machine`
+  exists there: a host kept for building is marked that way. `scripts/builder
+  <target>` runs them on another machine over SSH, with its settings in
   `~/.config/homelab/builder.env`.
 
 ## Changing the code
