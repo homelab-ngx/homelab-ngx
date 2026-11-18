@@ -1017,6 +1017,42 @@ func TestMonitorStartsAWantedStackThatDied(t *testing.T) {
 	}
 }
 
+// A pass works through the stacks one at a time, so a stop that finishes
+// while it checks an earlier stack must hold when it reaches this one.
+func TestMonitorKeepsAStopMadeDuringItsPass(t *testing.T) {
+	t.Parallel()
+	svc, _, h := newRuntime(t)
+	ctx, fails := context.Background(), map[string]int{}
+	// alpha comes before immich in the pass and shares the fake container.
+	if _, err := svc.Add(ctx, src, "alpha"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(ctx, "alpha", "aaaaaaa1"); err != nil {
+		t.Fatal(err)
+	}
+	// The monitor's check of alpha is when the operator stops immich.
+	var armed atomic.Bool
+	var once sync.Once
+	h.On("systemctl", "--machine=alpha", "is-active").Do(func(cmdrunner.Cmd) (cmdrunner.Result, error) {
+		if armed.Load() {
+			once.Do(func() { finished(t, svc, svc.Stop) })
+		}
+		return ok("active\n")
+	})
+	finished(t, svc, svc.Start)
+	finishedOn(t, svc, "alpha", svc.Start)
+
+	armed.Store(true)
+	svc.monitorOnce(ctx, fails)
+
+	if n := len(h.CallsMatching("systemd-run", "--unit=homelab-stack-immich")); n != 1 {
+		t.Errorf("immich booted %d times, want once: the monitor started a stack the operator stopped", n)
+	}
+	if s, _ := svc.Get(ctx, "immich"); s.WantRunning || s.Operation == nil || s.Operation.Kind != "stop" {
+		t.Errorf("want running=%v operation=%+v", s.WantRunning, s.Operation)
+	}
+}
+
 func TestStartEndsAContainerThatOutlivedItsUnit(t *testing.T) {
 	t.Parallel()
 	svc, _, h := newRuntime(t)

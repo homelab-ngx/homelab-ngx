@@ -897,12 +897,7 @@ func (s *Service) monitorOnce(ctx context.Context, fails map[string]int) {
 		if err != nil {
 			continue // an operation is running; it reports its own outcome
 		}
-		if !s.isRunning(ctx, name) {
-			s.log.Warn("stack is not running; starting it", "stack", name)
-			err = s.start(ctx, o, name)
-			s.finish(name, o, err)
-		} else {
-			err = s.probeStack(ctx, r)
+		giveBack := func() {
 			s.mu.Lock()
 			if last != nil {
 				s.ops[name] = last
@@ -911,6 +906,22 @@ func (s *Service) monitorOnce(ctx context.Context, fails map[string]int) {
 			}
 			s.mu.Unlock()
 			close(o.done)
+		}
+		// rows is as old as the pass, and a start earlier in it can take
+		// minutes. A stop or removal that finished since then holds for
+		// as long as the stack's slot is held, so the row is read again.
+		if r, err = s.row(ctx, name); err != nil || r.WantRunning == 0 {
+			giveBack()
+			delete(fails, name)
+			continue
+		}
+		if !s.isRunning(ctx, name) {
+			s.log.Warn("stack is not running; starting it", "stack", name)
+			err = s.start(ctx, o, name)
+			s.finish(name, o, err)
+		} else {
+			err = s.probeStack(ctx, r)
+			giveBack()
 		}
 		if ctx.Err() != nil || s.notifier == nil {
 			continue
