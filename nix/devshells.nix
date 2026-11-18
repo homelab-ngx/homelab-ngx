@@ -21,7 +21,7 @@ in
 
   # The image host (#95): QEMU and OVMF boot the image for `make
   # image-check`. mkosi itself runs in an Arch build root (image/build.sh).
-  # Its own shell: the default one stays small.
+  # Its own shell: the default one stays small. Linux only.
   image = pkgs.mkShell {
     name = "homelab-image";
     packages = with pkgs; [

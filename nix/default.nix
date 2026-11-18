@@ -2,10 +2,19 @@
 { nixpkgs, ... }@inputs:
 let
   system = "x86_64-linux";
-  pkgs = import nixpkgs {
-    inherit system;
-    config.allowUnfree = true;
-  };
+  pkgsFor =
+    system:
+    import nixpkgs {
+      inherit system;
+      config.allowUnfree = true;
+    };
+  pkgs = pkgsFor system;
+  # The dev shells and the formatter also exist on a Mac, where code, tests
+  # and generation run. The packages, checks and the image are Linux only.
+  devSystems = [
+    system
+    "aarch64-darwin"
+  ];
   # Packages built from this repo (no overlay — consumers name them).
   homelabPkgs = import ./pkgs {
     inherit pkgs;
@@ -31,7 +40,13 @@ in
       ;
   };
 
-  devShells.${system} = import ./devshells.nix { inherit pkgs; };
+  devShells = nixpkgs.lib.genAttrs devSystems (
+    s:
+    let
+      shells = import ./devshells.nix { pkgs = pkgsFor s; };
+    in
+    if s == system then shells else removeAttrs shells [ "image" ]
+  );
 
   checks.${system} = {
     daemon = homelabPkgs.homelab-daemon-binary;
@@ -46,5 +61,5 @@ in
       ;
   };
 
-  formatter.${system} = pkgs.nixfmt-tree;
+  formatter = nixpkgs.lib.genAttrs devSystems (s: (pkgsFor s).nixfmt-tree);
 }

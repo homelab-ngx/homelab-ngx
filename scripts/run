@@ -51,11 +51,12 @@ ln -sfn "$log" "$dir/latest"
   echo "# cmd:   ${cmd[*]}"
   echo "# cwd:   $PWD"
   echo "# rev:   $(git rev-parse --short HEAD 2>/dev/null || echo -)"
-  echo "# start: $(date -Is)"
+  echo "# start: $(date -Iseconds)"
 } >"$log"
 head=$(wc -l <"$log")
 body() { tail -n +"$((head + 1))" "$log"; }
-plain() { sed 's/\x1b\[[0-9;?]*[A-Za-z]//g'; }
+esc=$(printf '\033')
+plain() { sed "s/${esc}\[[0-9;?]*[A-Za-z]//g"; }
 dur() { local s=$1; if [ "$s" -ge 60 ]; then echo "$((s / 60))m$((s % 60))s"; else echo "${s}s"; fi; }
 
 echo "log: $log"
@@ -95,7 +96,12 @@ if [ -t 1 ]; then
   shown=1
 else
   # Its own process group, so a signal to run stops the whole command.
-  setsid "${cmd[@]}" <&0 >>"$log" 2>&1 &
+  # macOS has no setsid(1); perl's setpgrp does the same there.
+  if command -v setsid >/dev/null; then
+    setsid "${cmd[@]}" <&0 >>"$log" 2>&1 &
+  else
+    perl -e 'setpgrp(0, 0); exec { $ARGV[0] } @ARGV or die "$ARGV[0]: $!\n"' "${cmd[@]}" <&0 >>"$log" 2>&1 &
+  fi
   pid=$!
   trap 'kill -TERM -- -$pid 2>/dev/null' INT TERM HUP
   if [ "$psecs" -gt 0 ]; then

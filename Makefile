@@ -11,8 +11,10 @@ GOALS := $(or $(MAKECMDGOALS),help)
 $(GOALS): _devshell
 	@:
 # Command-line variables (PKG=, RUN=, FILE=) reach the inner make via MAKEFLAGS.
+# The inner make is the dev shell's own by name: on macOS $(MAKE) is the xcrun
+# shim, which the shell's Apple SDK points at a make that does not exist.
 _devshell:
-	@nix develop -c $(MAKE) --no-print-directory $(GOALS)
+	@nix develop -c make --no-print-directory $(GOALS)
 
 else
 
@@ -115,7 +117,7 @@ verify-changed:
 			apps/core/*) add daemon-test ;;
 			apps/dashboard/*) add dashboard-test ;;
 			*.nix|flake.lock|nix/*) add nix-check ;;
-			docs/*|*.md|.claude/*|scripts/run) ;;
+			docs/*|*.md|scripts/run) ;;
 			*) add verify ;;
 		esac
 	done < <({ git diff --name-only $(BASE); git ls-files --others --exclude-standard; } | sort -u)

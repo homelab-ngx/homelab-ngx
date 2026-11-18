@@ -21,8 +21,6 @@ Thumbs.db
 # Sandbox ghost files (srt creates empty r--r--r-- placeholders in worktrees)
 .bash_profile
 .bashrc
-.claude/agents
-.claude/commands
 .gitconfig
 .gitmodules
 .profile
@@ -61,3 +59,15 @@ dist/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Agent instructions and tool state: contributors keep their own, outside the
+# repo. Nothing agent-specific is committed here.
+AGENTS.md
+CLAUDE.md
+CLAUDE.local.md
+GEMINI.md
+.claude/
+.agents/
+.cursor/
+.mcp.json
+.harness.toml
