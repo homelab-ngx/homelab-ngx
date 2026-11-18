@@ -56,6 +56,11 @@ func TestCompareVersions(t *testing.T) {
 		{"0.0.202611180849", "0.0.202611181200", -1},
 		{"0.1.0", "0.0.202611180849", 1},
 		{"0.9.0", "0.10.0", -1},
+		// A build of main after a release is <release>.<commit time>: above
+		// the release it follows, below the next one.
+		{"0.1.0.202611190130", "0.1.0", 1},
+		{"0.1.0.202611190130", "0.1.1", -1},
+		{"0.1.0.202611190130", "0.1.0.202611190200", -1},
 	}
 	for _, c := range cases {
 		if got := compareVersions(c.a, c.b); got != c.want {

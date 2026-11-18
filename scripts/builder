@@ -45,7 +45,8 @@ fi
 cd "$(git rev-parse --show-toplevel)"
 [ -z "$(git status --porcelain)" ] || echo "builder: uncommitted changes are not sent, only HEAD $(git rev-parse --short HEAD)" >&2
 ssh "$host" "git init -q $dir"
-git push -q -f "$host:$dir" HEAD:refs/heads/build
+# The tags go too: image/build.sh versions a build above the newest release.
+git push -q -f "$host:$dir" HEAD:refs/heads/build 'refs/tags/*:refs/tags/*'
 # The Makefile enters the dev shell itself; it only needs make, from nixpkgs
 # when the build machine has none.
 args="$(printf '%q ' "$@") ${HOMELAB_BUILDER_ARGS:-}"

@@ -6,9 +6,12 @@
 #   homelab_VERSION.root.UUID.raw           one root slot, and its verity hash
 #   homelab_VERSION.root-verity.UUID.raw
 #   core/homelab-core_VERSION.raw           the core system extension
-# VERSION defaults to 0.0 and the commit time (UTC, 0.0.YYYYMMDDHHMM), so the
-# same commit builds the same files, a later commit sorts after it, and every
-# release (0.1.0, 1.0.0) sorts after all of them.
+# VERSION defaults to the newest release tag and the commit time in UTC
+# (X.Y.Z.YYYYMMDDHHMM after tag vX.Y.Z; 0.0.YYYYMMDDHHMM before the first
+# release). The same commit builds the same files, a later commit sorts after
+# it, and a build of main sorts after the release it follows (0.1.0 <
+# 0.1.0.202611190130) and before the next one (0.1.1). A release passes its
+# own VERSION.
 #
 # mkosi runs in an Arch build root of the image's own snapshot, under
 # systemd-nspawn: mkosi from nixpkgs cannot bootstrap Arch on NixOS (its
@@ -20,7 +23,13 @@
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
-version=${1:-0.0.$(TZ=UTC git -C "$root" log -1 --format=%cd --date=format-local:%Y%m%d%H%M)}
+if [ -n "${1:-}" ]; then
+  version=$1
+else
+  # awk reads every line, so git never sees a closed pipe.
+  base=$(git -C "$root" tag -l --sort=-v:refname | awk '!f && /^v[0-9]+\.[0-9]+\.[0-9]+$/ { sub(/^v/, ""); print; f = 1 }')
+  version=${base:-0.0}.$(TZ=UTC git -C "$root" log -1 --format=%cd --date=format-local:%Y%m%d%H%M)
+fi
 cache=${HOMELAB_IMAGE_CACHE:-/var/cache/homelab-image}
 out=${HOMELAB_IMAGE_OUT:-$here/out}
 # Root (the daemon on the image host) needs no sudo, and may not have it.

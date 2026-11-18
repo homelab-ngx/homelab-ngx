@@ -308,19 +308,20 @@ func (x *deployRun) build(ctx context.Context) (string, string) {
 	src := filepath.Join(imageBuildDir, "src")
 	if _, err := os.Stat(filepath.Join(src, ".git")); err != nil {
 		_ = os.RemoveAll(src)
-		if err := os.MkdirAll(imageBuildDir, 0o755); err != nil {
+		if err := os.MkdirAll(src, 0o755); err != nil {
 			return DeployFailed, err.Error()
 		}
-		if _, err := x.cmd(ctx, 10*time.Minute, gitEnv(), "git", "clone", "--depth", "1", url, src); err != nil {
-			return DeployFailed, "main could not be fetched: " + err.Error()
-		}
-	} else {
-		if _, err := x.cmd(ctx, 10*time.Minute, gitEnv(), "git", "-C", src, "fetch", "--depth", "1", url, "HEAD"); err != nil {
-			return DeployFailed, "main could not be fetched: " + err.Error()
-		}
-		if _, err := x.cmd(ctx, time.Minute, nil, "git", "-C", src, "reset", "--hard", "-q", "FETCH_HEAD"); err != nil {
+		if _, err := x.cmd(ctx, time.Minute, nil, "git", "init", "-q", src); err != nil {
 			return DeployFailed, err.Error()
 		}
+	}
+	// The release tags come along: build.sh versions a build of main above
+	// the newest release.
+	if _, err := x.cmd(ctx, 10*time.Minute, gitEnv(), "git", "-C", src, "fetch", "-q", "--depth", "1", "--tags", url, "HEAD"); err != nil {
+		return DeployFailed, "main could not be fetched: " + err.Error()
+	}
+	if _, err := x.cmd(ctx, time.Minute, nil, "git", "-C", src, "reset", "--hard", "-q", "FETCH_HEAD"); err != nil {
+		return DeployFailed, err.Error()
 	}
 	rev, _ := x.cmd(ctx, time.Minute, nil, "git", "-C", src, "rev-parse", "HEAD")
 	x.d.Rev = strings.TrimSpace(rev)
