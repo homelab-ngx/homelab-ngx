@@ -483,11 +483,11 @@ func (s *Service) start(ctx context.Context, o *operation, name string) error {
 			return err
 		}
 		// The rules go in before the container exists, so its interface
-		// never carries traffic without them.
+		// never carries traffic without them; boot gives it its address.
 		if err := s.applyRules(ctx, name, subnet, m); err != nil {
 			return err
 		}
-		if err := s.boot(ctx, name, m); err != nil {
+		if err := s.boot(ctx, name, subnet, m); err != nil {
 			return err
 		}
 	}
@@ -579,7 +579,12 @@ func (s *Service) activate(ctx context.Context, o *operation, r store.Stack, fro
 		if err := s.halt(ctx, name); err != nil {
 			return err
 		}
-		if err := s.boot(ctx, name, m); err != nil {
+		// The link gets its address during the boot, so the new
+		// generation's rules go in first.
+		if err := s.applyRules(ctx, name, r.Subnet, m); err != nil {
+			return err
+		}
+		if err := s.boot(ctx, name, r.Subnet, m); err != nil {
 			return err
 		}
 	}

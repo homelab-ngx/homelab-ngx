@@ -315,6 +315,33 @@ func TestStartBuildsTheApprovedCommitAndBootsItWithItsGrants(t *testing.T) {
 	}
 }
 
+// A stack whose units wait for the network reports ready only once its link
+// works, so the host end gets its address while the boot is under way.
+func TestStartConfiguresTheLinkBeforeTheStackIsReady(t *testing.T) {
+	t.Parallel()
+	svc, _, h := newRuntime(t)
+	// nspawn has not created the interface at the first look.
+	h.On("ip", "address").FailCode(1, `Cannot find device "ve-immich"`).Reply("")
+	h.On("systemd-run", "--unit=homelab-stack-immich").Do(func(cmdrunner.Cmd) (cmdrunner.Result, error) {
+		deadline := time.Now().Add(5 * time.Second)
+		for len(h.CallsMatching("ip", "link", "set", "ve-immich", "up")) == 0 {
+			if time.Now().After(deadline) {
+				return fail(1, "Job for homelab-stack-immich.service failed: the network never came up")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		h.mu.Lock()
+		h.running = true
+		h.mu.Unlock()
+		return ok("")
+	})
+
+	s := finished(t, svc, svc.Start)
+	if s.Operation.Error != "" || !s.Running {
+		t.Fatalf("running=%v operation=%+v", s.Running, s.Operation)
+	}
+}
+
 func TestStartRefusals(t *testing.T) {
 	t.Parallel()
 	svc, fs, _ := newServiceOn(t)

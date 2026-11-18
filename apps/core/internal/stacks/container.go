@@ -77,6 +77,7 @@ func DefaultHost(r cmdrunner.Runner) Host {
 const (
 	buildTimeout  = 2 * time.Hour
 	startTimeout  = 5 * time.Minute
+	linkPoll      = 200 * time.Millisecond // how often a booting stack's veth is looked for
 	stopTimeout   = 5 * time.Minute
 	switchTimeout = 15 * time.Minute
 
@@ -325,7 +326,7 @@ func (s *Service) reap(ctx context.Context, name string) error {
 }
 
 // boot starts the stack's container and returns when its system is up.
-func (s *Service) boot(ctx context.Context, name string, m Manifest) error {
+func (s *Service) boot(ctx context.Context, name, subnet string, m Manifest) error {
 	if err := s.reap(ctx, name); err != nil {
 		return err
 	}
@@ -357,7 +358,12 @@ func (s *Service) boot(ctx context.Context, name string, m Manifest) error {
 	if err != nil {
 		return fmt.Errorf("binding the stack's paths: %w", err)
 	}
-	if _, err := s.run(ctx, startTimeout+time.Minute, "systemd-run", args...); err != nil {
+	booted := make(chan error, 1)
+	go func() {
+		_, err := s.run(ctx, startTimeout+time.Minute, "systemd-run", args...)
+		booted <- err
+	}()
+	if err := s.awaitBoot(ctx, name, subnet, booted); err != nil {
 		return fmt.Errorf("starting the container: %w", err)
 	}
 	b, _ := json.Marshal(args)
@@ -368,6 +374,29 @@ func (s *Service) boot(ctx context.Context, name string, m Manifest) error {
 		s.log.Warn("the stack's delivered values not recorded", "stack", name, "error", err)
 	}
 	return nil
+}
+
+// awaitBoot waits for systemd-run to return, which it does once the
+// container reports ready. A stack whose units wait for the network is not
+// ready until its link has an address at both ends, so the host end gets
+// its address as soon as nspawn has created the interface, while the boot
+// is still under way. Without it the stack sits out its network timeout
+// first. connect configures the link again after the boot, so a link that
+// could not be configured here is not an error.
+func (s *Service) awaitBoot(ctx context.Context, name, subnet string, booted <-chan error) error {
+	t := time.NewTicker(linkPoll)
+	defer t.Stop()
+	for {
+		select {
+		case err := <-booted:
+			return err
+		case <-t.C:
+			// Exit code 1 is `ip` not finding the interface yet.
+			if s.linkUp(ctx, name, subnet, 1) == nil {
+				return <-booted
+			}
+		}
+	}
 }
 
 // halt stops the stack's container. A unit systemd no longer knows (exit

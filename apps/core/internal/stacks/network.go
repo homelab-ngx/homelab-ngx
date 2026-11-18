@@ -280,8 +280,9 @@ func concreteNet(m Manifest, vars []storedVar, lan []string) ([]Egress, []Port) 
 }
 
 // linkUp gives the host side of the stack's veth its address. nspawn creates
-// the interface and nothing on the host configures it.
-func (s *Service) linkUp(ctx context.Context, name, subnet string) error {
+// the interface and nothing on the host configures it. expect lists exit
+// codes that are an expected answer, such as `ip` finding no interface yet.
+func (s *Service) linkUp(ctx context.Context, name, subnet string, expect ...int) error {
 	host, _, err := addrs(subnet)
 	if err != nil {
 		return err
@@ -291,7 +292,7 @@ func (s *Service) linkUp(ctx context.Context, name, subnet string) error {
 		{"address", "replace", host.String() + "/24", "dev", ifc},
 		{"link", "set", ifc, "up"},
 	} {
-		if _, err := s.r.Run(ctx, cmdrunner.Cmd{Module: "stacks", Name: "ip", Args: args}); err != nil {
+		if _, err := s.r.Run(ctx, cmdrunner.Cmd{Module: "stacks", Name: "ip", Args: args, ExpectExit: expect}); err != nil {
 			return fmt.Errorf("configuring %s: %w", ifc, err)
 		}
 	}
