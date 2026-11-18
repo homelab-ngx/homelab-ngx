@@ -184,9 +184,10 @@ jobs:
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md --generate-notes
 
       # dl.homelab-ngx.com/installer: the Cloudflare redirect rule that
-      # homelab-ngx/infra makes (INSTALLER_REDIRECT names it) now points at
-      # this release's installer. Last: a failure here leaves the release
-      # itself published.
+      # homelab-ngx/infra makes, switched off (INSTALLER_REDIRECT names it),
+      # now points at this release's installer and is on. Only here, after
+      # the files are published, so the link never points at a missing one.
+      # Last: a failure here leaves the release itself published.
       - name: Installer link
         if: env.DRY_RUN == ''
         env:
@@ -196,7 +197,7 @@ jobs:
           [ -n "$CF_TOKEN" ] && [ -n "$INSTALLER_REDIRECT" ] || { echo "::error::RELEASE_CLOUDFLARE_TOKEN or INSTALLER_REDIRECT is not set (homelab-ngx/infra)"; exit 1; }
           target=$RELEASE_URL/$VERSION/homelab-ngx_$VERSION.img
           jq -n --arg host "${RELEASE_URL#https://}" --arg target "$target" '{
-            ref: "dl_installer", action: "redirect",
+            ref: "dl_installer", action: "redirect", enabled: true,
             description: "dl: /installer to the newest installer (set by the release workflow)",
             expression: ("http.host eq \"" + $host + "\" and http.request.uri.path eq \"/installer\""),
             action_parameters: {from_value: {status_code: 302, preserve_query_string: false, target_url: {value: $target}}}
