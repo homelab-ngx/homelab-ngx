@@ -218,6 +218,13 @@ booted() {
   vssh 'findmnt -no SOURCE / | grep -q /dev/mapper/root' || die "/ is not on the verity device"
 }
 
+# served: the dashboard's API answers through Caddy at homelab.$domain: 200,
+# or 401 on a version with the sign-in. hassignin: the booted version has
+# the sign-in (an older release, booted first in a release's check, has not).
+apicode() { vssh "curl -sk -o /dev/null -w '%{http_code}' --resolve homelab.$domain:443:127.0.0.1 https://homelab.$domain$1"; }
+served() { case "$(apicode /api/version)" in 200 | 401) ;; *) return 1 ;; esac; }
+hassignin() { [ "$(apicode /api/auth)" = 200 ]; }
+
 # signin: through Caddy the dashboard's API wants a session; the first visitor
 # sets the password, a second cannot, and the CLI can remove it.
 signin() {
@@ -250,7 +257,7 @@ stackrefused() {
 
 # hostcheck: everything the host settings asked for is in place.
 hostcheck() {
-  https homelab /api/auth >/dev/null || die "the dashboard is not served at homelab.$domain"
+  served || die "the dashboard is not served at homelab.$domain"
   https site / | grep -q image-check || die "the stack's route is not served at site.$domain"
   vssh 'wg show wg-homelab peers' | grep -q . || die "the VPN has no device"
   vssh 'ip -4 -o addr show wg-homelab' | grep -q 10.10.0.1/24 || die "the VPN interface has no address"
@@ -339,10 +346,11 @@ vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
 curl -sf "http://127.0.0.1:$httpport/" | grep -q '<html' || die "the dashboard does not answer over HTTP"
 [ "$(api http://x/api/host-settings | jq -r .managed)" = image ] || die "the daemon does not see an image host"
 put host-settings/domain "{\"domain\":\"$domain\"}" || die "domain refused"
-for _ in $(seq 1 15); do https homelab /api/auth >/dev/null 2>&1 && break; sleep 2; done
-https homelab /api/auth >/dev/null || die "the dashboard is not served at homelab.$domain"
-signin
-ok "daemon $(api http://x/api/version | jq -r .version), dashboard over HTTP and at https://homelab.$domain behind its sign-in"
+for _ in $(seq 1 15); do served 2>/dev/null && break; sleep 2; done
+served || die "the dashboard is not served at homelab.$domain"
+signed=" (no sign-in on $version)"
+hassignin && signin && signed=" behind its sign-in"
+ok "daemon $(api http://x/api/version | jq -r .version), dashboard over HTTP and at https://homelab.$domain$signed"
 
 step "5. a bcachefs pool through the daemon"
 vssh 'bcachefs format -q --replicas=2 /dev/vdb /dev/vdc >/dev/null'
@@ -369,8 +377,9 @@ for _ in $(seq 1 120); do
 done
 [ "$(jq -r .running <<<"$s")" = true ] || die "the stack did not start in 10 minutes"
 https site / | grep -q image-check || die "the stack's route is not served at site.$domain"
-stackrefused site
-ok "stack site built, serving the page from the pool at https://site.$domain; the dashboard refuses it"
+refused=""
+hassignin && stackrefused site && refused="; the dashboard refuses it"
+ok "stack site built, serving the page from the pool at https://site.$domain$refused"
 
 step "7. host settings: VPN, tunnel, firewall, name and time zone"
 peer=$(vssh 'wg genkey | wg pubkey')
@@ -421,7 +430,10 @@ if [ -n "$next" ]; then
   [ "$(api http://x/api/system-updates/image | jq -r .core.active)" = "$next" ] || die "core $next is not active"
   [ "$(vssh 'machinectl show site -p Timestamp --value')" = "$since" ] || die "the stack's container was restarted"
   hostcheck
-  ok "core $next active, no reboot, the stack's container untouched"
+  # A core update restarts Caddy too: an older version's open API is gated now.
+  signed=""
+  hassignin && signin && stackrefused site && signed="; the dashboard behind its sign-in, refused to the stack"
+  ok "core $next active, no reboot, the stack's container untouched$signed"
 
   step "10. an image update to $next through the API"
   op system-updates/image/install '{"reboot":"now"}' >/dev/null || true
