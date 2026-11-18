@@ -23,9 +23,6 @@ name: release
 on:
   push:
     tags: ['v*.*.*']
-    # Dry run while the workflow is being built: everything but the upload
-    # and the GitHub Release. Remove before merging.
-    branches: [ci/release]
 
 permissions:
   contents: read
