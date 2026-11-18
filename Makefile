@@ -136,10 +136,19 @@ KEEP ?=
 BUILD ?=
 CPUS ?=
 MEM ?=
+ON_HOST ?=
+# The image targets refuse to run where homelab-daemon is running: a build
+# there takes the memory the host's services need (2026-11-18, an installer
+# build on the host ran it out of memory). Run them with scripts/builder, or
+# set ON_HOST=1. The daemon's own update builds call image/build.sh directly.
+core_host_guard = @if [ -z "$(ON_HOST)" ] && systemctl is-active --quiet homelab-daemon.service 2>/dev/null; then echo "make $@: this machine runs homelab core; run scripts/builder $@, or set ON_HOST=1 to build here" >&2; exit 1; fi
+
 image:
+	$(core_host_guard)
 	nix develop .#image -c image/build.sh $(VERSION)
 
 image-check:
+	$(core_host_guard)
 	nix develop .#image -c env KEEP=$(KEEP) BUILD=$(BUILD) CPUS=$(CPUS) MEM=$(MEM) image/check.sh
 
 endif
