@@ -4,13 +4,14 @@
 # the image spike, run 44339328373.)
 #
 # Layout on RELEASE_URL (https://dl.homelab-ngx.com):
-#   /<version>/homelab_<version>.raw              installer (the whole disk)
+#   /<version>/homelab-ngx_<version>.img          installer (the whole disk)
 #   /<version>/homelab_<version>.efi              UKI          } an image update
 #   /<version>/homelab_<version>.root*.raw        root, verity }
 #   /<version>/core/homelab-core_<version>.raw    core extension
 #   /<version>/SHA256SUMS, SHA256SUMS.gpg         every file above, signed
 #   /versions                                     published versions, oldest first
 #   /latest                                       the newest version
+#   /installer                                    a 302 to the newest installer
 # /<version>/ never changes once published (the CDN keeps it a year);
 # /versions and /latest change last, so a host never sees a half release.
 #
@@ -117,6 +118,10 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/image/out/core"
           cp homelab_"$prev".* "$GITHUB_WORKSPACE/image/out/"
           cp core/homelab-core_"$prev".raw "$GITHUB_WORKSPACE/image/out/core/"
+          # The installer is published as homelab-ngx_<v>.img (0.1.0 and
+          # before: homelab_<v>.raw, copied above); the check boots it as the
+          # build names it.
+          [ ! -e homelab-ngx_"$prev".img ] || cp homelab-ngx_"$prev".img "$GITHUB_WORKSPACE/image/out/homelab_$prev.raw"
 
       - name: make image
         run: make image VERSION="$VERSION"
@@ -131,10 +136,11 @@ jobs:
         run: |
           rel=$RUNNER_TEMP/release/$VERSION
           mkdir -p "$rel/core"
-          cp image/out/homelab_"$VERSION".raw image/out/homelab_"$VERSION".efi image/out/homelab_"$VERSION".root*.raw "$rel/"
+          cp image/out/homelab_"$VERSION".raw "$rel/homelab-ngx_$VERSION.img"
+          cp image/out/homelab_"$VERSION".efi image/out/homelab_"$VERSION".root*.raw "$rel/"
           cp image/out/core/homelab-core_"$VERSION".raw "$rel/core/"
           cd "$rel"
-          sha256sum homelab_"$VERSION".* core/homelab-core_"$VERSION".raw > SHA256SUMS
+          sha256sum homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw > SHA256SUMS
           gpg --batch --detach-sign -o SHA256SUMS.gpg SHA256SUMS
           gpg --batch --verify SHA256SUMS.gpg SHA256SUMS
           { echo "## $VERSION"; echo '```'; ls -l . core; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
@@ -151,7 +157,7 @@ jobs:
           $b2 account authorize >/dev/null
           up() { $b2 file upload --no-progress "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
           cd "$RUNNER_TEMP/release/$VERSION"
-          for f in homelab_"$VERSION".* core/homelab-core_"$VERSION".raw; do up "$f" "$VERSION/$f"; done
+          for f in homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw; do up "$f" "$VERSION/$f"; done
           up SHA256SUMS "$VERSION/SHA256SUMS"
           up SHA256SUMS.gpg "$VERSION/SHA256SUMS.gpg"
 
@@ -172,10 +178,37 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<EOF
-          Installer: $RELEASE_URL/$VERSION/homelab_$VERSION.raw (write it to a USB stick).
+          Installer: $RELEASE_URL/$VERSION/homelab-ngx_$VERSION.img (write it to a USB stick; $RELEASE_URL/installer is always the newest).
           Files and signed checksums: $RELEASE_URL/$VERSION/SHA256SUMS
           EOF
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes-file notes.md --generate-notes
+
+      # dl.homelab-ngx.com/installer: the Cloudflare redirect rule that
+      # homelab-ngx/infra makes (INSTALLER_REDIRECT names it) now points at
+      # this release's installer. Last: a failure here leaves the release
+      # itself published.
+      - name: Installer link
+        if: env.DRY_RUN == ''
+        env:
+          CF_TOKEN: ${{ secrets.RELEASE_CLOUDFLARE_TOKEN }}
+          INSTALLER_REDIRECT: ${{ vars.INSTALLER_REDIRECT }}
+        run: |
+          [ -n "$CF_TOKEN" ] && [ -n "$INSTALLER_REDIRECT" ] || { echo "::error::RELEASE_CLOUDFLARE_TOKEN or INSTALLER_REDIRECT is not set (homelab-ngx/infra)"; exit 1; }
+          target=$RELEASE_URL/$VERSION/homelab-ngx_$VERSION.img
+          jq -n --arg host "${RELEASE_URL#https://}" --arg target "$target" '{
+            ref: "dl_installer", action: "redirect",
+            description: "dl: /installer to the newest installer (set by the release workflow)",
+            expression: ("http.host eq \"" + $host + "\" and http.request.uri.path eq \"/installer\""),
+            action_parameters: {from_value: {status_code: 302, preserve_query_string: false, target_url: {value: $target}}}
+          }' > rule.json
+          curl -fsS -o /dev/null -X PATCH "https://api.cloudflare.com/client/v4/$INSTALLER_REDIRECT" \
+            -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" --data @rule.json
+          for _ in $(seq 1 12); do
+            at=$(curl -fsS -o /dev/null -w '%{redirect_url}' "$RELEASE_URL/installer?t=$(date +%s)" || true)
+            [ "$at" = "$target" ] && { echo "$RELEASE_URL/installer -> $at"; exit 0; }
+            sleep 5
+          done
+          echo "::error::$RELEASE_URL/installer redirects to '$at', not $target"; exit 1
 
       - name: Dry run
         if: env.DRY_RUN != ''
