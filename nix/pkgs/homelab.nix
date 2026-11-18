@@ -9,7 +9,7 @@ let
   final = pkgs;
   # The dashboard's npm deps hash (update-hashes.sh patches it by name).
   dashboardNpmDepsHash = "sha256-hGapl/71sw6sOHarUHbszNtdmuNYZMf3v5gsQxvdC1w=";
-  vendorHash = "sha256-zFAHgHbBiNu8/8Zb9h1P+TO+zm/SoJxe2YiAKJ7twK8=";
+  vendorHash = "sha256-FwkDGmK3kN2aQ+53P+f48AGvd7V7RxCB3OV1AmaLlPM=";
 
   # The daemon's module with the backup runner's next to it: the daemon
   # imports the runner's `runfile` package (the spec and state format) through
