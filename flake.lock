@@ -1,0 +1,48 @@
+{
+  "nodes": {
+    "bcdu": {
+      "inputs": {
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1794860115,
+        "narHash": "sha256-uL1+ye/gwKV4mHPohT0R2qufDMYlfSdMnOBmEMi1TzM=",
+        "owner": "ogglord",
+        "repo": "bcdu",
+        "rev": "e617d73459947d1ccd53103833d7340da78251e4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "ogglord",
+        "repo": "bcdu",
+        "type": "github"
+      }
+    },
+    "nixpkgs": {
+      "locked": {
+        "lastModified": 1791734076,
+        "narHash": "sha256-i5qk1kLiit98rRbh1AXmWBNT9QXC/y4l5Wk/u5EdpDQ=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "7fd4004d0511991fff3a0524856a9be09e28c5f0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "7fd4004d0511991fff3a0524856a9be09e28c5f0",
+        "type": "github"
+      }
+    },
+    "root": {
+      "inputs": {
+        "bcdu": "bcdu",
+        "nixpkgs": "nixpkgs"
+      }
+    }
+  },
+  "root": "root",
+  "version": 7
+}

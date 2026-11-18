@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-16T00:00:00Z",
+  "title": "Design System: homelab",
+  "extensions": {
+    "colorMeta": {
+      "accent": { "role": "primary", "displayName": "Harbor Teal", "canonical": "#0f6e8c", "dark": "#5cb8d6", "tonalRamp": ["#000e28","#002a45","#004865","#006785","#388baa","#5fb1d1","#86d7f9","#d3f5ff"] },
+      "accent-soft": { "role": "primary", "displayName": "Harbor Mist", "canonical": "#dcedf2", "dark": "#15323e" },
+      "core": { "role": "secondary", "displayName": "Core Violet", "canonical": "#4a3f7a", "dark": "#b3a6ea", "tonalRamp": ["#0f002f","#25174e","#40356e","#5d5390","#7f76b6","#a39add","#c9c0ff","#edebff"] },
+      "core-soft": { "role": "secondary", "displayName": "Core Violet Tint", "canonical": "#e9e6f4", "dark": "#2a2545" },
+      "ok": { "role": "status", "displayName": "Running Green", "canonical": "#1f7a4d", "dark": "#5fc48f", "tonalRamp": ["#001500","#00320a","#005026","#0d6f43","#3e9465","#65b988","#8be0ad","#daf7e4"] },
+      "ok-soft": { "role": "status", "displayName": "Running Green Tint", "canonical": "#dff1e7", "dark": "#153325" },
+      "warn": { "role": "status", "displayName": "Amber Hold", "canonical": "#8f5c06", "dark": "#e0b050", "tonalRamp": ["#240000","#421400","#623200","#835100","#a9742b","#cf9952","#f7bf78","#ffebd2"] },
+      "warn-soft": { "role": "status", "displayName": "Amber Hold Tint", "canonical": "#f8ecd2", "dark": "#3a2e12" },
+      "bad": { "role": "status", "displayName": "Brick Fault", "canonical": "#b03a2e", "dark": "#ee8577", "tonalRamp": ["#350000","#5a0000","#7e0000","#a32d23","#cc5446","#f77a69","#ffa08e","#ffe5df"] },
+      "bad-soft": { "role": "status", "displayName": "Brick Fault Tint", "canonical": "#f7e0dc", "dark": "#43201c" },
+      "bg": { "role": "neutral", "displayName": "Fog Ground", "canonical": "#f4f5f7", "dark": "#101317", "tonalRamp": ["#0b0b0c","#232425","#3f4041","#5d5e5f","#7f8082","#a4a4a6","#c9cacc","#edeef0"] },
+      "surface": { "role": "neutral", "displayName": "Paper", "canonical": "#ffffff", "dark": "#171b21" },
+      "sunken": { "role": "neutral", "displayName": "Well", "canonical": "#eef0f3", "dark": "#13171c" },
+      "line": { "role": "neutral", "displayName": "Rule", "canonical": "#d9dde3", "dark": "#2a313a" },
+      "fg": { "role": "neutral", "displayName": "Ink", "canonical": "#161b22", "dark": "#e3e8ee", "tonalRamp": ["#070b12","#1f242c","#3a4048","#585e67","#7a818a","#9ea5af","#c4cbd5","#e8eff9"] },
+      "muted": { "role": "neutral", "displayName": "Slate", "canonical": "#5d6773", "dark": "#8e99a6", "tonalRamp": ["#050c15","#1c252f","#37414c","#555f6a","#77818e","#9ba6b3","#c0ccd9","#e4f0fe"] }
+    },
+    "typographyMeta": {
+      "headline": { "displayName": "Headline", "purpose": "Page h1, one per page." },
+      "dialog-title": { "displayName": "Dialog title", "purpose": "Modal titles only." },
+      "title": { "displayName": "Title", "purpose": "Section h2 and card h3; hierarchy by weight." },
+      "body": { "displayName": "Body", "purpose": "Base text, set on html/body." },
+      "control": { "displayName": "Control", "purpose": "Buttons, nav, secondary lines." },
+      "small": { "displayName": "Small", "purpose": "Pills, small buttons, timestamps, hints." },
+      "label": { "displayName": "Label", "purpose": "Uppercase table column headers and grant-kind tags; never an eyebrow." },
+      "data": { "displayName": "Data", "purpose": "Every machine value: revs, paths, names, values, logs." }
+    },
+    "shadows": [
+      { "name": "float", "value": "0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)", "purpose": "Popovers (HelpTip), the route-links menu and dropdown menus." },
+      { "name": "dialog", "value": "0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)", "purpose": "Modal dialogs, over a rgb(0 0 0 / 0.5) overlay." }
+    ],
+    "motion": [
+      { "name": "color-shift", "value": "color, background-color, border-color 150ms cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "Button hover and nav hover." },
+      { "name": "disclosure", "value": "transform 150ms cubic-bezier(0.4, 0, 0.2, 1); rotate(90deg)", "purpose": "Chevron on expandable table rows and attempt logs." },
+      { "name": "toggle", "value": "background-color 150ms, left 150ms cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "The drawn toggle on a dropdown checkbox item and the on/off switch at the end of a ledger row." },
+      { "name": "running-pulse", "value": "opacity 1 to 0.5, 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; off under prefers-reduced-motion", "purpose": "The fill of a running day in the run strip." },
+      { "name": "progress", "value": "width 150ms cubic-bezier(0.4, 0, 0.2, 1)", "purpose": "The progress bar's fill as a run copies." }
+    ],
+    "breakpoints": [
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Button",
+      "kind": "button",
+      "refersTo": "button",
+      "description": "Default bordered button for nearly every action.",
+      "html": "<button class=\"ds-btn\">Restart</button>",
+      "css": ".ds-btn { display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; border: 1px solid var(--line, #d9dde3); background: var(--surface, #fff); color: var(--fg, #161b22); padding: 6px 12px; font: 500 13px/1.4 'Archivo Variable', system-ui, sans-serif; white-space: nowrap; cursor: pointer; transition: background-color 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn:hover { background: var(--sunken, #eef0f3); } .ds-btn:focus-visible { outline: 2px solid var(--accent, #0f6e8c); outline-offset: 2px; } .ds-btn:disabled { opacity: .5; cursor: not-allowed; }"
+    },
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The one main action in an area.",
+      "html": "<button class=\"ds-btn-primary\">Add stack</button>",
+      "css": ".ds-btn-primary { display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; border: 1px solid var(--accent, #0f6e8c); background: var(--accent, #0f6e8c); color: var(--surface, #fff); padding: 6px 12px; font: 500 13px/1.4 'Archivo Variable', system-ui, sans-serif; white-space: nowrap; cursor: pointer; transition: background-color 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-primary:hover { background: color-mix(in oklab, var(--accent, #0f6e8c) 90%, transparent); } .ds-btn-primary:focus-visible { outline: 2px solid var(--accent, #0f6e8c); outline-offset: 2px; }"
+    },
+    {
+      "name": "Danger Button",
+      "kind": "button",
+      "refersTo": "button-danger",
+      "description": "Destructive action; confirms in a dialog.",
+      "html": "<button class=\"ds-btn-danger\">Remove…</button>",
+      "css": ".ds-btn-danger { display: inline-flex; align-items: center; border-radius: 6px; border: 1px solid var(--bad, #b03a2e); background: var(--surface, #fff); color: var(--bad, #b03a2e); padding: 6px 12px; font: 500 13px/1.4 'Archivo Variable', system-ui, sans-serif; cursor: pointer; transition: background-color 150ms cubic-bezier(0.4,0,0.2,1); } .ds-btn-danger:hover { background: var(--bad-soft, #f7e0dc); } .ds-btn-danger:focus-visible { outline: 2px solid var(--accent, #0f6e8c); outline-offset: 2px; }"
+    },
+    {
+      "name": "Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Sunken mono field for values, search and selects.",
+      "html": "<input class=\"ds-input\" placeholder=\"/pool/…\">",
+      "css": ".ds-input { width: 100%; border-radius: 6px; border: 1px solid var(--line, #d9dde3); background: var(--sunken, #eef0f3); color: var(--fg, #161b22); padding: 6px 10px; font: 400 13px/1.4 'Azeret Mono Variable', ui-monospace, monospace; } .ds-input::placeholder { color: color-mix(in oklab, var(--muted, #5d6773) 70%, transparent); } .ds-input:focus-visible { outline: 2px solid var(--accent, #0f6e8c); }"
+    },
+    {
+      "name": "Status Pill",
+      "kind": "chip",
+      "refersTo": "pill-ok",
+      "description": "Tinted status with a current-color dot; tones ok, warn, bad, info, idle.",
+      "html": "<span class=\"ds-pill ds-pill-ok\"><span class=\"ds-dot\"></span>Running 3/3</span> <span class=\"ds-pill ds-pill-warn\"><span class=\"ds-dot\"></span>Needs approval</span> <span class=\"ds-pill ds-pill-bad\"><span class=\"ds-dot\"></span>Failed</span>",
+      "css": ".ds-pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 9999px; padding: 2px 8px; font: 500 12px/16px 'Archivo Variable', system-ui, sans-serif; white-space: nowrap; } .ds-dot { width: 6px; height: 6px; border-radius: 9999px; background: currentColor; } .ds-pill-ok { background: var(--ok-soft, #dff1e7); color: var(--ok, #1f7a4d); } .ds-pill-warn { background: var(--warn-soft, #f8ecd2); color: var(--warn, #8f5c06); } .ds-pill-bad { background: var(--bad-soft, #f7e0dc); color: var(--bad, #b03a2e); }"
+    },
+    {
+      "name": "Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "Flat bordered container for setup sections and progress.",
+      "html": "<section class=\"ds-card\"><h3 class=\"ds-card-title\">Source</h3><p class=\"ds-card-body\">Branch <code>main</code></p></section>",
+      "css": ".ds-card { border-radius: 8px; border: 1px solid var(--line, #d9dde3); background: var(--surface, #fff); padding: 16px; font: 400 14px/1.5 'Archivo Variable', system-ui, sans-serif; color: var(--fg, #161b22); } .ds-card-title { margin: 0; font-size: 14px; font-weight: 600; } .ds-card-body { margin: 12px 0 0; color: var(--muted, #5d6773); } .ds-card-body code { font: 13px 'Azeret Mono Variable', ui-monospace, monospace; color: var(--fg, #161b22); }"
+    },
+    {
+      "name": "Navigation",
+      "kind": "nav",
+      "refersTo": "nav-item-active",
+      "description": "Sticky header nav; active item on accent tint, Settings turns core purple.",
+      "html": "<nav class=\"ds-nav\"><a class=\"ds-brand\" href=\"#\">homelab</a><a class=\"ds-nav-item\" aria-current=\"page\" href=\"#\">Stacks <span class=\"ds-count\">2</span></a><a class=\"ds-nav-item\" href=\"#\">Storage</a><span style=\"flex:1\"></span><a class=\"ds-nav-settings\" href=\"#\">Settings</a></nav>",
+      "css": ".ds-nav { display: flex; align-items: center; gap: 4px; padding: 8px 16px; background: color-mix(in oklab, var(--surface, #fff) 95%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line, #d9dde3); font-family: 'Archivo Variable', system-ui, sans-serif; } .ds-brand { margin-right: 12px; font-weight: 600; letter-spacing: -0.025em; color: var(--fg, #161b22); text-decoration: none; } .ds-nav-item { border-radius: 6px; padding: 4px 10px; font-size: 13px; color: var(--muted, #5d6773); text-decoration: none; } .ds-nav-item:hover { color: var(--fg, #161b22); } .ds-nav-item[aria-current=page] { background: var(--accent-soft, #dcedf2); color: var(--accent, #0f6e8c); font-weight: 600; } .ds-count { margin-left: 4px; border-radius: 9999px; padding: 0 6px; font-size: 11px; background: var(--warn-soft, #f8ecd2); color: var(--warn, #8f5c06); } .ds-nav-settings { border-left: 1px solid var(--line, #d9dde3); padding-left: 12px; font-size: 13px; color: var(--muted, #5d6773); text-decoration: none; } .ds-nav-settings:hover { color: var(--fg, #161b22); }"
+    },
+    {
+      "name": "Health Table",
+      "kind": "custom",
+      "refersTo": "card",
+      "description": "Stacks overview: label header row, stack rows with pills, sunken service sub-rows.",
+      "html": "<div class=\"ds-table-box\"><table class=\"ds-table\"><thead><tr><th>Stack</th><th>State</th><th class=\"ds-num\">CPU</th><th></th></tr></thead><tbody><tr class=\"ds-stack\"><td>immich</td><td><span class=\"ds-pill\">Running 4/4</span></td><td class=\"ds-num\">2.1%</td><td class=\"ds-num\"><button class=\"ds-btn-sm\">Open</button></td></tr><tr class=\"ds-svc\"><td style=\"padding-left:40px\">server</td><td><span class=\"ds-pill\">active</span></td><td class=\"ds-num\">1.4%</td><td class=\"ds-num\"><button class=\"ds-btn-sm\">Logs</button></td></tr></tbody></table></div>",
+      "css": ".ds-table-box { overflow-x: auto; border-radius: 8px; border: 1px solid var(--line, #d9dde3); background: var(--surface, #fff); } .ds-table { width: 100%; border-collapse: collapse; text-align: left; font: 400 14px/1.4 'Archivo Variable', system-ui, sans-serif; font-variant-numeric: tabular-nums; color: var(--fg, #161b22); } .ds-table th { background: var(--sunken, #eef0f3); padding: 8px 12px; font-size: 11px; font-weight: 500; letter-spacing: 0.05em; text-transform: uppercase; color: var(--muted, #5d6773); border-bottom: 1px solid var(--line, #d9dde3); } .ds-table td { padding: 10px 12px; border-bottom: 1px solid var(--line, #d9dde3); } .ds-stack { font-weight: 500; } .ds-svc { background: var(--sunken, #eef0f3); font-size: 13px; } .ds-svc td { padding-top: 6px; padding-bottom: 6px; } .ds-num { text-align: right; } .ds-table .ds-pill { display: inline-flex; border-radius: 9999px; padding: 2px 8px; font-size: 12px; font-weight: 500; background: var(--ok-soft, #dff1e7); color: var(--ok, #1f7a4d); } .ds-btn-sm { border-radius: 6px; border: 1px solid var(--line, #d9dde3); background: var(--surface, #fff); padding: 2px 8px; font: 500 12px 'Archivo Variable', system-ui, sans-serif; color: var(--fg, #161b22); cursor: pointer; } .ds-btn-sm:hover { background: var(--sunken, #eef0f3); }"
+    },
+    {
+      "name": "Dropdown Menu",
+      "kind": "custom",
+      "refersTo": "menu",
+      "description": "Header menu for a surface's rarer controls: a toggle setting, plain items, a separator, the destructive item last.",
+      "html": "<div class=\"ds-menu\" role=\"menu\"><div class=\"ds-mi ds-mi-toggle\" role=\"menuitemcheckbox\" aria-checked=\"true\">Mount at startup<span class=\"ds-tog on\"><span></span></span></div><hr class=\"ds-sep\"><div class=\"ds-mi ds-mi-danger\" role=\"menuitem\">Unmount…</div></div>",
+      "css": ".ds-menu { min-width: 15rem; border-radius: 6px; border: 1px solid var(--line, #d9dde3); background: var(--surface, #fff); padding: 4px; font: 400 13px/1.4 'Archivo Variable', system-ui, sans-serif; color: var(--fg, #161b22); box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1); } .ds-mi { border-radius: 4px; padding: 6px 10px; cursor: default; } .ds-mi:hover { background: var(--sunken, #eef0f3); } .ds-mi-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; } .ds-tog { position: relative; width: 28px; height: 16px; border-radius: 9999px; background: var(--line, #d9dde3); flex-shrink: 0; transition: background-color 150ms; } .ds-tog.on { background: var(--accent, #0f6e8c); } .ds-tog span { position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 9999px; background: var(--surface, #fff); transition: left 150ms; } .ds-tog.on span { left: 14px; } .ds-sep { margin: 4px 0; border: 0; border-top: 1px solid var(--line, #d9dde3); } .ds-mi-danger { color: var(--bad, #b03a2e); } .ds-mi-danger:hover { background: var(--bad-soft, #f7e0dc); }"
+    },
+    {
+      "name": "Capacity Bar",
+      "kind": "custom",
+      "refersTo": "capacity-bar",
+      "description": "Mono space figure, an 8px segmented bar (series-1 to series-3: blue, orange, green; the rest muted, 1px surface dividers) and a muted legend.",
+      "html": "<div class=\"ds-cap\"><p><span class=\"ds-cap-fig\">2.1 TB</span> <span class=\"ds-muted\">used of 8 TB</span></p><div class=\"ds-bar\" role=\"img\" aria-label=\"26% used\"><span style=\"width:12%;background:var(--accent,#0f6e8c)\"></span><span style=\"width:7%;background:color-mix(in srgb,var(--accent,#0f6e8c) 70%,var(--surface,#fff))\"></span><span style=\"width:4%;background:color-mix(in srgb,var(--accent,#0f6e8c) 45%,var(--surface,#fff))\"></span><span style=\"width:3%;background:var(--muted,#5d6773)\"></span></div><div class=\"ds-legend\"><span><i style=\"background:var(--accent,#0f6e8c)\"></i><code>media</code> 960 GB</span><span><i style=\"background:var(--muted,#5d6773)\"></i>other 240 GB</span></div></div>",
+      "css": ".ds-cap { font: 400 14px/1.5 'Archivo Variable', system-ui, sans-serif; color: var(--fg, #161b22); font-variant-numeric: tabular-nums; } .ds-cap p { margin: 0; } .ds-cap-fig { font: 400 1.125rem 'Azeret Mono Variable', ui-monospace, monospace; } .ds-muted { color: var(--muted, #5d6773); } .ds-bar { display: flex; height: 8px; margin-top: 8px; overflow: hidden; border-radius: 9999px; background: var(--sunken, #eef0f3); } .ds-bar span { height: 100%; } .ds-bar span + span { border-left: 1px solid var(--surface, #fff); } .ds-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 12px; color: var(--muted, #5d6773); } .ds-legend span { display: inline-flex; align-items: center; gap: 6px; } .ds-legend i { width: 8px; height: 8px; border-radius: 2px; } .ds-legend code { font-family: 'Azeret Mono Variable', ui-monospace, monospace; }"
+    },
+    {
+      "name": "Chip Link",
+      "kind": "chip",
+      "refersTo": "chip-link",
+      "description": "A stack name linking to its page, listed where a row shows who uses it.",
+      "html": "<span class=\"ds-chips\"><a class=\"ds-chip\" href=\"#\">immich</a><a class=\"ds-chip\" href=\"#\">media</a></span>",
+      "css": ".ds-chips { display: flex; flex-wrap: wrap; gap: 4px; } .ds-chip { border-radius: 4px; border: 1px solid var(--line, #d9dde3); background: var(--sunken, #eef0f3); padding: 0 6px; font: 400 12px/16px 'Archivo Variable', system-ui, sans-serif; color: var(--fg, #161b22); text-decoration: none; } .ds-chip:hover { border-color: var(--accent, #0f6e8c); color: var(--accent, #0f6e8c); }"
+    },
+    {
+      "name": "Run Strip",
+      "kind": "custom",
+      "refersTo": "run-mark",
+      "description": "A backup's last 14 days, one mark per day: fill height says how the run went (full, two thirds, a quarter, a hairline), the tint repeats it. A day with a run is a link; the day on show keeps an accent outline.",
+      "html": "<ol class=\"ds-strip\" aria-label=\"Photos: the last 14 days\"><li><a class=\"ds-day ds-ok\" title=\"3 Nov: OK\" href=\"#\"><span></span></a></li><li><a class=\"ds-day ds-ok\" title=\"4 Nov: OK\" href=\"#\"><span></span></a></li><li><span class=\"ds-day ds-none\" title=\"5 Nov: did not run\"><span></span></span></li><li><a class=\"ds-day ds-ok\" title=\"6 Nov: OK\" href=\"#\"><span></span></a></li><li><a class=\"ds-day ds-warn\" title=\"7 Nov: Partly failed\" href=\"#\"><span></span></a></li><li><a class=\"ds-day ds-ok\" title=\"8 Nov: OK\" href=\"#\"><span></span></a></li><li><a class=\"ds-day ds-ok\" title=\"9 Nov: OK\" href=\"#\"><span></span></a></li><li><a class=\"ds-day ds-bad\" title=\"10 Nov: Failed\" href=\"#\" aria-current=\"true\"><span></span></a></li><li><a class=\"ds-day ds-ok\" title=\"11 Nov: OK\" href=\"#\"><span></span></a></li><li><a class=\"ds-day ds-ok\" title=\"12 Nov: OK\" href=\"#\"><span></span></a></li><li><span class=\"ds-day ds-none\" title=\"13 Nov: did not run\"><span></span></span></li><li><a class=\"ds-day ds-ok\" title=\"14 Nov: OK\" href=\"#\"><span></span></a></li><li><a class=\"ds-day ds-ok\" title=\"15 Nov: OK\" href=\"#\"><span></span></a></li><li><a class=\"ds-day ds-run\" title=\"16 Nov: Running\" href=\"#\"><span></span></a></li></ol>",
+      "css": ".ds-strip { display: flex; align-items: flex-end; gap: 4px; margin: 0; padding: 4px; list-style: none; } .ds-strip li { display: flex; } .ds-day { display: flex; align-items: flex-end; width: 16px; height: 36px; overflow: hidden; border-radius: 4px; outline-offset: 2px; } .ds-day span { width: 100%; } a.ds-day:hover { outline: 2px solid var(--line, #d9dde3); } a.ds-day:focus-visible, a.ds-day[aria-current=true] { outline: 2px solid var(--accent, #0f6e8c); } .ds-ok { background: var(--ok-soft, #dff1e7); } .ds-ok span { height: 100%; background: var(--ok, #1f7a4d); } .ds-warn { background: var(--warn-soft, #f8ecd2); } .ds-warn span { height: 66.667%; background: var(--warn, #8f5c06); } .ds-bad { background: var(--bad-soft, #f7e0dc); } .ds-bad span { height: 25%; background: var(--bad, #b03a2e); } .ds-run { background: var(--accent-soft, #dcedf2); } .ds-run span { height: 100%; background: var(--accent, #0f6e8c); } .ds-none { background: var(--sunken, #eef0f3); box-shadow: inset 0 0 0 1px var(--line, #d9dde3); } .ds-none span { height: 1px; background: var(--line, #d9dde3); } @media (prefers-reduced-motion: no-preference) { .ds-run span { animation: ds-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; } } @keyframes ds-pulse { 50% { opacity: 0.5; } }"
+    },
+    {
+      "name": "Progress",
+      "kind": "custom",
+      "refersTo": "progress-bar",
+      "description": "Live progress of a running backup: a 6px accent bar on a sunken track over one small muted tabular line, shown where the run's state already sits.",
+      "html": "<div class=\"ds-prog\" role=\"status\"><div class=\"ds-prog-bar\" role=\"progressbar\" aria-label=\"Copied so far\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"31\"><span style=\"width:31%\"></span></div><p>media · 1.2 GB of 4.0 GB · 12 MB/s · 31%</p></div>",
+      "css": ".ds-prog { min-width: 10rem; font: 400 12px/1rem 'Archivo Variable', system-ui, sans-serif; color: var(--muted, #5d6773); font-variant-numeric: tabular-nums; } .ds-prog p { margin: 4px 0 0; } .ds-prog-bar { height: 6px; overflow: hidden; border-radius: 9999px; background: var(--sunken, #eef0f3); } .ds-prog-bar span { display: block; height: 100%; border-radius: 9999px; background: var(--accent, #0f6e8c); transition: width 150ms cubic-bezier(0.4, 0, 0.2, 1); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Quiet Control Room",
+    "overview": "A dense, calm operations console for one server. The first thing on any screen is state: a table of what runs, tinted pills for how it is doing, a strip or banner for what is waiting. Controls sit at the end of the row or in the page header, one step behind the state they act on. Everything is flat, bordered and evenly lit; color appears only when it carries meaning (status, the accent action, the core host).\n\nVisible copy is short and plain. Explanations live behind a small question-mark help popover, and anything long or focused (logs, history, a grant review) opens in a large dialog over the page instead of growing the page. Light and dark are the same system: every token is redefined under `.dark`, chosen by the operator (system, light, dark) in Settings.",
+    "keyCharacteristics": [
+      "Compact base type (14px) with a 13px control size and mono for every machine value.",
+      "Status through tinted pills (soft background, strong text, a current-color dot), never through saturated fills.",
+      "Flat surfaces separated by 1px lines; shadows only on things that float.",
+      "Tables are the primary layout; detail columns drop out below md so a phone never scrolls sideways.",
+      "A purple `core` hue reserved for the core host."
+    ],
+    "rules": [
+      { "name": "The Tint Pair Rule", "body": "Every status hue is used as strong text on its own soft tint (pills, alerts, notices). Never a saturated status fill with white text. A data mark follows the same pairing without text: a run strip's day is a strong fill standing in a column of its own soft tint.", "section": "colors" },
+      { "name": "The Core Is Purple Rule", "body": "The core hue appears only on core-host surfaces; a stack control is never purple, and the core host is never teal.", "section": "colors" },
+      { "name": "The Quiet When Fine Rule", "body": "Healthy state reads as muted text (\"Up to date\", \"Healthy\") or a green pill; amber and red appear only when something needs the operator.", "section": "colors" },
+      { "name": "The Machine Speaks Mono Rule", "body": "If the daemon produced it (rev, path, name, value, log line), it is set in Azeret Mono; human sentences never are.", "section": "typography" },
+      { "name": "The Label Is A Column Rule", "body": "The uppercase label style names a column or a field kind. It never sits above a heading as an eyebrow.", "section": "typography" },
+      { "name": "The Only Floaters Cast Shadows Rule", "body": "Cards, tables, banners and buttons have no shadow. If it isn't portaled above the page, it doesn't get one.", "section": "elevation" },
+      { "name": "The Shape Carries State Rule", "body": "A mark that shows state without words says it in shape as well as hue. A day in the run strip is a column whose fill height tells how the run went (full, two thirds, a quarter, a hairline), so it still reads in greyscale and for a colour-blind reader; the tint only repeats it. Every such mark also has a spoken name.", "section": "shapes" }
+    ],
+    "dos": [
+      "Do put state before controls: the table or pill first, the action at the row's end or in the page header.",
+      "Do use the soft-tint pill or alert for any status, picking the tone by meaning (ok, warn, bad, info, idle).",
+      "Do set every machine value in Azeret Mono and give numeric columns tabular figures.",
+      "Do open long or focused content (logs, history, review) in a wide Modal rather than lengthening the page.",
+      "Do put the explanation in a HelpTip next to a short visible sentence.",
+      "Do hide detail columns below md (`max-md:hidden`) and keep the table's min-width to md and up; move a column a phone still needs under the primary cell instead of hiding it.",
+      "Do keep one primary button per area; everything else is the default bordered button.",
+      "Do put a surface's rare or destructive controls in a header dropdown menu, the destructive item last behind a separator.",
+      "Do give a mark that shows state a shape for each state as well as a tint, and a spoken name that says the state in words.",
+      "Do show live progress where the state already sits (the row's last-run cell, the run on show), not in a separate panel.",
+      "Do keep a form to what most people set, with the rest in an Advanced fold.",
+      "Do write the reason a form cannot be saved as a sentence under the form; the disabled button's title is only a second copy."
+    ],
+    "donts": [
+      "Don't use the core purple on anything that is not the core host, or teal on the core host.",
+      "Don't add shadows to cards, tables or banners; only portaled popovers and dialogs float.",
+      "Don't use the uppercase label style as an eyebrow or kicker above a heading.",
+      "Don't fill a surface with a saturated status color; status is strong text on its soft tint. (A run strip's marks are data marks, not surfaces.)",
+      "Don't let a page scroll sideways on a phone; the scroll belongs inside the table box.",
+      "Don't tell two states of a mark apart by colour alone.",
+      "Don't lock a dialog unless it has to end through its own action; every other dialog keeps Close first, Escape and the click outside."
+    ]
+  }
+}

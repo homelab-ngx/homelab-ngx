@@ -1,0 +1,20 @@
+#!/bin/bash
+set -euxo pipefail
+# The core extension (daemon + dashboard) is compatible with any image of the same level.
+echo 'SYSEXT_LEVEL=1' >> /usr/lib/os-release
+# The product's name; ID and IMAGE_ID stay as they are.
+sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Homelab-ngx"/' /usr/lib/os-release
+# Mount points: the root file system is read-only, so they exist in the
+# image. /nix is the Nix store's partition; /pool and /cache are where a host
+# mounts its storage pool and its cache disk when it has them.
+mkdir -p /nix /pool /cache
+# Root's home lives on /var; the root file system is read-only.
+rm -rf /root && ln -s var/roothome /root
+# The console's font (kmscon, etc/kmscon/kmscon.conf): JetBrains Mono Nerd
+# Font, regular and bold. The package has 96 files, 232 MB.
+find /usr/share/fonts/TTF -name 'JetBrainsMono*' ! -name JetBrainsMonoNerdFontMono-Regular.ttf \
+  ! -name JetBrainsMonoNerdFontMono-Bold.ttf -delete
+ls /usr/share/fonts/TTF/JetBrainsMonoNerdFontMono-Regular.ttf /usr/share/fonts/TTF/JetBrainsMonoNerdFontMono-Bold.ttf
+depmod -a "$(ls /usr/lib/modules | head -n1)"
+# The pinned pair: fail the build if the module is not there.
+modinfo -k "$(ls /usr/lib/modules | head -n1)" bcachefs >/dev/null

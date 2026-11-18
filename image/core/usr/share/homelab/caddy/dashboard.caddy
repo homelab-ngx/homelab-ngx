@@ -1,0 +1,28 @@
+# The dashboard and its API, as a snippet: the domain's site (written by the
+# daemon from the host settings) imports it at the dashboard's name.
+(homelab_dashboard) {
+	handle /api/* {
+		reverse_proxy unix//run/homelab-daemon/daemon.sock {
+			flush_interval -1
+		}
+	}
+	handle /_app/immutable/* {
+		root * /usr/share/homelab/dashboard
+		header Cache-Control "public, max-age=31536000, immutable"
+		file_server {
+			precompressed br gzip
+		}
+	}
+	handle {
+		root * /usr/share/homelab/dashboard
+		try_files {path} /index.html
+		file_server {
+			precompressed br gzip
+		}
+	}
+}
+
+# On every address over plain HTTP, also before the host has a domain.
+:80 {
+	import homelab_dashboard
+}

@@ -1,0 +1,30 @@
+#!/bin/sh
+# Mounts the EFI system partition the boot loader started from at /boot,
+# also when it is on another disk than the root: systemd-gpt-auto-generator
+# mounts only an ESP on the root's disk, and an install may share another
+# disk's ESP (Windows'). sysupdate puts new kernels there and boot counting
+# renames them, so it must be mounted. Written to the normal generator
+# directory, it takes the place of gpt-auto's /boot (a late one).
+var=/sys/firmware/efi/efivars/LoaderDevicePartUUID-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
+[ -r "$var" ] || exit 0
+uuid=$(tail -c +5 "$var" | tr -d '\000' | tr 'A-F' 'a-f')
+[ -n "$uuid" ] || exit 0
+dir=$1
+cat >"$dir/boot.mount" <<EOF
+[Unit]
+Description=EFI System Partition the boot loader started from
+[Mount]
+What=/dev/disk/by-partuuid/$uuid
+Where=/boot
+Type=vfat
+Options=umask=0077,noexec,nosuid,nodev
+EOF
+cat >"$dir/boot.automount" <<EOF
+[Unit]
+Description=EFI System Partition the boot loader started from
+[Automount]
+Where=/boot
+TimeoutIdleSec=120
+EOF
+mkdir -p "$dir/local-fs.target.wants"
+ln -sf ../boot.automount "$dir/local-fs.target.wants/boot.automount"

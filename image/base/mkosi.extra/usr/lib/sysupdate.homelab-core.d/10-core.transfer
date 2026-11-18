@@ -1,0 +1,14 @@
+# The core extension: no reboot. Whatever runs the update restarts the
+# daemon and Caddy after the merge (no EXTENSION_RESTART_UNITS: it deadlocks
+# the boot).
+[Source]
+Type=regular-file
+Path=/var/lib/homelab/updates/core
+MatchPattern=homelab-core_@v.raw
+
+[Target]
+Type=regular-file
+Path=/var/lib/extensions.d
+MatchPattern=homelab-core_@v.raw
+CurrentSymlink=/var/lib/extensions/homelab-core.raw
+InstancesMax=2

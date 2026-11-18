@@ -1,0 +1,25 @@
+[Unit]
+Description=Homelab daemon
+After=network.target nix-daemon.socket
+Wants=nix-daemon.socket
+
+[Service]
+# Until host settings move into the database (#96) the extension's default
+# config is used; a host's own config in /etc wins when present.
+ExecStart=/bin/sh -c 'exec /usr/bin/homelab-daemon --config "$(test -e /etc/homelab-daemon/config.json && echo /etc/homelab-daemon/config.json || echo /usr/share/homelab/config.json)"'
+EnvironmentFile=-/var/lib/homelab/daemon.env
+Restart=on-failure
+RestartSec=5s
+RuntimeDirectory=homelab-daemon
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+UMask=0027
+StateDirectory=homelab-daemon
+StateDirectoryMode=0750
+User=root
+Group=homelab-daemon
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+[Install]
+WantedBy=multi-user.target

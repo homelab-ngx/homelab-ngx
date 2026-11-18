@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+# build.sh [VERSION]: the image (mkosi, Arch) and the core extension (Nix)
+# into image/out, named for systemd-sysupdate:
+#   homelab_VERSION.raw                     the whole disk (installer, VM)
+#   homelab_VERSION.efi                     the UKI
+#   homelab_VERSION.root.UUID.raw           one root slot, and its verity hash
+#   homelab_VERSION.root-verity.UUID.raw
+#   core/homelab-core_VERSION.raw           the core system extension
+# VERSION defaults to 0.0 and the commit time (UTC, 0.0.YYYYMMDDHHMM), so the
+# same commit builds the same files, a later commit sorts after it, and every
+# release (0.1.0, 1.0.0) sorts after all of them.
+#
+# mkosi runs in an Arch build root of the image's own snapshot, under
+# systemd-nspawn: mkosi from nixpkgs cannot bootstrap Arch on NixOS (its
+# pacman runs no package scriptlets, and its sandbox cannot reach the host's
+# certificates). The build root is made once, shared by every checkout, in
+# $HOMELAB_IMAGE_CACHE (default /var/cache/homelab-image). Needs sudo, or
+# root: the image host's daemon builds its own updates with this script.
+# HOMELAB_IMAGE_OUT moves the output (default image/out).
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+root=$(cd "$here/.." && pwd)
+version=${1:-0.0.$(TZ=UTC git -C "$root" log -1 --format=%cd --date=format-local:%Y%m%d%H%M)}
+cache=${HOMELAB_IMAGE_CACHE:-/var/cache/homelab-image}
+out=${HOMELAB_IMAGE_OUT:-$here/out}
+# Root (the daemon on the image host) needs no sudo, and may not have it.
+sudo=sudo
+[ "$(id -u)" = 0 ] && sudo=
+
+# The snapshot every package comes from, the build root's included.
+snapshot=$(sed -n 's/^Snapshot=//p' "$here/base/mkosi.conf")
+# Arch's bootstrap tarball the build root starts from, and its sha256 from
+# the archive's sha256sums.txt.
+bootstrap_date=2026.11.01
+bootstrap_sha256=655bc99849b80859173fa39338a6c910185e952173f6a1a61526cfa34ab8339c
+
+buildroot=$cache/buildroot-${snapshot//\//-}
+nspawn() {
+  $sudo systemd-nspawn -q -D "$buildroot" --resolv-conf=copy-host --pipe \
+    --setenv=PATH=/usr/local/sbin:/usr/local/bin:/usr/bin "$@" 2> >(grep -v 'future version of systemd-nspawn' >&2)
+}
+
+if ! $sudo test -e "$buildroot/.ready"; then
+  echo "build root for snapshot $snapshot"
+  $sudo mkdir -p "$cache"
+  tarball=$cache/archlinux-bootstrap-$bootstrap_date-x86_64.tar.zst
+  if ! $sudo test -e "$tarball"; then
+    $sudo curl -sSfL -o "$tarball" "https://archive.archlinux.org/iso/$bootstrap_date/archlinux-bootstrap-$bootstrap_date-x86_64.tar.zst"
+  fi
+  echo "$bootstrap_sha256  $tarball" | sha256sum -c --quiet
+  $sudo rm -rf "$buildroot.tmp"
+  $sudo mkdir -p "$buildroot.tmp"
+  $sudo tar --numeric-owner --zstd -xpf "$tarball" -C "$buildroot.tmp" --strip-components=1 2> >(grep -v 'unknown extended header' >&2)
+  echo "Server = https://archive.archlinux.org/repos/$snapshot/\$repo/os/\$arch" | $sudo tee "$buildroot.tmp/etc/pacman.d/mirrorlist" >/dev/null
+  $sudo mv "$buildroot.tmp" "$buildroot"
+  nspawn /usr/bin/bash -c 'pacman-key --init >/dev/null 2>&1 && pacman-key --populate archlinux >/dev/null 2>&1 &&
+    pacman -Syu --noconfirm --needed mkosi systemd-ukify dosfstools mtools erofs-utils squashfs-tools cpio zstd xz openssl git >/dev/null'
+  $sudo touch "$buildroot/.ready"
+fi
+
+echo "image $version (snapshot $snapshot, $(nspawn /usr/bin/mkosi --version))"
+mkdir -p "$out/core"
+# An earlier build of the same version leaves root files with other UUIDs,
+# which SHA256SUMS would list next to this build's.
+$sudo rm -f "$out"/homelab_"$version".* "$out/core/homelab-core_$version.raw"
+$sudo mkdir -p "$cache/mkosi"
+
+# The core extension first: the disk image is also the installer stick, and
+# its /var starts with the core (where sysupdate keeps it) and the marker
+# that starts the daemon in installer mode. HOMELAB_BUILD_JOBS limits Nix's
+# parallel builds: the host building its own update (the daemon sets 1) may
+# have little memory to spare.
+ext=$(nix --extra-experimental-features 'nix-command flakes' build --max-jobs "${HOMELAB_BUILD_JOBS:-auto}" \
+  --no-link --print-out-paths "$root#core-extension")
+install -m644 "$ext/homelab-core.raw" "$out/core/homelab-core_$version.raw"
+tree=$out/var-tree
+$sudo rm -rf "$tree"
+mkdir -p "$tree/var/lib/extensions.d" "$tree/var/lib/extensions" "$tree/var/lib/homelab"
+cp "$out/core/homelab-core_$version.raw" "$tree/var/lib/extensions.d/"
+ln -s "/var/lib/extensions.d/homelab-core_$version.raw" "$tree/var/lib/extensions/homelab-core.raw"
+echo "Remove this file and the system leaves installer mode." > "$tree/var/lib/homelab/installer"
+$sudo chown -R 0:0 "$tree"
+
+nspawn --bind="$here:/work" --bind="$out:/out" --bind="$cache/mkosi:/cache" --chdir=/work/base \
+  /usr/bin/mkosi --image-version "$version" --output-directory /out \
+  --cache-directory /cache --extra-tree=/out/var-tree:/ --force build
+$sudo rm -rf "$tree"
+$sudo chown -R "$(id -u):$(id -g)" "$out"
+
+# sysupdate reads a manifest in each folder.
+(cd "$out" && sha256sum homelab_"$version".efi homelab_"$version".root*.raw > SHA256SUMS)
+(cd "$out/core" && sha256sum homelab-core_"$version".raw > SHA256SUMS)
+ls -l "$out" "$out/core"

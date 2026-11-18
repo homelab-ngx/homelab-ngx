@@ -1,0 +1,16 @@
+#!/bin/sh
+# The boot counts as good once /var, /nix and the network are up and, when
+# the core extension is installed, the daemon answers. A boot that never gets
+# here is retried and then falls back to the slot before.
+set -e
+mountpoint -q /var
+mountpoint -q /nix
+systemctl is-active -q systemd-networkd.service
+if [ -e /var/lib/extensions/homelab-core.raw ]; then
+  for _ in $(seq 1 60); do
+    curl -sf --unix-socket /run/homelab-daemon/daemon.sock http://x/api/version >/dev/null && exit 0
+    sleep 2
+  done
+  echo "the daemon does not answer"
+  exit 1
+fi

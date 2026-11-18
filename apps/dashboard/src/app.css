@@ -1,0 +1,116 @@
+@import "tailwindcss";
+@import "@fontsource-variable/archivo";
+@import "@fontsource-variable/azeret-mono";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* Tokens: one set of names, redefined for dark. Core gets its own hue so
+   the Settings side never looks like a stacks control. */
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --sunken: #eef0f3;
+  --line: #d9dde3;
+  --fg: #161b22;
+  --muted: #5d6773;
+  --accent: #0f6e8c;
+  --accent-soft: #dcedf2;
+  --core: #4a3f7a;
+  --core-soft: #e9e6f4;
+  --ok: #1f7a4d;
+  --ok-soft: #dff1e7;
+  --warn: #8f5c06;
+  --warn-soft: #f8ecd2;
+  --bad: #b03a2e;
+  --bad-soft: #f7e0dc;
+  /* Chart series, in this order: checked apart for colour-blind readers. */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+}
+.dark {
+  --bg: #101317;
+  --surface: #171b21;
+  --sunken: #13171c;
+  --line: #2a313a;
+  --fg: #e3e8ee;
+  --muted: #8e99a6;
+  --accent: #5cb8d6;
+  --accent-soft: #15323e;
+  --core: #b3a6ea;
+  --core-soft: #2a2545;
+  --ok: #5fc48f;
+  --ok-soft: #153325;
+  --warn: #e0b050;
+  --warn-soft: #3a2e12;
+  --bad: #ee8577;
+  --bad-soft: #43201c;
+  color-scheme: dark;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+}
+
+@theme inline {
+  --font-sans: "Archivo Variable", system-ui, sans-serif;
+  --font-mono: "Azeret Mono Variable", ui-monospace, monospace;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-core: var(--core);
+  --color-core-soft: var(--core-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center gap-1.5 rounded-md border border-line bg-surface px-3 py-1.5 text-[13px] font-medium whitespace-nowrap text-fg transition-colors hover:bg-sunken disabled:cursor-not-allowed disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
+  }
+  .btn-primary {
+    @apply border-accent bg-accent text-surface hover:bg-accent/90;
+  }
+  .btn-danger {
+    @apply border-bad text-bad hover:bg-bad-soft;
+  }
+  .btn-sm {
+    @apply px-2 py-0.5 text-xs;
+  }
+  .card {
+    @apply rounded-lg border border-line bg-surface p-4;
+  }
+  .label {
+    @apply text-[11px] font-medium tracking-wider text-muted uppercase;
+  }
+  .input {
+    @apply w-full rounded-md border border-line bg-sunken px-2.5 py-1.5 text-fg placeholder:text-muted/70 focus-visible:outline-2 focus-visible:outline-accent;
+  }
+  /* iOS zooms the page in when a focused field's text is under 16px, and
+     stays zoomed. */
+  @media (pointer: coarse) {
+    .input {
+      font-size: 16px;
+    }
+  }
+  .link {
+    @apply rounded-sm text-accent hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent;
+  }
+}

@@ -1,0 +1,196 @@
+---
+title: What a stack repo provides and what the host gives it
+date: 2026-11-15
+category: architecture-patterns
+module: apps/core/internal/stacks
+problem_type: architecture_pattern
+component: service_layer
+severity: high
+applies_when:
+  - Writing a new stack repo or changing an existing one
+  - Changing the stack runtime, its network rules or its routes
+  - Debugging a stack that does not start, update or get traffic
+tags: [stacks, nspawn, manifest, nftables, caddy, variables, podman, wireguard, api-grant]
+---
+
+# What a stack repo provides and what the host gives it
+
+## Context
+
+A stack is a separate NixOS system, built from its own repo and run by the daemon in a systemd-nspawn container. The host is never rebuilt for it. Every service runs in one, each from its own repo: for example an `immich` stack, a `players` stack (Plex, Jellyfin), an `arr` stack (the arrs, their Postgres, qBittorrent behind its own VPN), and an `ha` stack (a Home Assistant MQTT bridge that calls the daemon API). One early `media` stack held players, arr, music, books, Frigate and Pinchflat; it was split so a stack bundles services that work together. Several of the rules below were found by running them, and none of them show in the stacks' own code.
+
+## Guidance
+
+### The repo
+
+- From manifest version 7 a repo is `homelab-stack.json` plus a `flake.nix` that exports `nixosModules.default`. The module holds only the stack's own services and is plain NixOS: it uses no `homelab.*` options, reads `/run/secrets/<NAME>` and `/var/lib/homelab-api/env` by those paths, and builds its own software inside the module (`pkgs.callPackage`), so the whole stack uses one nixpkgs. The flake needs no inputs; one it declares for its own use (a dev shell, media's deemix) stays pinned by its `flake.lock`, and a `nixpkgs` input follows the daemon's.
+- The daemon builds a version 7 stack from a wrapper flake it writes to `/var/lib/homelab-daemon/stack-builds/<name>`: its base module (`apps/core/internal/stacks/stack-base.nix`, also the homelab flake's `nixosModules.stack-base`), the stack's module and a module setting the hostname (the installed name) and the time zone (the host's), on the nixpkgs commit the manifest's `nixpkgs` resolves to. `homelab stacks build <folder>` builds a checkout the same way, as you, without installing it. A base change reaches a stack at its next update; a core deploy never rebuilds a stack.
+- `nixpkgs` is `nixos-unstable`, `nixos-YY.MM` or a NixOS/nixpkgs commit. A channel is looked up (`git ls-remote`) on every fetch, so the six-hourly check offers a moved channel as an update, applied by Update with the usual health check and rollback. Each generation and the stack lock record the commit, so a restore rebuilds the same system.
+- The operator may choose another nixpkgs per stack (`homelab stacks nixpkgs`, or the dashboard's NixOS version card). A choice older than the one the stack runs is refused with `nixpkgs_downgrade` unless it is confirmed (`--allow-downgrade`, a checkbox on the dashboard): a newer version may already have upgraded the stack's data. Older means an earlier NixOS release (the commit's `lib/.version`; unstable carries the next release), or the same release made earlier. Dates alone would mislead, because a stable branch gets commits as new as unstable's with older packages.
+- Only version 7 and later are built: a fetch refuses an older commit (`invalid_manifest`) and a stack still approved at one (from an old lock) fails its build with `manifest_too_old` until a newer commit is approved. Older manifests still parse, because stored generations carry them. Up to version 6 a repo built its own `nixosConfigurations.<manifest name>`; that path was removed once every stack was on version 7 (#87).
+- The manifest's name is the repo's own. It is only the suggested install name: the operator may install the stack under another one (`homelab stacks add --name`), so one repo can run twice. The installed name is fixed after that, because the container, `ve-<name>`, the units, the state directory, the variables, the backups and the metrics are all keyed on it. To rename a stack, set its label (`homelab stacks label`, or Rename… on the dashboard); it changes only what people see. A repo may change its manifest's name in a later commit; the installed stack keeps its name.
+- `homelab-stack.json` at the repo root is the manifest. Version 1 has: `name`, `routes` (host, port, optional `max_body`), `storage` (host path, mount point, read-only), `gpu`, `egress` (`host` or a CIDR, port, protocol) and `health` (units that must be active, optional HTTP probe). Version 2 adds `ports` (a host port forwarded to a stack port, with protocol and the client CIDRs allowed, `from`) and `containers` (podman may run in the stack). Version 3 adds `api` (`["read"]`, `["control"]` or both): access to the daemon API on the stack listener. Version 4 adds `secrets` (`[{"name", "description"}]`). Version 5 replaces `secrets` and `storage` with `variables` (below) and refuses both; versions 1–4 still parse, a version 4 secret reading as a required secret. Version 6 adds `backup`. Version 7 adds `nixpkgs` (required), builds `nixosModules.default` on the daemon's base, and changes env variables (below). Version 8 adds route labels, `address` variables, a path's `owner` and `group`, and the host module (see "Version 8: a repo that names nothing of its host"). Unknown fields are refused, and a manifest cannot use the fields of a later version than its own.
+- A variable is `{"name", "kind", "description", "required"}`, plus an optional `default` for env and path, and `mount` (required) and `read_only` for a path. Names match `^[A-Z][A-Z0-9_]{0,63}$` and are unique. The kinds:
+  - `env`: a plain value. From version 7 it has no `default`: the value the stack's flake sets is the default. It may have a `type` (`string`, `number`, `boolean`), only a hint for the dashboard's input, and an `enum`, the values allowed; the daemon refuses any other.
+  - `secret`: write-only, never shown again. It has no default.
+  - `path`: a host directory the operator picks, bound at `mount` in the stack. A default must be a host path a stack may be given (as storage was), and each mount is used once. From version 8 it may name an `owner` and a `group` (below).
+  - `address` (version 8): IPv4 addresses or CIDRs, comma- or space-separated, stored comma-joined as typed (an address stays without `/32`, so a service can build a URL from it). It has no default.
+- A variable's value is the one the operator stored, else its default, else it is unset. Every required variable needs a value before an install or update. An optional one may stay unset, and the stack then gets nothing for it: no file, no env line, no bind.
+- Routes, storage (a path variable, or a version 1–4 `storage` entry), the GPU, egress, ports, containers and each API scope are grants. The operator approves them at install, and again when a new commit asks for more; dropping one needs no approval. The health check and env and secret variables are not grants. A path is not new when the approved manifest already binds its mount at the same or wider access, as a path or as `storage` from the path's default, so moving storage to a path variable asks nothing. A port grant may not take 22, 53, 80 or 443, and two stacks cannot be approved for the same host port.
+
+### The system
+
+The base module sets the first three of these for a version 7 stack; a version 1–6 repo sets them itself.
+
+- Set `boot.isContainer = true`.
+- Set `system.activationScripts.specialfs = lib.mkForce "";`. nspawn mounts `/run` and `/dev/shm`, and inside the user namespace they cannot be remounted. Without this line `switch-to-configuration` fails; the daemon then restarts the container instead, so every update costs a restart.
+- Use systemd-networkd and systemd-resolved, and configure no address. The host binds a networkd file for `host0` to `/run/systemd/network/10-homelab-host0.network` with the address, gateway and public DNS servers.
+- Services that Caddy or the health probe reach must listen on the stack's address, not `127.0.0.1`, and the stack's own firewall must open those ports (from version 8 the host module opens them).
+- A user that owns data on a path or storage bind must have the same uid and gid as the owner on the host. Ids are shared, not translated. Before version 8 the stack pins them (Immich 994:990); from version 8 the path's `owner` and `group` take them from the host directory.
+- The repo holds no secret values, no sops and no host key. A secret is a variable of kind `secret`, read from `/run/secrets/<NAME>` (mode 0400, owned by the stack's root, no trailing newline). An env variable arrives the same way, its default included while no value is stored. A root service reads the file directly; a service running as another user takes it with `LoadCredential=`. Each service gets only its own secrets: do not hand a service the whole env file when it needs one value.
+- A path is not delivered as a value: the stack uses its `mount`, and nothing in the repo names the host directory. Keep the mount at the absolute path the data had on the host (media: `MEDIA_DIR` at `/pool/media`), so the services' own settings need no change.
+- `/run/secrets/env` holds every delivered variable whose value is env-safe as `NAME=value` (one line, no surrounding whitespace, none of `" ' \ $`); other values are only in their file. A unit that should take the plain values sets `EnvironmentFile=/run/secrets/env` (or podman `environmentFiles`). The file always exists, even when empty.
+- From version 7, `/run/secrets/env` holds env values only, never a secret, and the base module makes it the last `EnvironmentFile=` of every service the stack declares. systemd lets an env file override `Environment=`, so a value set on the host overrides the one in the flake, for every service; unset, the flake's own value applies. A secret is only its file.
+- A changed value reaches the files at once, but a service reads it only when it starts. The daemon records a digest of `/run/secrets` and the API env file when the container boots, and the stack page asks for a restart of the stack while what is there differs (a value, a path or the API token changed). Nothing restarts on its own, and a stack needs no path unit that watches the token file: `HOMELAB_API_TOKEN` shows among its variables as one the host fills in.
+- Pin the database's major version in the stack. A stack that takes over an existing database restores a dump of it.
+- Dump the database on a timer to a directory inside the stack (Immich: `services.postgresqlBackup` to `/var/backup/postgresql`). A dump restores where a file copy of a running Postgres may not. Declare the dump directory as a recommended folder and the dump unit as the `prepare` unit (see Backups below), so a backup run takes a fresh dump before it copies.
+- The units in `health.units` are the stack's services as the host sees them: the health check, the stack monitor and the service list all use that list. Name every unit that must be up.
+- A service moved from the host keeps its state at the absolute path it had there (`/cache/appdata/<service>`), now inside the stack's root. Moving it is an `mv` within `/cache`, and nothing in the service's own settings (Plex preferences, an arr's config.xml, the Bridge vault, which records its cache path) has to change.
+- The arrs (Sonarr, Radarr, Prowlarr) take the client address from `X-Forwarded-For` only from a trusted proxy, and with "disabled for local addresses" they ask for a login whenever that header is left unread. Caddy reaches a stack from the host's `.1`, not loopback, so set `settings.server.trustedNetworks = "10.99.0.0/16"`. `ASPNETCORE_FORWARDEDHEADERS_ENABLED` does not help.
+- A network namespace made inside the stack (the arr stack's `vpn`, a WireGuard tunnel for qBittorrent) works, but `ip netns exec` and `ip -n` fail: they remount `/sys`, which the user namespace refuses. Run commands in it with `nsenter --net=/run/netns/<name>` and units with `NetworkNamespacePath=`.
+- Podman runs in a stack with the containers grant, with its own bridge network inside the stack's namespace. Start containers from units (`virtualisation.oci-containers`), and pin images by digest. A container reaches the host as the stack's address.
+
+### Moving services between stacks
+
+Learned splitting `media` into six stacks (2026-11-17). Per service group: drop it from the old stack's repo and update that stack first (two stacks cannot hold the same route or host port), install the new stack and start it once fresh, stop it, then `mv` the state from the old root into the new one, all within `/cache`. A stack root stores files with the stack's own uids (an idmapped root), so a moved directory keeps its owners: `chown -R` it to the new stack's user when the uid differs (a static NixOS id such as postgres 71, sonarr 274 or plex 193 does not). A secret the new stack needs and the old one still has is in `/run/homelab-stack-vars/<old>/<NAME>`: pipe it as root into `homelab stacks var set <new> <NAME> --value-stdin`, never through argv. App settings that name the old stack's gateway (`10.99.N.1`, such as CWA's mail server) need the new one. The arrs' `config.xml` Postgres settings are dropped once the stack gives them through `settings.postgres` (socket, peer authentication); Sonarr logs its whole connection string, password included, at every start.
+
+### Version 8: a repo that names nothing of its host
+
+A public stack carries no hostnames, LAN addresses, uids, time zone or user names. Version 8 moves each into the host:
+
+- **Route labels.** A route's `host` may be a label (`"photos"`), served as `photos.<domain>`, where the domain is `services.homelab-daemon.stacks.domain`. The label is resolved when the manifest is read, so grants, the stored manifest and Caddy see the full hostname. A host with no domain refuses a manifest with a label (`invalid_manifest`). A full hostname still works.
+- **Address variables.** Egress `"to": "$NAME"` and a port grant's `"from": ["$NAME"]` name an `address` variable; `"from": ["lan"]` is the host's LAN (`stacks.lan`). The grant the operator approves is the reference ("MQTT_HOST (the addresses you give) port 1883/tcp"); setting the value is the approval of the addresses, as picking a path is. The firewall is written with the values at each start: an unset optional one opens nothing, a port grant left with no clients is dropped. A changed value changes `/run/secrets`, so the stack page asks for a restart, which reloads the rules. The value also reaches the stack like an env value (`/run/secrets/<NAME>` and the env file).
+- **Owner and group.** A path's `"owner": "jellyfin"` and `"group": "media"` name a user and a group the stack declares; the daemon reads the host directory's uid and gid and the host module sets them (`lib.mkForce`, over NixOS's static ids). A root-owned directory is refused at build: give it an owner of its own. Two paths that would give one user or group two ids are refused. A generation records the ids (`host_ids`); the stack's row holds what the folders have now, refreshed on every fetch and every variable change, so a chown or a new path shows as an update ("The owners of its folders changed") and the update rebuilds.
+- **Host module.** Written into the wrapper after the base and the stack's module: those ids, `networking.firewall.allowedTCPPorts`/`allowedUDPPorts` for the routes, the health probe and the port grants' targets, and with the GPU grant the host's drivers (`stacks.gpu.packages`, built from the stack's own nixpkgs, those nixpkgs flags as vulnerable permitted by name) and `LIBVA_DRIVER_NAME`. A stack drops its own `hardware.graphics` and firewall lines. A version 7 stack gets none of it, so its wrapper is unchanged.
+- **Built-in values.** `HOMELAB_DOMAIN` and `HOMELAB_DASHBOARD_URL` are in `/run/secrets/env` (and their files) of a version 8 stack, listed as variables the host fills in. These names, `HOMELAB_API_TOKEN` and `HOMELAB_API_URL` cannot be set or declared.
+- **Time zone.** Already the host's (base module). A podman container gets `TZ = config.time.timeZone`.
+
+Conventions for a public stack repo: `flake.nix`, `homelab-stack.json`, `stack.nix` (a second module file only past about 150 lines) and `package.nix` when it builds its own software; state under `/var/lib/<service>`; images pinned by digest; a README in the order what it runs, each grant and why, the variables, first-run steps, what the backup recommends.
+
+### What the host gives it
+
+- A user namespace, a read-only `/nix/store`, its own profile under `/nix/var/nix/profiles/per-stack/<name>`, and state under `/cache/appdata/stacks/<name>` (the container root and `variables.age`). None of it is backed up unless a backup includes it: the stack's recommended folders, or the Core source for `variables.age`.
+- One `/24` out of `10.99.0.0/16`: the host is `.1` on `ve-<name>`, the stack is `.2`. The host resolves the stack's name to its address (nss-mymachines), so host tools can use `<name>` as a hostname.
+- The internet and Caddy on the host's port 443. The rest of the host, the private ranges, the Tailscale range and IPv6 are refused unless an egress grant opens them. The dashboard refuses stack addresses outright. The host's mail relay accepts `10.99.0.0/16`, so an egress grant to host port 25 is all a stack needs to send mail.
+- With a port grant, connections from the named clients to that port on any of the host's own addresses are forwarded to the stack with their source address kept, so Plex sees a LAN client as local. Forwarding to a port podman publishes inside the stack works too.
+- Device nodes under `/dev/dri` with the GPU grant. They belong to nobody inside the stack, so group membership does nothing; access works because the host's render node is mode 0666.
+- A route per manifest entry, imported into the host's wildcard Caddy site (`*.example.com`) after the host's own routes. A hostname the host already serves stays with the host, and a hostname outside that site is never served.
+- A public hostname is not a grant. The Cloudflare tunnel in core points the public name at the stack's Caddy route (`immich.example.org` to `immich.example.com`), so it follows the stack without knowing its address.
+- A row per service unit in the host's service list, named `<stack>-<unit>` (a unit already named after its stack, such as `immich-server`, keeps its name), with start, stop, restart and logs going into the stack. Home Assistant entities follow these names. Two units of a manifest that would get the same name are refused.
+- A monitor: every minute the daemon starts a stack whose container is gone, and opens a problem when the health check has failed three times in a row.
+- An update check: every six hours, and on `homelab stacks check`, the daemon fetches every stack's source. A new commit with no new grants is approved; one with new grants waits. One problem per stack (key `stack-update:<name>`) stays open while commits wait, saying whether they need approval, and closes once the stack runs the approved commit.
+- A record of every install, update and rollback (`GET /stack-updates`), with the build output, the reason it did not end healthy, and the package diff from the generation before. A failed build is recorded too. Rollback goes to the previous generation or, with `--generation N`, to any built one that is not marked failed.
+- Stack variables: one set per stack, each with a name and a value. A declared one takes its kind from the manifest; the operator can add env variables of their own (same name rule), plain by default and markable secret, which is one-way. The operator cannot add a path. A secret's value is never shown or returned again. They are set with `PUT`/`DELETE /stacks/{name}/variables/{NAME}` or `homelab stacks var set|rm|list` (with KIND and REQUIRED columns), and the stack view lists them, each with `kind`, `required`, `default`, `mount`, `read_only` and `source` (`stored`, `default` or `unset`), and `variables_ready`. A `PUT` on a declared path needs an existing host directory a stack may be given (`422 invalid_path`); `secret: true` on a declared env or path variable is `422 kind_mismatch`. The daemon never deletes one: a value whose name the manifest does not (or no longer) declares is kept, still delivered, and flagged "not declared" until the operator removes it.
+- A path's host directory is the operator's choice, and setting it is the approval. When a commit is approved (by hand, or automatically at fetch), each path with a default and no stored value gets the default stored, so a later commit that changes the default does not move the data.
+- The arguments a container booted with are recorded. When they differ from what its generation and the stored values give now, for example after a path changed, the stack view shows `restart_needed`, and the CLI and dashboard say to restart. Nothing restarts on its own: `homelab stacks stop` and `start` the stack.
+- They are stored in one file, `/cache/appdata/stacks/<name>/variables.age`, encrypted with age to the host's sops key (`/var/lib/sops-age/keys.txt`). A backup's Core source copies that file, so the copy off the host holds them unreadable, and `homelab stacks restore` gets them back with the data. The host key is not in that backup; keep it as for core's own secrets.
+- Before every boot and after each change the daemon renders the env and secret values (and env defaults) to `/run/homelab-stack-vars/<name>/` (tmpfs, outside the daemon's own `RuntimeDirectory`, which a daemon restart wipes), and binds that read-only and idmapped at `/run/secrets` in a stack of manifest version 4 or later. The bind is keyed off the version, so the update that brings a stack to version 4 restarts its container.
+- A variables gate: an install or update of a commit whose manifest requires a variable that has no value is refused (`409 variables_not_ready`, naming them in `missing`). Values can be set before the update that needs them; `variables_ready` and the `stack-update:<name>` problem look at the newest fetched manifest, so they say when commits wait for values.
+- CPU and memory per stack (`machine.slice/<name>.scope`) and per health unit (its cgroup under `payload/system.slice`), sampled every 10 s.
+- A lock: `/cache/appdata/stacks/stacks.lock.json` lists each approved stack's source, commit, manifest, subnet and whether it runs. It is rewritten on every change and is part of a backup's Core source. After losing the daemon's database, `homelab stacks restore` reinstalls the locked stacks with their existing data and variables and starts those that ran.
+
+### Backups
+
+Nothing in a stack is backed up by default. A version 6 manifest recommends what is worth it, and the operator ticks those folders into a backup in the dashboard:
+
+```json
+"backup": {
+  "prepare": "postgresqlBackup.service",
+  "folders": [
+    { "label": "Database dumps", "path": "/var/backup/postgresql" },
+    { "label": "Library", "variable": "UPLOAD_DIR",
+      "exclude": [{ "pattern": "/thumbs/**", "reason": "regenerated" }] }
+  ]
+}
+```
+
+- A folder is a `path` inside the stack or a `variable` of kind path, never both. Its key (the path or the variable's name) is what a backup stores, so renaming a path makes it a new folder that is not backed up until ticked again.
+- Recommend data, not the whole root: `path: "/"` is refused. Leave out what can be rebuilt (caches, indexes, images) or skip it with a pattern and a reason.
+- Patterns start with `/` or `**/` and use only literals, `*`, `**` and `?`, so one pattern means the same to rclone and restic.
+- `prepare` is one `Type=oneshot` unit. A run starts it and waits (30 minutes at most) before copying the stack's folders. If it fails, only that stack's folders fail. A stopped stack is copied without it, with a note on the result.
+- After an install or update that adds recommended folders no backup includes, the operator gets one notification; the Backups page lists them as not backed up.
+- The run itself copies from the host: a `path` is read from the stack's root under `/cache/appdata/stacks/<name>/root`, or through the bind when it sits under a path variable's mount.
+
+### API access
+
+A stack that needs the daemon (a Home Assistant bridge reads services, backups and the version, and switches stack units) asks for it in a version 3 manifest:
+
+- `read` is every GET (22 today): services, stacks, their updates and the lock, backups with their runs and logs, logs, storage, the config view, notifications, system updates, the version. The secrets GETs are in it; they return metadata only. The stack view's variables are in it too, with plain values only, never a secret's.
+- `control` is start, stop and restart of stack units, and start and stop of stacks, including other stacks (HA switches them). A stack that names a core or unknown unit gets 403 `core_unit`.
+- Neither covers anything else. Approve, add, remove, fetch, update, rollback, restore, check, secret and stack variable writes, running or changing backups, pool and subvolume actions, notification writes and reboot stay with the operator; on the stack listener they do not exist (404).
+
+When an approve first includes an `api` scope, the daemon mints a random token and stores only its SHA-256 on the stack's row. The plain token goes to `<state>/<name>/homelab-api/env` (mode 0400) as
+
+```
+HOMELAB_API_URL=http://10.99.N.1:7781/api
+HOMELAB_API_TOKEN=…
+```
+
+and that directory is bound read-only and idmapped at `/var/lib/homelab-api` in the stack, the way `/run/secrets` is, so host root never writes into the stack's root. A start rewrites a missing or stale file (another address, a hash that no longer matches) with a new token. Dropping the grant or removing the stack deletes the hash and the file. `homelab stacks show <name>` prints the granted scopes.
+
+The daemon serves the stack listener on TCP 7781, with only the read and control operations registered. The stack's nft input chain opens 7781 only while an `api` scope is approved. Every request needs `Authorization: Bearer <token>` (else 401 `unauthorized`), must come from the address of the stack that owns the token (else 403 `wrong_source`), and may call only an operation whose scope the stack holds (else 403 `scope_not_granted`). The listener serves its own document at `/api/openapi.json`; `homelab-daemon openapi --stack` prints it.
+
+In the stack, give the unit the file and read the two variables:
+
+```nix
+systemd.services.homelab-ha.serviceConfig.EnvironmentFile = "/var/lib/homelab-api/env";
+```
+
+The unit should start after the file exists and fail clearly without it: the first start after an approve is what writes it.
+
+### A local folder as the source
+
+`git+file:///path` installs the folder's checked-out commit (`?ref=HEAD` is added, so uncommitted changes are never built; the dashboard says when there are some). The checkout belongs to the operator, and the daemon runs as root: git and nix's libgit2 refuse a repository another user owns (`is not owned by current user`), and a repo's own config (`core.fsmonitor` and friends) would run as root if they did not. So the daemon runs `nix flake prefetch` and every `git` command in the folder as the folder's owner, and root builds only the store copy that prefetch produced, pinned by its hash (`path:/nix/store/…-source?narHash=…`). Do not "fix" the ownership error with `safe.directory`.
+
+### Written in the dashboard
+
+The third source (Add stack, "Write it here") is a draft: a git repo the daemon owns at `/var/lib/homelab-daemon/drafts/<name>` (root-owned, so git and nix run as root there, unlike an operator's local folder), started from `apps/core/internal/drafts/template/` (version 8, a route, a path variable, health and backup). Save commits the editor's two files as the daemon (`homelab dashboard`), Check runs `stacks.CheckManifest` under the draft's name, and Build runs `stacks.FileBuild` on the saved commit: the code path `homelab stacks build` uses, with placeholder ids for the folders. Install is `POST /stacks` with the draft's `git+file://` source, then the usual grants step, so pin, update, rollback and the lock need nothing new. A save makes each stack installed from the draft fetch at once, so it shows as an update (approved by itself when it asks for nothing new). A draft a stack is installed from cannot be deleted. The drafts folder is part of a backup's Core source.
+
+The editor's assistant (Settings, AI assistant) gets `apps/core/internal/drafts/guide.md` as its system prompt, a condensed form of this document. Change the guide when the manifest or the base module changes.
+
+### Operating one
+
+```
+homelab stacks add <source>           # reads the manifest
+homelab stacks var set <name> <NAME> --value-stdin   # each required variable without a default
+homelab stacks approve <name> <rev>
+homelab stacks start <name>           # builds on first start
+homelab stacks fetch <name>           # new commit; new grants wait for approval
+homelab stacks update <name>          # unhealthy result is rolled back
+homelab stacks rollback <name> [--generation N]
+homelab stacks check                  # fetch every stack now
+homelab stacks restore [lock file]    # after the daemon's database is lost
+```
+
+Inside a stack: `systemctl -M <name>`, `journalctl -M <name>`, and `systemd-run -M <name> --pipe -- <absolute path>` to run a command. A stack's journal persists in its root (`/var/log/journal`), so the daemon reads it with `journalctl --directory` whether or not the stack runs; the stack's dashboard page shows each of its services' logs.
+
+## Why This Matters
+
+- The host firewall trusts `ve-*` interfaces, so the per-stack nftables table is the only filter between a stack and the host. The daemon loads it before the container exists and removes it only once the container is gone. A rule that weakens either end opens every host port to a stack.
+- The operator API has no login; on the private network anyone who reaches the dashboard can approve grants. That is why Caddy refuses `10.99.0.0/16` on the dashboard host. A new host route that exposes the daemon needs the same refusal. A stack reaches the daemon only through the stack listener, which has no operator operation registered at all, so a stack with a token still cannot approve its own grants.
+- An update switches the running system in place and falls back to restarting the container when its arguments (the binds) differ from the ones it booted with, or the switch failed. The health check then decides: a generation that is not healthy within five minutes is rolled back and marked failed. An install or update in flight is stored in the database, so a daemon restart finishes it instead of leaving an unchecked generation running.
+- The container's processes run in a scope beside the stack's unit, so they survive when nspawn itself is killed. A stack counts as stopped only when systemd knows no container of its name; anything that removes firewall rules or starts a container checks that, not the unit alone.
+- Immich sets a user's admin flag from the `immich_role` claim at every OAuth sign-in. A claim on the whole Pocket-ID group demotes every admin; only a per-user claim may carry it.
+- `remove` forgets a stack's generations, rules and routes, and leaves `/cache/appdata/stacks/<name>` in place: it holds the stack's data.
+- A first start whose services are unhealthy keeps the stack running and reports a problem; only an update rolls back. A migration can therefore start the stack and restore its database afterwards. Keep services that would create an empty schema (the arrs) off the database until the restore is done; pointing them at a closed port in their config is enough.
+- Skip patterns are anchored at their folder. An unanchored pattern such as `frigate/**` matches a directory of that name at any depth, and once kept Frigate's config out of the backup; the manifest therefore refuses a pattern that does not start with `/` or `**/`.
+
+## Related
+
+- [daemon-feature-packages.md](daemon-feature-packages.md)
+- [sqlite-runtime-store.md](sqlite-runtime-store.md)
+- [code-first-huma-api-problem-json.md](code-first-huma-api-problem-json.md)
+- `docs/plans/2026-11-15-2148-feat-stack-runtime-immich-plan.md`
+- `docs/plans/2026-11-16-0422-feat-email-media-stacks-plan.md`
+- `docs/plans/2026-11-16-1243-feat-stack-variables-fill-in-plan.md`
+- `docs/plans/2026-11-16-1336-feat-stack-variable-kinds-plan.md`

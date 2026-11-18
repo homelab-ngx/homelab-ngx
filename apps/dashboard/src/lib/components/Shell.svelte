@@ -1,0 +1,74 @@
+<script lang="ts">
+  import { createQuery } from "@tanstack/svelte-query";
+  import { CircleQuestionMark, Settings } from "@lucide/svelte";
+  import type { Snippet } from "svelte";
+  import { fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
+  import { help, toggleHelp } from "#lib/help.svelte.ts";
+  import type { NavItem } from "#lib/nav.ts";
+
+  interface Props {
+    active: string;
+    nav: NavItem[];
+    settings: NavItem;
+    /** A workbench page (the stack editor): the full width, little margin. */
+    wide?: boolean;
+    children: Snippet;
+  }
+  let { active, nav, settings, wide = false, children }: Props = $props();
+
+  const stacks = createQuery(() => ({ queryKey: keys.stacks, queryFn: fetchStacks, refetchInterval: idlePoll }));
+  function onkeydown(e: KeyboardEvent) {
+    if (e.key !== "F1") return;
+    e.preventDefault();
+    toggleHelp();
+  }
+
+  const pending = $derived((stacks.data ?? []).filter((s) => s.generation > 0 && s.update_state !== "up_to_date").length);
+</script>
+
+<svelte:window {onkeydown} />
+
+<div class="flex min-h-dvh flex-col">
+  <header class="sticky top-0 z-30 min-w-0 border-b border-line bg-surface/95 backdrop-blur">
+    <nav aria-label="Main" class="mx-auto flex max-w-6xl items-center gap-1 px-4 py-2">
+      <!-- The page links scroll sideways on a phone; Help and Settings stay on screen. -->
+      <div class="relative flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+      <a href="/" class="mr-1 shrink-0 whitespace-nowrap font-semibold tracking-tight sm:mr-3">homelab-ngx</a>
+      {#each nav as item (item.href)}
+        <a
+          href={item.href}
+          aria-current={active === item.href ? "page" : undefined}
+          class="shrink-0 rounded-md px-2 py-1 sm:px-2.5 text-muted hover:text-fg aria-[current=page]:bg-accent-soft aria-[current=page]:font-semibold aria-[current=page]:text-accent"
+        >
+          {item.label}
+          {#if item.href === "/stacks" && pending > 0}
+            <span class="ml-1 rounded-full bg-warn-soft px-1.5 text-xs text-warn" aria-label="{pending} stacks with updates">{pending}</span>
+          {/if}
+        </a>
+      {/each}
+      </div>
+      <button
+        type="button"
+        class="relative flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-accent aria-pressed:bg-accent-soft aria-pressed:text-accent"
+        aria-pressed={help.all}
+        title="Show the help under every label (F1). A single label unfolds its own when clicked."
+        onclick={toggleHelp}
+      >
+        <CircleQuestionMark class="size-4" aria-hidden="true" />
+        <span class="max-sm:sr-only">Help</span>
+      </button>
+      <a
+        href={settings.href}
+        aria-current={active === settings.href ? "page" : undefined}
+        class="relative flex shrink-0 items-center border-l border-line pl-2 text-muted hover:text-fg aria-[current=page]:font-semibold aria-[current=page]:text-core sm:pl-3"
+      >
+        <!-- A phone has no room for the word; the gear keeps Settings on screen. -->
+        <Settings class="size-4 sm:hidden" aria-hidden="true" />
+        <span class="max-sm:sr-only">{settings.label}</span>
+      </a>
+    </nav>
+  </header>
+  <main class="mx-auto w-full min-w-0 flex-1 {wide ? 'px-2 py-2 sm:px-3' : 'max-w-6xl px-4 py-6'}">
+    {@render children()}
+  </main>
+</div>

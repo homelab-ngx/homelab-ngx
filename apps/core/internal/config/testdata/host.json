@@ -1,0 +1,42 @@
+{
+  "cloudflare_tunnel": {
+    "enabled": true,
+    "hostnames": [
+      "auth.example.net",
+      "immich.example.net",
+      "calibre.example.net",
+      "music.example.net"
+    ],
+    "metrics_url": "http://127.0.0.1:20241",
+    "public_hostnames": {
+      "auth.example.net": "Pocket-ID is the identity provider Access authenticates against; guarding it is circular",
+      "immich.example.net": "authenticates via OIDC against Pocket-ID; Access breaks the iOS app, which cannot send CF-Access-Client-Id headers",
+      "music.example.net": "Subsonic clients cannot complete an interactive Access login; gated instead by a Cloudflare WAF rule matching the x-key header (the expression must spell that header lowercase or it 403s everything)"
+    }
+  },
+  "core_services": [
+    "caddy.service",
+    "homelab-daemon.service",
+    "influxdb2.service",
+    "nfs-server.service",
+    "pocket-id.service",
+    "samba-smbd.service",
+    "samba-wsdd.service",
+    "scrutiny.service",
+    "tailscaled.service",
+    "wireguard-wg-rw.service"
+  ],
+  "db": {
+    "retention_days": 90,
+    "snapshot_keep": 7,
+    "snapshot_schedule": "45 2 * * *"
+  },
+  "paths": {
+    "backup_runner": "/nix/store/00000000000000000000000000000000-homelab-backup-runner/bin/homelab-backup-runner",
+    "db": "/var/lib/homelab-daemon/homelab.db",
+    "db_backup_dir": "/cache/daemon/backups",
+    "socket": "/run/homelab-daemon/daemon.sock",
+    "state_dir": "/var/lib/homelab-daemon"
+  },
+  "version": 2
+}

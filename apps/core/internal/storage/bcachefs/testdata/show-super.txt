@@ -1,0 +1,60 @@
+Device:                                     (unknown device)
+External UUID:                              f6f35d64-0b1c-4a6e-9a47-7a1d3c2e9b10
+Internal UUID:                              2f1d5c0e-8f3a-4b57-8d6e-5b9c1a7e4d33
+Magic number:                               c68573f6-66ce-90a9-d96a-60cf803df7ef
+Device index:                               0
+Label:                                      pool
+Version:                                    1.13: inode_has_child_snapshots
+Incompatible features allowed:              0.0: (unknown version)
+Incompatible features in use:               0.0: (unknown version)
+Version upgrade complete:                   1.13: inode_has_child_snapshots
+Oldest version on disk:                     1.13: inode_has_child_snapshots
+Created:                                    Wed May 27 21:40:12 2026
+Sequence number:                            412
+Time of last write:                         Tue Oct 13 02:11:40 2026
+Superblock size:                            6.23 KiB/1.00 MiB
+Clean:                                      0
+Devices:                                    4
+Sections:                                   members_v1,replicas_v0,disk_groups,clean,journal_seq_blacklist,journal_v2,counters,members_v2,errors,ext,downgrade
+Features:                                   lz4,journal_seq_blacklist_v3,reflink,new_siphash,inline_data,new_extent_overwrite,btree_ptr_v2,extents_above_btree_updates,btree_updates_journalled,reflink_inline_data,new_varint,journal_no_flush,alloc_v2,extents_across_btree_nodes
+
+Options:
+  block_size:                               4.00 KiB
+  btree_node_size:                          256 KiB
+  errors:                                   continue [fix_safe] panic ro
+  metadata_replicas:                        2
+  data_replicas:                            1
+  metadata_replicas_required:               1
+  data_replicas_required:                   1
+  compression:                              lz4
+  background_compression:                   none
+  foreground_target:                        ssd
+  background_target:                        hdd
+  promote_target:                           none
+  metadata_target:                          ssd
+
+members_v2 (size 592):
+Device 0:                                   sdb     ST4000VN008
+  Label:                                    hdd.hdd1 (4)
+  UUID:                                     5be0e7b4-6a1e-4b8e-8b21-2f2a1f7d4f01
+  Size:                                     3.64 TiB
+  State:                                    rw
+  Data allowed:                             journal,btree,user
+Device 1:                                   sda     Samsung
+  Label:                                    ssd.ssd1 (2)
+  UUID:                                     a0c2d8f1-3d5e-45c2-9a77-6a8b0c9b7e02
+  Size:                                     953 GiB
+  State:                                    rw
+  Data allowed:                             journal,btree,user
+Device 2:                                   sdc     ST4000VN008
+  Label:                                    hdd.hdd2 (5)
+  UUID:                                     77aa11cc-92d3-4f0b-b6e8-0a4c3d5f6a03
+  Size:                                     3.64 TiB
+  State:                                    rw
+  Data allowed:                             journal,btree,user
+Device 3:                                   sdd     ST4000VN008
+  Label:                                    (none)
+  UUID:                                     e3b0c442-98fc-4c14-9afb-f4c8996fb924
+  Size:                                     3.64 TiB
+  State:                                    rw
+  Data allowed:                             journal,btree,user

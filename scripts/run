@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+# run: run a command with its full output kept in a log file.
+# Usage: scripts/run [-n name] -- cmd args...
+#        scripts/run [-n name] -c 'shell string'
+#
+# The log is ~/.local/state/homelab/runs/<time>-<worktree>-<name>.log, and
+# runs/latest points at the newest one (tail -F it to follow a run). From a
+# terminal the output also streams as usual. Otherwise (an agent) the output
+# goes only to the log, and every 10s a heartbeat line shows the time, the
+# line count, how far along it is and the latest line. A run that ends within
+# 10s with 100 lines or fewer prints its output in full. The footer gives the
+# exit code, the time and the log; a failure adds its error lines and the
+# log's last 30 lines. The exit code is the command's own.
+#
+# How far along: the command's own latest "progress: NN%" line, else an
+# estimate from the last successful run of the same command (VAR=value
+# arguments aside), by its lines and its time. Each 20% passed prints a
+# "── ~NN% ──" line.
+set -uo pipefail
+
+name="" cmd=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n) name=$2; shift 2 ;;
+    -c) cmd=(bash -o pipefail -c "$2"); shift 2 ;;
+    --) shift; cmd=("$@"); break ;;
+    -h|--help) sed -n '2,18s/^# \{0,1\}//p' "$0"; exit 0 ;;
+    *) cmd=("$@"); break ;;
+  esac
+done
+if [ ${#cmd[@]} -eq 0 ]; then
+  echo "usage: scripts/run [-n name] -- cmd args... | scripts/run [-n name] -c 'shell string'" >&2
+  exit 2
+fi
+
+dir="${XDG_STATE_HOME:-$HOME/.local/state}/homelab/runs"
+mkdir -p "$dir"
+find "$dir" -name '*.log' -mtime +14 -delete 2>/dev/null
+ls -1t "$dir"/*.log 2>/dev/null | tail -n +200 | xargs -r rm -f
+
+top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+slug() { tr -c 'A-Za-z0-9._\n' '-' | tr -s '-' | sed 's/^-//; s/-$//' | cut -c1-40; }
+if [ -z "$name" ]; then
+  if [ "${cmd[0]}" = bash ] && [ "${cmd[1]:-}" = -o ]; then name=${cmd[4]}; else name="${cmd[*]:0:3}"; fi
+fi
+log="$dir/$(date +%Y%m%d-%H%M%S)-$(basename "$top" | slug)-$(printf '%s' "$name" | head -n1 | slug).log"
+[ -e "$log" ] && log="${log%.log}-$$.log"
+ln -sfn "$log" "$dir/latest"
+
+{
+  echo "# cmd:   ${cmd[*]}"
+  echo "# cwd:   $PWD"
+  echo "# rev:   $(git rev-parse --short HEAD 2>/dev/null || echo -)"
+  echo "# start: $(date -Is)"
+} >"$log"
+head=$(wc -l <"$log")
+body() { tail -n +"$((head + 1))" "$log"; }
+plain() { sed 's/\x1b\[[0-9;?]*[A-Za-z]//g'; }
+dur() { local s=$1; if [ "$s" -ge 60 ]; then echo "$((s / 60))m$((s % 60))s"; else echo "${s}s"; fi; }
+
+echo "log: $log"
+start=$SECONDS
+
+# The last successful run of the same command: its line count and seconds.
+key() { tr ' ' '\n' <<<"$1" | grep -vE '^[A-Za-z_][A-Za-z0-9_]*=' | tr '\n' ' '; }
+mykey=$(key "${cmd[*]}")
+plines=0 psecs=0
+while IFS= read -r f; do
+  [ "$f" = "$log" ] && continue
+  foot=$(tail -n1 "$f")
+  case "$foot" in "# exit 0 after "*) ;; *) continue ;; esac
+  [ "$(key "$(sed -n '1s/^# cmd:   //p' "$f")")" = "$mykey" ] || continue
+  t=${foot#\# exit 0 after }
+  if [[ $t =~ ^([0-9]+)m([0-9]+)s$ ]]; then psecs=$((BASH_REMATCH[1] * 60 + BASH_REMATCH[2]))
+  elif [[ $t =~ ^([0-9]+)s$ ]]; then psecs=${BASH_REMATCH[1]}; fi
+  plines=$(($(wc -l <"$f") - head - 1))
+  break
+done < <(ls -1t "$dir"/*.log 2>/dev/null)
+
+# pct LINES SECONDS: how far along, in percent, or nothing when unknown.
+pct() {
+  local own p
+  own=$(tail -c 65536 "$log" | tr '\r' '\n' | plain | grep -oE 'progress: [0-9]{1,3}%' | tail -n1 | tr -dc 0-9)
+  if [ -n "$own" ]; then echo "$own"; return; fi
+  [ "$psecs" -gt 0 ] && [ "$plines" -gt 0 ] || return 0
+  p=$(((${1} * 100 / plines + ${2} * 100 / psecs) / 2))
+  [ "$p" -gt 99 ] && p=99
+  echo "$p"
+}
+
+if [ -t 1 ]; then
+  # A person at a terminal: stream everything; Ctrl-C reaches the command.
+  "${cmd[@]}" 2>&1 | tee -a "$log"
+  code=${PIPESTATUS[0]}
+  shown=1
+else
+  # Its own process group, so a signal to run stops the whole command.
+  setsid "${cmd[@]}" <&0 >>"$log" 2>&1 &
+  pid=$!
+  trap 'kill -TERM -- -$pid 2>/dev/null' INT TERM HUP
+  if [ "$psecs" -gt 0 ]; then
+    echo "progress: estimated from the last successful run ($(dur "$psecs"), $plines lines)"
+  fi
+  (
+    passed=0
+    while sleep 10; do
+      n=$(($(wc -l <"$log") - head))
+      last=$(tail -c 4096 "$log" | tr '\r' '\n' | plain | grep -v '^[[:space:]]*$' | tail -n1 | cut -c1-160)
+      p=$(pct "$n" $((SECONDS - start)))
+      printf '[%s] %d lines%s · %s\n' "$(dur $((SECONDS - start)))" "$n" "${p:+ · ~$p%}" "$last"
+      if [ -n "$p" ] && [ $((p / 20 * 20)) -gt "$passed" ]; then
+        passed=$((p / 20 * 20))
+        echo "── ~$passed% · $(dur $((SECONDS - start))) ──"
+      fi
+    done
+  ) &
+  hb=$!
+  while :; do
+    wait "$pid"; code=$?
+    kill -0 "$pid" 2>/dev/null || break # wait returned for a trapped signal
+  done
+  kill "$hb" 2>/dev/null; wait "$hb" 2>/dev/null
+  trap - INT TERM HUP
+  shown=0
+  if [ $((SECONDS - start)) -lt 10 ] && [ "$(body | wc -l)" -le 100 ]; then
+    body
+    shown=1
+  fi
+fi
+
+took=$(dur $((SECONDS - start)))
+if [ "$code" -eq 0 ]; then
+  if [ "$shown" = 0 ]; then echo "── last lines ──"; body | plain | tail -n 10; fi
+  echo "ok · exit 0 · $took · log: $log"
+else
+  if [ "$shown" = 0 ]; then
+    errors=$(body | plain | grep -nE 'error:|Error|FAIL|panic:|failed|must succeed|✗' | awk '!seen[substr($0, index($0, ":") + 1)]++' | head -n 40)
+    if [ -n "$errors" ]; then echo "── error lines (line:text) ──"; echo "$errors"; fi
+    echo "── last 30 lines ──"; body | plain | tail -n 30
+  fi
+  echo "FAILED · exit $code · $took · log: $log"
+fi
+echo "# exit $code after $took" >>"$log"
+exit "$code"

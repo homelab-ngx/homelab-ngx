@@ -1,0 +1,14 @@
+#!/bin/bash
+# Build the out-of-tree bcachefs module against the image's one kernel and
+# copy only the .ko into the image; headers, dkms and gcc stay in the build overlay.
+set -euxo pipefail
+kver=$(ls /usr/lib/modules | head -n1)
+# pacman's version carries an epoch (3:1.39.7-1); dkms wants 1.39.7.
+ver=$(pacman -Q bcachefs-dkms | awk '{print $2}' | sed 's/^[0-9]*://' | cut -d- -f1)
+ko=$(find /usr/lib/modules/$kver -name 'bcachefs.ko*' | head -n1 || true)
+if [ -z "$ko" ]; then
+  dkms build "bcachefs/$ver" -k "$kver"
+  dkms install --force "bcachefs/$ver" -k "$kver"
+  ko=$(find /usr/lib/modules/$kver -name 'bcachefs.ko*' | head -n1)
+fi
+install -D -m644 "$ko" "$DESTDIR/usr/lib/modules/$kver/updates/$(basename "$ko")"

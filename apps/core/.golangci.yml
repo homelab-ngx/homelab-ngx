@@ -1,0 +1,26 @@
+version: "2"
+
+# Only the architecture rule is enforced here: every command goes through
+# internal/cmdrunner (one place that logs, times out and resolves secrets).
+# `go vet` and `go test` cover the rest.
+linters:
+  default: none
+  enable:
+    - forbidigo
+  settings:
+    forbidigo:
+      forbid:
+        - pattern: 'exec\.Command'
+          msg: run commands through internal/cmdrunner (cmdrunner.Runner)
+      analyze-types: false
+  exclusions:
+    rules:
+      # The runner itself.
+      - path: internal/cmdrunner/
+        linters: [forbidigo]
+      # Interactive TTY execs (journalctl -f, nh, nix, stty) are exempt (F13).
+      - path: cmd/cli/
+        linters: [forbidigo]
+      # Test helpers may shell out (e.g. to build a git fixture).
+      - path: _test\.go
+        linters: [forbidigo]

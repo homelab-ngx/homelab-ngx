@@ -1,0 +1,18 @@
+[Unit]
+Description=Daily homelab host health audit
+OnFailure=homelab-unit-failed@%n.service
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# HOMELAB_HEALTHCHECK_UUID, when the host has one.
+EnvironmentFile=-/var/lib/homelab/daemon.env
+ExecStart=/usr/bin/homelab doctor daily
+MemoryMax=64M
+TimeoutStartSec=60
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/homelab-daemon

@@ -1,0 +1,9 @@
+\e[H\e[2J
+   \e{blue}┌────────────┐\e{reset}
+   \e{blue}│\e{lightblue} •  \e{darkgray}──────\e{blue}  │\e{reset}   \e{white}homelab\e{lightblue}-ngx\e{reset}  \e{darkgray}\S{IMAGE_VERSION}\e{reset}
+   \e{blue}├────────────┤\e{reset}
+   \e{blue}│\e{lightblue} •  \e{darkgray}──────\e{blue}  │\e{reset}   \e{darkgray}host\e{reset}       \n
+   \e{blue}├────────────┤\e{reset}   \e{darkgray}dashboard\e{reset}  \e{lightblue}http://\n.local\e{reset}
+   \e{blue}│\e{lightblue} •  \e{darkgray}──────\e{blue}  │\e{reset}              \e{lightblue}http://\4\e{reset}
+   \e{blue}└────────────┘\e{reset}   \e{darkgray}\s \r\e{reset}
+

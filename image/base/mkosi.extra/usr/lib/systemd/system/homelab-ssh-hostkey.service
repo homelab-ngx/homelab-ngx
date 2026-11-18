@@ -1,0 +1,9 @@
+[Unit]
+Description=SSH host key on /var
+Before=sshd.service
+ConditionPathExists=!/var/lib/sshd/ssh_host_ed25519_key
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ssh-keygen -q -t ed25519 -N "" -f /var/lib/sshd/ssh_host_ed25519_key
+[Install]
+WantedBy=sshd.service

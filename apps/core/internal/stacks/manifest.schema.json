@@ -1,0 +1,222 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "homelab-stack.json",
+  "title": "homelab-stack.json",
+  "description": "A stack's manifest, version 8: what the stack asks of the host. Each route, path, egress, port, GPU, containers and API entry is a grant the operator approves. The host's Check is the authority; this schema is for the editor.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "name", "nixpkgs"],
+  "properties": {
+    "version": {
+      "description": "The manifest format. Write 8.",
+      "const": 8
+    },
+    "name": {
+      "description": "The stack's suggested name: 1-12 characters of a-z, 0-9 and '-', starting with a letter. The operator picks the installed name.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,11}$"
+    },
+    "nixpkgs": {
+      "description": "The nixpkgs the stack is built with: nixos-unstable, nixos-YY.MM or a 40-character NixOS/nixpkgs commit.",
+      "type": "string",
+      "pattern": "^(nixos-(unstable|[0-9]{2}\\.[0-9]{2})|[0-9a-f]{40})$",
+      "examples": ["nixos-unstable", "nixos-26.05"]
+    },
+    "routes": {
+      "description": "Hostnames the host's Caddy serves over HTTPS, each to a port in the stack.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/route" }
+    },
+    "variables": {
+      "description": "Values the host gives the stack: env, secret, path or address.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/variable" }
+    },
+    "egress": {
+      "description": "Destinations beyond the default. The stack reaches the internet and the host's Caddy on 443 without one; the LAN, other host ports, Tailscale and IPv6 are blocked unless opened here.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/egress" }
+    },
+    "ports": {
+      "description": "Ports on the host forwarded into the stack, for protocols Caddy cannot carry (RTSP, a game server, a media server's direct connections).",
+      "type": "array",
+      "items": { "$ref": "#/definitions/port" }
+    },
+    "gpu": {
+      "description": "The host's GPU devices and drivers in the stack.",
+      "type": "boolean"
+    },
+    "containers": {
+      "description": "Podman may run in the stack (it needs system calls a container refuses by default).",
+      "type": "boolean"
+    },
+    "api": {
+      "description": "The homelab daemon's API scopes the stack may call with its token: read (every GET) and control (start, stop and restart units).",
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "enum": ["read", "control"] }
+    },
+    "health": {
+      "description": "What makes a new version healthy. Every unit must be active and the HTTP probe must answer 2xx, or an update is rolled back.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "units": {
+          "description": "Every service that must be up, such as nginx.service.",
+          "type": "array",
+          "items": { "type": "string", "pattern": "^[A-Za-z0-9:_.@-]+\\.service$" }
+        },
+        "http": {
+          "description": "A probe on the stack's own address.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["port", "path"],
+          "properties": {
+            "port": { "$ref": "#/definitions/portNumber" },
+            "path": { "description": "Starts with / and has no spaces.", "type": "string", "pattern": "^/\\S*$" }
+          }
+        }
+      }
+    },
+    "backup": {
+      "description": "What the stack recommends backing up. Nothing is backed up until the operator adds a folder to a backup.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prepare": {
+          "description": "A oneshot unit in the stack (a database dump) started and waited for before the folders are copied.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9:_.@-]+\\.service$"
+        },
+        "folders": {
+          "description": "Data worth keeping, not caches.",
+          "type": "array",
+          "items": { "$ref": "#/definitions/backupFolder" }
+        }
+      }
+    }
+  },
+  "definitions": {
+    "portNumber": { "type": "integer", "minimum": 1, "maximum": 65535 },
+    "proto": { "description": "tcp or udp.", "enum": ["tcp", "udp"] },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port"],
+      "properties": {
+        "host": {
+          "description": "A label such as photos, served privately as photos.<the host's domain>, or a full hostname.",
+          "type": "string",
+          "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*$"
+        },
+        "port": { "description": "The port in the stack the service listens on (on 0.0.0.0).", "$ref": "#/definitions/portNumber" },
+        "max_body": {
+          "description": "Caddy's request body limit, such as 500MB or 50GB. Leave out for the default.",
+          "type": "string",
+          "pattern": "^[1-9][0-9]{0,5}(KB|MB|GB)$"
+        }
+      }
+    },
+    "variable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind"],
+      "properties": {
+        "name": {
+          "description": "1-64 characters of A-Z, 0-9 and '_', starting with a letter. HOMELAB_API_TOKEN, HOMELAB_API_URL, HOMELAB_DOMAIN and HOMELAB_DASHBOARD_URL are the host's.",
+          "type": "string",
+          "pattern": "^[A-Z][A-Z0-9_]{0,63}$",
+          "not": { "enum": ["HOMELAB_API_TOKEN", "HOMELAB_API_URL", "HOMELAB_DOMAIN", "HOMELAB_DASHBOARD_URL"] }
+        },
+        "kind": {
+          "description": "env: a plain value. secret: write-only. path: a host folder bound in at mount. address: IPv4 addresses or CIDRs, used by egress and ports as $NAME.",
+          "enum": ["env", "secret", "path", "address"]
+        },
+        "description": {
+          "description": "One short sentence: what the value is, with an example where it helps. The dashboard shows it as the variable's help.",
+          "type": "string",
+          "maxLength": 300
+        },
+        "required": { "description": "The stack does not build until the operator gives a value.", "type": "boolean" },
+        "default": { "description": "path only: the host folder used while the operator has picked none.", "type": "string", "minLength": 1 },
+        "mount": { "description": "path only: where the folder appears inside the stack, an absolute path used once.", "type": "string", "pattern": "^/" },
+        "read_only": { "description": "path only: bind the folder read-only.", "type": "boolean" },
+        "type": { "description": "env only: what the value is, for the dashboard's input.", "enum": ["string", "number", "boolean"] },
+        "enum": {
+          "description": "env only: the values allowed.",
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "owner": {
+          "description": "path only: a user the module declares, which takes the host folder's uid.",
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$"
+        },
+        "group": {
+          "description": "path only: a group the module declares, which takes the host folder's gid.",
+          "type": "string",
+          "pattern": "^[a-z_][a-z0-9_-]{0,31}$"
+        }
+      }
+    },
+    "egress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["to", "port", "proto"],
+      "properties": {
+        "to": {
+          "description": "host (the host itself; its mail relay is port 25), an IPv4 CIDR such as 10.0.0.5/32, or $NAME for an address variable.",
+          "type": "string",
+          "examples": ["host", "10.0.0.5/32"]
+        },
+        "port": { "$ref": "#/definitions/portNumber" },
+        "proto": { "$ref": "#/definitions/proto" }
+      }
+    },
+    "port": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["port", "to", "proto", "from"],
+      "properties": {
+        "port": {
+          "description": "The port on the host. Never 22, 53, 80 or 443.",
+          "allOf": [{ "$ref": "#/definitions/portNumber" }, { "not": { "enum": [22, 53, 80, 443] } }]
+        },
+        "to": { "description": "The port in the stack.", "$ref": "#/definitions/portNumber" },
+        "proto": { "$ref": "#/definitions/proto" },
+        "from": {
+          "description": "The clients allowed: lan (the host's LAN), IPv4 CIDRs, or $NAME for an address variable.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "backupFolder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label"],
+      "properties": {
+        "label": { "description": "What the folder holds, as the backup page shows it.", "type": "string", "minLength": 1, "maxLength": 300 },
+        "path": { "description": "A folder inside the stack, such as /var/lib/app. Not /.", "type": "string", "pattern": "^/.+" },
+        "variable": { "description": "A path variable whose host folder is backed up.", "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" },
+        "exclude": {
+          "description": "Patterns left out, each with why.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pattern", "reason"],
+            "properties": {
+              "pattern": { "description": "Starts with / or **/, such as /cache/**.", "type": "string", "pattern": "^(/|\\*\\*/)" },
+              "reason": { "type": "string", "maxLength": 300 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

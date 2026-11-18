@@ -1,0 +1,14 @@
+[Unit]
+Description=Check this image version is healthy
+Requires=boot-complete.target
+Before=boot-complete.target
+After=sshd.service systemd-networkd.service local-fs.target homelab-extension-units.service
+FailureAction=reboot
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/homelab/boot-check
+TimeoutStartSec=5min
+[Install]
+RequiredBy=boot-complete.target
+WantedBy=multi-user.target

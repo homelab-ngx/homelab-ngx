@@ -1,0 +1,17 @@
+# No Mode=: a read-only file on the ESP stops systemd-boot counting tries.
+[Transfer]
+ProtectVersion=%A
+
+[Source]
+Type=regular-file
+Path=/var/lib/homelab/updates
+MatchPattern=homelab_@v.efi
+
+[Target]
+Type=regular-file
+Path=/EFI/Linux
+PathRelativeTo=boot
+MatchPattern=homelab_@v+@l-@d.efi homelab_@v+@l.efi homelab_@v.efi
+TriesLeft=3
+TriesDone=0
+InstancesMax=2

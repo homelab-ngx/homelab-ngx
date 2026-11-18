@@ -1,0 +1,108 @@
+{
+   "blockdevices": [
+      {
+         "name": "sda",
+         "path": "/dev/sda",
+         "size": 1024209543168,
+         "type": "disk",
+         "model": "Samsung SSD 850 PRO 1TB",
+         "serial": "SERIAL-REDACTED",
+         "fstype": "bcachefs",
+         "mountpoint": null,
+         "label": null
+      },{
+         "name": "sdb",
+         "path": "/dev/sdb",
+         "size": 4000787030016,
+         "type": "disk",
+         "model": "ST4000VN008-2DR166",
+         "serial": "SERIAL-REDACTED",
+         "fstype": "bcachefs",
+         "mountpoint": "/pool",
+         "label": null
+      },{
+         "name": "sdc",
+         "path": "/dev/sdc",
+         "size": 4000787030016,
+         "type": "disk",
+         "model": "ST4000VN008-2DR166",
+         "serial": "SERIAL-REDACTED",
+         "fstype": "bcachefs",
+         "mountpoint": null,
+         "label": null
+      },{
+         "name": "sdd",
+         "path": "/dev/sdd",
+         "size": 4000787030016,
+         "type": "disk",
+         "model": "ST4000VN008-2DR166",
+         "serial": "SERIAL-REDACTED",
+         "fstype": "bcachefs",
+         "mountpoint": null,
+         "label": null
+      },{
+         "name": "sr0",
+         "path": "/dev/sr0",
+         "size": 1073741312,
+         "type": "rom",
+         "model": "CD-ROM Drive",
+         "serial": "SERIAL-REDACTED",
+         "fstype": null,
+         "mountpoint": null,
+         "label": null
+      },{
+         "name": "zram0",
+         "path": "/dev/zram0",
+         "size": 8236564480,
+         "type": "disk",
+         "model": null,
+         "serial": null,
+         "fstype": "swap",
+         "mountpoint": "[SWAP]",
+         "label": "zram0"
+      },{
+         "name": "nvme0n1",
+         "path": "/dev/nvme0n1",
+         "size": 2000398934016,
+         "type": "disk",
+         "model": "Samsung SSD 990 PRO 2TB",
+         "serial": "SERIAL-REDACTED",
+         "fstype": null,
+         "mountpoint": null,
+         "label": null,
+         "children": [
+            {
+               "name": "nvme0n1p1",
+               "path": "/dev/nvme0n1p1",
+               "size": 1073741824,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": "vfat",
+               "mountpoint": "/boot",
+               "label": "BOOT"
+            },{
+               "name": "nvme0n1p2",
+               "path": "/dev/nvme0n1p2",
+               "size": 214748364800,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": "ext4",
+               "mountpoint": "/var",
+               "label": "nixos"
+            },{
+               "name": "nvme0n1p3",
+               "path": "/dev/nvme0n1p3",
+               "size": 1784575761920,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": "ext4",
+               "mountpoint": "/mnt/cache",
+               "label": "cache"
+            }
+         ]
+      }
+   ]
+}

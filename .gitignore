@@ -1,0 +1,63 @@
+# Nix
+result
+result-*
+.direnv/
+.pre-commit-config.yaml
+
+# Editor
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Daemon bug-session state (colocated with worktree)
+.sessionDir/
+
+# Sandbox ghost files (srt creates empty r--r--r-- placeholders in worktrees)
+.bash_profile
+.bashrc
+.claude/agents
+.claude/commands
+.gitconfig
+.gitmodules
+.profile
+.ripgreprc
+.zprofile
+.zshrc
+
+# Raw key material
+*.key
+*.pem
+*.age
+!*.age.pub
+
+# Go
+*.test
+*.out
+*.prof
+coverage.txt
+coverage.html
+
+# Throwaway experiments
+scratch/
+
+# AI session artifacts (context dumps, research notes, plans)
+context.md
+research.md
+plan.md
+build/
+./plans/
+
+node_modules/
+dist/
+
+.worktrees/
+
+# Python bytecode
+__pycache__/
+*.pyc

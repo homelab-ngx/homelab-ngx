@@ -1,0 +1,6 @@
+[Unit]
+Description=Notify that %i failed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/homelab notify push --key unit:%i --title "Unit failed: %i" --path /services

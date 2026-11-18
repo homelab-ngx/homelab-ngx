@@ -1,0 +1,47 @@
+# The boot splash: the firmware's own logo (ACPI BGRT) where it has one,
+# plymouth's spinner under it and the homelab-ngx wordmark at the bottom.
+# The stock bgrt theme with the wordmark: two-step reads every image from
+# ImageDir, so the wordmark is the spinner theme's watermark.png (as Fedora
+# puts its logo there).
+[Plymouth Theme]
+Name=homelab-ngx
+Description=The firmware logo, a spinner and the homelab-ngx wordmark
+ModuleName=two-step
+
+[two-step]
+ImageDir=/usr/share/plymouth/themes/spinner
+DialogHorizontalAlignment=.5
+DialogVerticalAlignment=.382
+TitleHorizontalAlignment=.5
+TitleVerticalAlignment=.382
+HorizontalAlignment=.5
+VerticalAlignment=.75
+WatermarkHorizontalAlignment=.5
+WatermarkVerticalAlignment=.92
+Transition=none
+TransitionDuration=0.0
+BackgroundStartColor=0x000000
+BackgroundEndColor=0x000000
+ProgressBarBackgroundColor=0x2a3038
+ProgressBarForegroundColor=0x5aa9e6
+DialogClearsFirmwareBackground=true
+MessageBelowAnimation=true
+
+[boot-up]
+UseEndAnimation=false
+UseFirmwareBackground=true
+
+[shutdown]
+UseEndAnimation=false
+UseFirmwareBackground=true
+
+[reboot]
+UseEndAnimation=false
+UseFirmwareBackground=true
+
+[updates]
+SuppressMessages=true
+ProgressBarShowPercentComplete=true
+UseProgressBar=true
+Title=Installing updates
+SubTitle=Do not turn off the machine

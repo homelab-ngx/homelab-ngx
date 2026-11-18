@@ -1,0 +1,10 @@
+[Unit]
+Description=Start units that system extensions enable
+# systemd-sysext merges after the boot transaction is built, so a unit an
+# extension wants is loaded but never queued. Starting the target again pulls it in.
+After=systemd-sysext.service basic.target
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl start --no-block multi-user.target
+[Install]
+WantedBy=multi-user.target

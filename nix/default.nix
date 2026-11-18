@@ -1,0 +1,50 @@
+# Flake outputs. Inputs live in ../flake.nix.
+{ nixpkgs, ... }@inputs:
+let
+  system = "x86_64-linux";
+  pkgs = import nixpkgs {
+    inherit system;
+    config.allowUnfree = true;
+  };
+  # Packages built from this repo (no overlay — consumers name them).
+  homelabPkgs = import ./pkgs {
+    inherit pkgs;
+    bcduSrc = inputs.bcdu;
+  };
+in
+{
+  nixosModules = {
+    # What the daemon builds every version 7 stack on, for a stack's own
+    # tests outside the daemon (`homelab stacks build` uses the same file).
+    stack-base = ../apps/core/internal/stacks/stack-base.nix;
+  };
+
+  packages.${system} = {
+    default = homelabPkgs.homelab-daemon-binary;
+    daemon = homelabPkgs.homelab-daemon-binary;
+    cli = homelabPkgs.homelab-daemon-cli;
+    dashboard = homelabPkgs.homelab-dashboard;
+    core-extension = homelabPkgs.homelab-core-extension;
+    inherit (homelabPkgs)
+      homelab-daemon
+      homelab-backup-runner
+      ;
+  };
+
+  devShells.${system} = import ./devshells.nix { inherit pkgs; };
+
+  checks.${system} = {
+    daemon = homelabPkgs.homelab-daemon-binary;
+    dashboard = homelabPkgs.homelab-dashboard;
+    inherit (homelabPkgs.homelab-checks)
+      daemon-vet
+      daemon-test
+      backup-runner-test
+      codegen-drift
+      dashboard-test
+      dashboard-schema-drift
+      ;
+  };
+
+  formatter.${system} = pkgs.nixfmt-tree;
+}

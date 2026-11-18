@@ -1,0 +1,21 @@
+[Unit]
+Description=Cloudflare tunnel
+# Turned on at run time by the daemon from the host settings
+# (systemctl enable --runtime), with the config it writes.
+ConditionPathExists=/var/lib/homelab/cloudflared/config.yml
+After=network-online.target caddy.service
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/cloudflared --no-autoupdate --config /var/lib/homelab/cloudflared/config.yml tunnel run
+Restart=always
+RestartSec=5s
+DynamicUser=yes
+LoadCredential=credentials.json:/var/lib/homelab/cloudflared/credentials.json
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

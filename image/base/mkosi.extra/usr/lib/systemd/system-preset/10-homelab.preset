@@ -1,0 +1,13 @@
+enable systemd-networkd.service
+enable systemd-resolved.service
+enable systemd-timesyncd.service
+enable sshd.service
+enable homelab-ssh-hostkey.service
+enable nix-daemon.socket
+enable systemd-sysext.service
+enable systemd-confext.service
+enable homelab-boot-check.service
+enable homelab-extension-units.service
+enable systemd-repart.service
+# kmscon on tty1; getty@ is its fallback (OnFailure=).
+enable kmsconvt@.service

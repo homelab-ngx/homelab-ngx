@@ -1,0 +1,23 @@
+{
+  "version": 8,
+  "name": "NAME",
+  "nixpkgs": "nixos-unstable",
+  "routes": [{ "host": "NAME", "port": 8080 }],
+  "variables": [
+    {
+      "name": "SITE_DIR",
+      "kind": "path",
+      "description": "The folder with the pages to serve.",
+      "required": true,
+      "mount": "/srv/site",
+      "read_only": true
+    }
+  ],
+  "backup": {
+    "folders": [{ "label": "Pages", "variable": "SITE_DIR" }]
+  },
+  "health": {
+    "units": ["nginx.service"],
+    "http": { "port": 8080, "path": "/" }
+  }
+}

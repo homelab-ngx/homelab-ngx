@@ -1,0 +1,16 @@
+[Transfer]
+ProtectVersion=%A
+
+[Source]
+Type=regular-file
+Path=/var/lib/homelab/updates
+MatchPattern=homelab_@v.root-verity.@u.raw
+
+[Target]
+Type=partition
+Path=auto
+MatchPattern=homelab_@v
+MatchPartitionType=root-verity
+PartitionFlags=0
+ReadOnly=1
+InstancesMax=2
