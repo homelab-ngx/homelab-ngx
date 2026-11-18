@@ -180,6 +180,10 @@ _Avoid_: firmware, appliance
 The daemon, CLI, dashboard and Caddy as one system extension (`homelab-core`) merged over the image's /usr; updated without a reboot.
 _Avoid_: core package, sysext (in prose)
 
+**Release**:
+A version of the image and the core extension (`vX.Y.Z`) built, checked and signed by the release workflow and published on the release server (`dl.homelab-ngx.com`). An image host looks for a newer one daily, downloads and verifies it, and installs it only when the operator asks. A build of main is versioned above the release it follows (`0.1.0.202611190130`).
+_Avoid_: update (that is the install), core deploy
+
 **Host settings**:
 An image host's own network setup, edited on Settings › Host: domain and certificate, LAN, firewall openings, the VPN and its devices, the tunnel's routes, Tailscale, host name and time zone. Kept in SQLite and applied by the daemon at once; read-only on a NixOS host.
 _Avoid_: host config (that is config.json), network settings

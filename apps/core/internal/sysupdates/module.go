@@ -54,6 +54,7 @@ type Module struct {
 	// image: an image host, updated through sysupdate (image.go).
 	image bool
 	ds    deployState
+	rel   imageRelease // the release check (fetch.go)
 
 	now func() time.Time // seam for tests
 }
@@ -87,9 +88,13 @@ func New(r cmdrunner.Runner, stateDir, repo string) *Module {
 }
 
 // Start records new generations every minute, and checks for NixOS releases
-// daily, until ctx ends.
+// daily (an image host: for its own releases), until ctx ends.
 func (m *Module) Start(ctx context.Context) {
-	go m.releaseLoop(ctx)
+	if m.image {
+		go m.imageReleaseLoop(ctx)
+	} else {
+		go m.releaseLoop(ctx)
+	}
 	m.Scan(ctx)
 	t := time.NewTicker(scanInterval)
 	defer t.Stop()

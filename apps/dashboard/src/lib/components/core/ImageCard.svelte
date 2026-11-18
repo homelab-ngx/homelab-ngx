@@ -4,7 +4,7 @@
   import Help from "#lib/components/Help.svelte";
   import Modal from "#lib/components/Modal.svelte";
   import Pill, { type Tone } from "#lib/components/Pill.svelte";
-  import { shortRev } from "#lib/format.ts";
+  import { ago } from "#lib/format.ts";
 
   interface Props {
     image: Schema<"ImageStatus">;
@@ -28,6 +28,7 @@
     onSettled: () => client.invalidateQueries({ queryKey: ["daemon", "system-updates"] }),
   }));
   const build = () => op.mutate(() => call(api.POST("/system-updates/image/build")));
+  const download = () => op.mutate(() => call(api.POST("/system-updates/image/download")));
   const updateCore = () => op.mutate(() => call(api.POST("/system-updates/image/core")));
   function install() {
     installing = false;
@@ -61,7 +62,15 @@
       <dt class="label">Source</dt>
       <dd class="mt-0.5 break-all">{image.source || "–"}</dd>
     </div>
+    <div>
+      <dt class="label">Newest release</dt>
+      <dd class="mt-0.5">
+        {image.release.latest || "–"}
+        {#if image.release.checked_at}<span class="text-muted">· checked {ago(image.release.checked_at)}</span>{/if}
+      </dd>
+    </div>
   </dl>
+  {#if image.release.error}<p class="mt-2 text-muted">Release check failed: {image.release.error}</p>{/if}
 
   <ul class="mt-3 flex flex-col gap-1.5 border-t border-line pt-3">
     {#if image.fell_back_from}
@@ -79,6 +88,7 @@
   {#if error}<p role="alert" class="mt-3 rounded-md bg-bad-soft px-3 py-2 text-bad">{error}</p>{/if}
 
   <div class="mt-4 flex flex-wrap justify-end gap-2">
+    <button type="button" class="btn" disabled={busy || op.isPending} onclick={download}>Check for updates</button>
     <button type="button" class="btn" disabled={busy || op.isPending || !image.source} title={image.source ? "" : "No source repository set"} onclick={build}>
       Build from main
     </button>

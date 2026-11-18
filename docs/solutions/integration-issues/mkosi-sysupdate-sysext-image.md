@@ -208,6 +208,29 @@ on 2026-11-18:
 - In `image/check.sh`, an ssh opened while the VM reboots hangs forever
   without `ServerAliveInterval`: QEMU's port forward keeps the connection.
 
+## Releases come through the daemon, not a sysupdate url-file source
+
+A url-file source reads one `SHA256SUMS` for every version in its folder,
+and checks it with `systemd-pull` against `import-pubring.pgp`. The release
+server keeps one folder per version, whose `SHA256SUMS` covers both the
+image and the core extension (`core/…`), and the host also stages its own
+builds of main. So the daemon downloads a release (`KindDownload`,
+`internal/sysupdates/fetch.go`): it reads `/latest`, checks `SHA256SUMS.gpg`
+against the release key built into the daemon, checks every file against
+its sum while it downloads into `updates/.download`, and moves the files
+into the update folder. sysupdate keeps reading that folder as a
+regular-file source with `--verify=no`; a release and a build of main reach
+it the same way.
+
+`HOMELAB_RELEASE_URL` and `HOMELAB_RELEASE_KEYRING` in
+`/var/lib/homelab/daemon.env` point a host at another server and key; the
+image check runs its own server on the build machine (10.0.2.2 from the
+VM) with a key it makes.
+
+A build of main is versioned `<newest tag>.<commit time>`: with
+`0.0.<commit time>` the first release would sort above every later build,
+and a host that installed it would never take a build of main again.
+
 ## A fresh host has no age key
 
 sops-nix made `/var/lib/sops-age/keys.txt` on NixOS; on the image the daemon

@@ -1597,6 +1597,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system-updates/image/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Image host: look for a newer release and download it.
+         * @description Asks the release server for its newest release and, when it is newer than what the host has, downloads it, checks its signed checksums and stages it in the update folder. Nothing is installed. Follow it in /system-updates/deploys.
+         */
+        post: operations["downloadRelease"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system-updates/image/install": {
         parameters: {
             query?: never;
@@ -2087,10 +2107,10 @@ export interface components {
              */
             id: number;
             /**
-             * @description deploy and rollback on a NixOS host; build, core-update and image-update on an image host.
+             * @description deploy and rollback on a NixOS host; build, download, core-update and image-update on an image host.
              * @enum {string}
              */
-            kind: "deploy" | "rollback" | "build" | "core-update" | "image-update";
+            kind: "deploy" | "rollback" | "build" | "download" | "core-update" | "image-update";
             /** @description The end of the build and switch output. */
             log: string;
             /** @description What it is doing now, or did last. */
@@ -2544,6 +2564,8 @@ export interface components {
             /** @description Versions in the boot menu, newest first. */
             installed: components["schemas"]["ImageVersion"][];
             pending_reboot: boolean;
+            /** @description The last look at the release server. */
+            release: components["schemas"]["ReleaseCheck"];
             /** @description What a build fetches: the repository core comes from. */
             source: string;
         };
@@ -2999,6 +3021,19 @@ export interface components {
             remote: string;
             /** @description The remote's rclone backend, from the pasted config section. */
             type: string;
+        };
+        ReleaseCheck: {
+            /**
+             * Format: date-time
+             * @description The last check, successful or not; null: not yet.
+             */
+            checked_at: string | null;
+            /** @description Why the last check failed. */
+            error?: string;
+            /** @description The newest release there; empty until a check succeeds. */
+            latest: string;
+            /** @description Where the host looks for releases. */
+            url: string;
         };
         ReleaseUpgrade: {
             notes_url: string;
@@ -10407,6 +10442,83 @@ export interface operations {
         };
     };
     updateCoreExtension: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoreDeploy"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    downloadRelease: {
         parameters: {
             query?: never;
             header?: never;

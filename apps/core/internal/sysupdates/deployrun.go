@@ -106,7 +106,7 @@ func (x *deployRun) run(ctx context.Context) error {
 
 func (x *deployRun) work(ctx context.Context) (result, reason string) {
 	switch x.o.Kind {
-	case KindBuild, KindCoreUpdate, KindImageUpdate:
+	case KindBuild, KindDownload, KindCoreUpdate, KindImageUpdate:
 		return x.imageWork(ctx)
 	}
 	if x.o.Kind == KindRollback {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -54,7 +55,7 @@ const (
 // generation before.
 type CoreDeploy struct {
 	Id          int64      `json:"id" doc:"Start time in unix milliseconds."`
-	Kind        string     `json:"kind" enum:"deploy,rollback,build,core-update,image-update" doc:"deploy and rollback on a NixOS host; build, core-update and image-update on an image host."`
+	Kind        string     `json:"kind" enum:"deploy,rollback,build,download,core-update,image-update" doc:"deploy and rollback on a NixOS host; build, download, core-update and image-update on an image host."`
 	Rev         string     `json:"rev" doc:"The commit of main being deployed or built; empty until it is fetched, and for a rollback."`
 	Version     string     `json:"version,omitempty" doc:"Image host: the image or core version built or installed."`
 	Phase       string     `json:"phase" doc:"What it is doing now, or did last."`
@@ -207,6 +208,13 @@ func (m *Module) start(ctx context.Context, kind string, extra ...string) (CoreD
 		"--id", strconv.FormatInt(d.Id, 10), "--kind", kind,
 		"--source", m.dep.Source, "--host", m.dep.Host,
 		"--socket", m.dep.Socket, "--state", st.path,
+	}
+	// A release server other than the default (the image check's) reaches
+	// the download in its unit.
+	for _, k := range []string{releaseURLEnv, releaseKeyringEnv} {
+		if v := os.Getenv(k); v != "" {
+			args = slices.Insert(args, 1, "--setenv="+k+"="+v)
+		}
 	}
 	args = append(args, extra...)
 	rctx, cancel := context.WithTimeout(ctx, errDeployStartTimeout)

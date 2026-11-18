@@ -16,8 +16,12 @@
 #   7. host settings: a VPN device, a tunnel route, the firewall, host name
 #      and time zone take effect without a rebuild
 #   8. all of it holds after a reboot
-#   9. a core update through the API, without a reboot, the stack untouched
-#  10. an image update through the API, with a reboot; everything holds
+#   9. the next version is published on a release server (signed with a key
+#      of the check's own): a copy whose SHA256SUMS changed after signing is
+#      refused, the real one downloads and is staged; then a core update to
+#      it through the API, without a reboot, the stack untouched
+#  10. an image update to the downloaded version through the API, with a
+#      reboot; everything holds
 #  11. a broken image (a third version, its root corrupted on purpose) falls
 #      back to the one before by itself, and the daemon says so
 #  12. with BUILD=1: the host builds an update from main itself
@@ -100,6 +104,8 @@ cpus=${CPUS:-4}
 mem=${MEM:-$([ "${BUILD:-}" = 1 ] && echo 6144 || echo 4096)}
 sshport=$(shuf -i 20000-29999 -n1)
 httpport=$((sshport + 1))
+# The release server step 9 runs; the VM reaches it at 10.0.2.2.
+relport=$((sshport + 2))
 
 # boot DISK [EXTRA...]: start the VM headless with root's SSH key as a
 # systemd credential, the pool disks, and DISK first.
@@ -145,6 +151,7 @@ vssh() {
 }
 vscp() { scp -q -i "$vm/key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "$sshport" "$@"; }
 stop() {
+  [ -n "${relpid:-}" ] && kill "$relpid" 2>/dev/null && relpid=
   [ -e "$vm/qemu.pid" ] && [ ! -e "$vm/keep" ] || return 0
   vssh poweroff 2>/dev/null || true
   for _ in $(seq 1 30); do kill -0 "$(cat "$vm/qemu.pid")" 2>/dev/null || break; sleep 1; done
@@ -166,15 +173,21 @@ console_users() {
 }
 # put PATH JSON: PUT a body to the daemon's API, the body over stdin.
 put() { vssh "cat > /tmp/body.json" <<<"$2" && api -X PUT "http://x/api/$1" -d @/tmp/body.json >/dev/null; }
-# stage_image V / stage_core V: put version V's files in the host's update
-# folder, as a build there would.
+# stage_image V: put version V's image files in the host's update folder, as
+# a build there would.
 stage_image() {
   vscp "$out/homelab_$1.efi" "$out"/homelab_"$1".root*.raw root@127.0.0.1:/var/lib/homelab/updates/
-  vssh "cd /var/lib/homelab/updates && sha256sum homelab_*.efi homelab_*.root*.raw > SHA256SUMS"
 }
-stage_core() {
-  vscp "$out/core/homelab-core_$1.raw" root@127.0.0.1:/var/lib/homelab/updates/core/
-  vssh "cd /var/lib/homelab/updates/core && sha256sum homelab-core_*.raw > SHA256SUMS"
+# release V: publish version V's update files in $vm/release as the release
+# workflow lays them out, SHA256SUMS signed with the check's key.
+release() {
+  local d=$vm/release
+  rm -rf "$d" && mkdir -p "$d/$1/core"
+  ln -f "$out/homelab_$1.efi" "$out"/homelab_"$1".root*.raw "$d/$1/"
+  ln -f "$out/core/homelab-core_$1.raw" "$d/$1/core/"
+  (cd "$d/$1" && sha256sum homelab_"$1".* core/homelab-core_"$1".raw > SHA256SUMS)
+  gpg --homedir "$vm/gnupg" --batch --yes --detach-sign -o "$d/$1/SHA256SUMS.gpg" "$d/$1/SHA256SUMS"
+  echo "$1" > "$d/latest"
 }
 # op PATH [BODY]: start an operation and wait for its result (the daemon may
 # restart on the way); prints the record.
@@ -348,8 +361,28 @@ hostcheck
 ok "everything still in place"
 
 if [ -n "$next" ]; then
-  step "9. a core update to $next through the API"
-  stage_core "$next"
+  step "9. $next downloads from a release server, then a core update to it through the API"
+  rm -rf "$vm/gnupg" && mkdir -m 700 "$vm/gnupg"
+  gpg --homedir "$vm/gnupg" --batch --quiet --passphrase '' --quick-gen-key 'image check <check@example.com>' ed25519 sign never
+  gpg --homedir "$vm/gnupg" --armor --export > "$vm/release.asc"
+  mkdir -p "$vm/release"
+  python3 -m http.server --bind 127.0.0.1 --directory "$vm/release" "$relport" >"$vm/release.log" 2>&1 &
+  relpid=$!
+  vscp "$vm/release.asc" root@127.0.0.1:/var/lib/homelab/release.asc
+  vssh "printf 'HOMELAB_RELEASE_URL=http://10.0.2.2:$relport\nHOMELAB_RELEASE_KEYRING=/var/lib/homelab/release.asc\n' > /var/lib/homelab/daemon.env && systemctl restart homelab-daemon"
+  for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
+  # Sums changed after they were signed: refused, nothing staged.
+  release "$next"
+  echo "0000000000000000000000000000000000000000000000000000000000000000  homelab_$next.efi" >> "$vm/release/$next/SHA256SUMS"
+  d=$(op system-updates/image/download)
+  [ "$(jq -r .result <<<"$d")" = failed ] && jq -e '.reason | contains("not signed")' <<<"$d" >/dev/null || die "a tampered release was not refused: $d"
+  [ "$(api http://x/api/system-updates/image | jq '.available + .core.available | length')" = 0 ] || die "a tampered release was staged"
+  release "$next"
+  d=$(op system-updates/image/download)
+  [ "$(jq -r .result <<<"$d")" = healthy ] && [ "$(jq -r .version <<<"$d")" = "$next" ] || die "download: $(jq -r '.result + ": " + .reason' <<<"$d")"
+  api http://x/api/system-updates/image | jq -e --arg v "$next" '(.available | index($v)) and (.core.available | index($v)) and .release.latest == $v' >/dev/null ||
+    die "$next is not staged after its download"
+  ok "a tampered release refused; $next downloaded, verified and staged"
   since=$(vssh 'machinectl show site -p Timestamp --value')
   d=$(op system-updates/image/core)
   [ "$(jq -r .result <<<"$d")" = healthy ] || die "core update: $(jq -r '.result + ": " + .reason' <<<"$d")"
@@ -359,7 +392,6 @@ if [ -n "$next" ]; then
   ok "core $next active, no reboot, the stack's container untouched"
 
   step "10. an image update to $next through the API"
-  stage_image "$next"
   op system-updates/image/install '{"reboot":"now"}' >/dev/null || true
   # The install reboots the host: wait for it to go, then come back.
   for _ in $(seq 1 60); do vssh true 2>/dev/null || break; sleep 2; done

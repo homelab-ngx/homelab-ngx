@@ -2,20 +2,22 @@ package sysupdates
 
 // The image host's updates (#97). The host image (root and UKI, A/B with
 // boot counting) and the homelab-core system extension are both updated by
-// systemd-sysupdate from the host's own update folder; until the repository
-// is public the host builds what goes in there itself (KindBuild runs
-// image/build.sh from main). The operations run in the same transient unit
-// and record as a NixOS deploy, since a core update restarts the daemon.
+// systemd-sysupdate from the host's own update folder. A release is
+// downloaded into it (KindDownload, fetch.go), or the host builds main
+// itself (KindBuild runs image/build.sh). The operations run in the same
+// transient unit and record as a NixOS deploy, since a core update restarts
+// the daemon.
 //
 // The update folder is root's and local, so sysupdate reads it with
-// --verify=no: signed checksums protect downloads, which start with public
-// releases.
+// --verify=no: a download checks the release's signed SHA256SUMS before it
+// stages anything.
 
 import (
 	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -85,6 +87,7 @@ type ImageStatus struct {
 	FellBackFrom string        `json:"fell_back_from,omitempty"`
 	Core         CoreExtension `json:"core"`
 	Source       string        `json:"source" doc:"What a build fetches: the repository core comes from."`
+	Release      ReleaseCheck  `json:"release" doc:"The last look at the release server."`
 }
 
 // SetImage marks the host an image host: deploys go through sysupdate.
@@ -193,7 +196,7 @@ func (m *Module) ImageStatus(context.Context) (ImageStatus, error) {
 	if !m.image {
 		return ImageStatus{}, ErrNotImageHost
 	}
-	st := ImageStatus{Booted: bootedVersion(), Source: m.dep.Source}
+	st := ImageStatus{Booted: bootedVersion(), Source: m.dep.Source, Release: m.Release()}
 	st.Installed = parseUKIs(ukiNames(), st.Booted)
 	if st.Installed == nil {
 		st.Installed = []ImageVersion{}
@@ -254,6 +257,8 @@ func (x *deployRun) imageWork(ctx context.Context) (result, reason string) {
 		return x.coreUpdate(ctx)
 	case KindImageUpdate:
 		return x.imageUpdate(ctx)
+	case KindDownload:
+		return x.download(ctx)
 	}
 	return DeployFailed, "unknown kind " + x.o.Kind
 }
@@ -352,9 +357,11 @@ func (x *deployRun) build(ctx context.Context) (string, string) {
 }
 
 // stage copies version v's UKI, root slot and core extension from out into
-// the update folder, keeps the newest imageKeep of each, and writes the
-// manifests sysupdate reads.
-func stage(out, v string) error {
+// the update folder and keeps the newest imageKeep of each.
+func stage(out, v string) error { return stageWith(out, v, copyFile) }
+
+// stageWith is stage with put moving each file into place.
+func stageWith(out, v string, put func(from, to string) error) error {
 	core := filepath.Join(imageUpdates, "core")
 	if err := os.MkdirAll(core, 0o755); err != nil {
 		return err
@@ -362,11 +369,11 @@ func stage(out, v string) error {
 	files, _ := filepath.Glob(filepath.Join(out, "homelab_"+v+".root*.raw"))
 	files = append(files, filepath.Join(out, "homelab_"+v+".efi"))
 	for _, f := range files {
-		if err := copyFile(f, filepath.Join(imageUpdates, filepath.Base(f))); err != nil {
+		if err := put(f, filepath.Join(imageUpdates, filepath.Base(f))); err != nil {
 			return err
 		}
 	}
-	if err := copyFile(filepath.Join(out, "core", "homelab-core_"+v+".raw"), filepath.Join(core, "homelab-core_"+v+".raw")); err != nil {
+	if err := put(filepath.Join(out, "core", "homelab-core_"+v+".raw"), filepath.Join(core, "homelab-core_"+v+".raw")); err != nil {
 		return err
 	}
 	prune(imageUpdates, stagedImageRE, func(v string) string { return "homelab_" + v + "." })
@@ -388,16 +395,39 @@ func prune(dir string, re *regexp.Regexp, prefix func(string) string) {
 	}
 }
 
+// copyFile copies through a temporary file, so sysupdate never sees half of
+// one; a root slot is gigabytes, so it streams.
 func copyFile(from, to string) error {
-	b, err := os.ReadFile(from)
+	in, err := os.Open(from)
 	if err != nil {
 		return err
 	}
+	defer in.Close()
 	tmp := to + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(out, in)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	return os.Rename(tmp, to)
+}
+
+// moveFile renames, and copies when from is on another file system.
+func moveFile(from, to string) error {
+	if err := os.Rename(from, to); err == nil {
+		return nil
+	}
+	if err := copyFile(from, to); err != nil {
+		return err
+	}
+	return os.Remove(from)
 }
 
 // coreUpdate merges the newest staged core extension and restarts the

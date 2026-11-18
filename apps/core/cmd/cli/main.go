@@ -148,12 +148,23 @@ func updateCmd() *cli.Command {
 					if len(st.Available) > 0 {
 						fmt.Printf("  staged: %s\n", strings.Join(st.Available, ", "))
 					}
+					switch r := st.Release; {
+					case r.Error != "":
+						fmt.Printf("  release check failed: %s\n", r.Error)
+					case r.Latest != "":
+						fmt.Printf("  newest release %s\n", r.Latest)
+					}
 					fmt.Printf("core %s\n", st.Core.Active)
 					if len(st.Core.Available) > 0 {
 						fmt.Printf("  staged: %s\n", strings.Join(st.Core.Available, ", "))
 					}
 					return nil
 				},
+			},
+			{
+				Name:   "download",
+				Usage:  "Look for a newer release, download it and stage it; nothing is installed",
+				Action: func(c *cli.Context) error { return runDeploy(c, "/system-updates/image/download", nil) },
 			},
 			{
 				Name:   "build",

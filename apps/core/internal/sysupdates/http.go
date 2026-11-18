@@ -74,6 +74,9 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeOperator, imageOp("buildImage", "/system-updates/image/build",
 		"Image host: build the image and the core extension from main.",
 		"Fetches main and runs image/build.sh; the result is staged in the update folder. Follow it in /system-updates/deploys."), h.build)
+	httpx.Register(a, httpx.ScopeOperator, imageOp("downloadRelease", "/system-updates/image/download",
+		"Image host: look for a newer release and download it.",
+		"Asks the release server for its newest release and, when it is newer than what the host has, downloads it, checks its signed checksums and stages it in the update folder. Nothing is installed. Follow it in /system-updates/deploys."), h.download)
 	httpx.Register(a, httpx.ScopeOperator, imageOp("updateCoreExtension", "/system-updates/image/core",
 		"Image host: update the core extension, without a reboot.",
 		"Merges the newest staged core extension and restarts the daemon and Caddy; if they do not come back, the version before goes back."), h.updateCore)
@@ -117,6 +120,10 @@ func (h *HTTP) getImage(ctx context.Context, _ *struct{}) (*imageOut, error) {
 
 func (h *HTTP) build(ctx context.Context, _ *struct{}) (*deployOut, error) {
 	return startOut(h.mod.StartImage(ctx, KindBuild, ""))
+}
+
+func (h *HTTP) download(ctx context.Context, _ *struct{}) (*deployOut, error) {
+	return startOut(h.mod.DownloadRelease(ctx))
 }
 
 func (h *HTTP) updateCore(ctx context.Context, _ *struct{}) (*deployOut, error) {

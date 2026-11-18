@@ -30,6 +30,7 @@ export const rollbackSteps = ["Switch", "Health check"] as const;
 /** An image host's operations (#97). */
 export const imageSteps: Record<string, readonly string[]> = {
   build: ["Fetch", "Build", "Stage"],
+  download: ["Check", "Verify", "Download", "Stage"],
   "core-update": ["Update", "Restart", "Health check"],
   "image-update": ["Update"],
 };
@@ -43,6 +44,8 @@ export function deployTitle(d: CoreDeploy, short: (rev: string) => string): stri
       return "Going back one version";
     case "build":
       return `Building from main${d.rev ? ` at ${short(d.rev)}` : ""}`;
+    case "download":
+      return d.version ? `Release ${d.version}` : "Looking for a release";
     case "core-update":
       return `Updating core${d.version ? ` to ${d.version}` : ""}`;
     case "image-update":

@@ -31,6 +31,9 @@ in
       openssh
       erofs-utils
       jq
+      # The check's release server: a signing key and a static file server.
+      gnupg
+      python3
       # The check's stand-in for a Windows disk: a GPT, a FAT ESP and files on it.
       util-linux
       dosfstools
