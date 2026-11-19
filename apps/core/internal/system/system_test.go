@@ -51,6 +51,31 @@ func TestVersion(t *testing.T) {
 	}
 }
 
+// On the image host the version is the one in the name of the core extension
+// in use, not a number built into the binary.
+func TestVersionFromCoreExtensionInUse(t *testing.T) {
+	dir := t.TempDir()
+	coreLink = filepath.Join(dir, "homelab-core.raw")
+	t.Cleanup(func() { coreLink = "/var/lib/extensions/homelab-core.raw" })
+	if err := os.Symlink("../extensions.d/homelab-core_0.2.5.raw", coreLink); err != nil {
+		t.Fatal(err)
+	}
+	var v Version
+	if serve(t, New(&fakeCfg{}, nil, nil), "/api/version", &v); v.Version != "0.2.5" {
+		t.Fatalf("version = %q, want 0.2.5", v.Version)
+	}
+	// A link that names no version leaves the built-in one.
+	if err := os.Remove(coreLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("elsewhere.raw", coreLink); err != nil {
+		t.Fatal(err)
+	}
+	if ver, _ := BuildInfo(); ver != "dev" {
+		t.Fatalf("BuildInfo() version = %q, want dev", ver)
+	}
+}
+
 func TestVersionCommitFromDeployFile(t *testing.T) {
 	commitFile = filepath.Join(t.TempDir(), "commit")
 	t.Cleanup(func() { commitFile = "/etc/homelab-daemon/commit" })

@@ -43,6 +43,9 @@ let
     inherit vendorHash;
     postPatch = "rm -rf core/vendor";
     nativeBuildInputs = [ ];
+    # The packages' own version, not a release's: the same build ships in
+    # every release, and the daemon reads the release's version from the name
+    # of the core extension in use (internal/system).
     version = "0.2.0";
   };
 
@@ -92,8 +95,6 @@ let
         "cmd/daemon"
         "cmd/cli"
       ];
-      # Build identity served by GET /api/version (internal/system).
-      ldflags = [ "-X homelab-ngx.com/core/internal/system.version=${goArgs.version}" ];
       postInstall = ''
         mv $out/bin/daemon $out/bin/homelab-daemon
         mv $out/bin/cli $out/bin/homelab
