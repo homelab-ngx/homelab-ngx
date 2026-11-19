@@ -1,0 +1,16 @@
+# The machine ID, from /var, bound over the read-only root's
+# /etc/machine-id before the system starts (usr/lib/homelab/machine-id).
+# Ordered on initrd-fs.target, not on sysroot-var.mount: that unit exists
+# only once the root's fstab has been read.
+[Unit]
+Description=Take the machine ID from /var
+DefaultDependencies=no
+After=initrd-fs.target
+Before=initrd.target
+ConditionPathIsMountPoint=/sysroot/var
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/homelab/machine-id
+[Install]
+WantedBy=initrd.target

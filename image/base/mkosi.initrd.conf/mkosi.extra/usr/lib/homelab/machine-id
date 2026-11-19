@@ -1,0 +1,54 @@
+#!/bin/sh
+# Gives the system its machine ID from /var: the root file system is
+# read-only, so /etc/machine-id cannot be written, and the firmware's UUID
+# (systemd.machine_id=firmware) is empty on some boards and the same on
+# others. The ID is kept in /var/lib/homelab/machine-id and bound over
+# /etc/machine-id before the system starts; it then uses the ID it finds.
+#
+# The installer writes the file on a new install. Where it is missing (a
+# host installed before this), it is made from the firmware's UUID when that
+# is a real one, so the host keeps the ID it had, and is random otherwise.
+#
+# The installer medium keeps no ID: it takes the firmware's on every boot.
+# Nothing here may fail the boot: without the bind the system does the same.
+
+store=/sysroot/var/lib/homelab/machine-id
+target=/sysroot/etc/machine-id
+
+log() { echo "homelab-machine-id: $*" >/dev/kmsg; }
+
+# 32 lowercase hex digits, and not the two values firmware uses for "none".
+valid() {
+  [ "${#1}" -eq 32 ] || return 1
+  case $1 in
+    *[!0-9a-f]*) return 1 ;;
+    00000000000000000000000000000000 | ffffffffffffffffffffffffffffffff) return 1 ;;
+  esac
+  return 0
+}
+
+[ -e /sysroot/var/lib/homelab/installer ] && exit 0
+mountpoint -q "$target" && exit 0
+
+id=
+[ -r "$store" ] && read -r id <"$store"
+if ! valid "$id"; then
+  id=$(cat /sys/class/dmi/id/product_uuid 2>/dev/null | tr -d '-' | tr 'A-F' 'a-f')
+  valid "$id" || id=$(tr -d '-' </proc/sys/kernel/random/uuid)
+  if ! valid "$id"; then
+    log "no machine ID could be made"
+    exit 0
+  fi
+  # Written beside the file and renamed, so a power cut leaves the old file
+  # or the new one.
+  if ! { mkdir -p "${store%/*}" && echo "$id" >"$store.new" && chmod 0444 "$store.new" &&
+    sync "$store.new" && mv -f "$store.new" "$store"; }; then
+    log "cannot write $store"
+    exit 0
+  fi
+fi
+
+if ! mount --bind -o ro "$store" "$target"; then
+  log "cannot bind $store over $target"
+fi
+exit 0

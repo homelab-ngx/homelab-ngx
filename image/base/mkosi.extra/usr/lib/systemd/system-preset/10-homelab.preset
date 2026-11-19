@@ -11,3 +11,6 @@ enable homelab-extension-units.service
 enable systemd-repart.service
 # kmscon on tty1; getty@ is its fallback (OnFailure=).
 enable kmsconvt@.service
+# A login on the first serial port; no getty starts by itself
+# (systemd.getty_auto=0).
+enable serial-getty@.service ttyS0

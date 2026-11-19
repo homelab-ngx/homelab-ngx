@@ -1,9 +1,11 @@
 #!/bin/sh
-# agetty for the console, the screen and keyboard (kmsconvt@ and its
-# fallback getty@). On the installer stick it logs root in without asking:
-# the stick has no password or SSH key yet, and whoever sits at its keyboard
-# can boot anything anyway. An installed host has no installer marker and
-# asks for a login. SSH stays key-only on both.
+# agetty for the console: the screen and keyboard (kmsconvt@ and its
+# fallback getty@) and the serial port (serial-getty@). On the installer
+# stick it logs root in without asking: the stick has no password or SSH key
+# yet, and whoever sits at its keyboard or serial port can boot anything
+# anyway. An installed host has no installer marker and asks for a login,
+# also with a stick left in: /var is the booted disk's
+# (udev/rules.d/61-homelab-disk.rules). SSH stays key-only on both.
 if [ -e /var/lib/homelab/installer ]; then
   exec /usr/bin/agetty --autologin root "$@"
 fi
