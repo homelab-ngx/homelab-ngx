@@ -84,6 +84,24 @@ jobs:
       - name: make image-check
         run: make image-check
 
+      # A failed check leaves the VMs' serial logs behind (image/out/vm). They
+      # tell a slow boot from one that hung, so they outlive the runner.
+      - name: Collect the check's logs
+        if: ${{ failure() }}
+        run: |
+          logs=$RUNNER_TEMP/check-logs && mkdir -p "$logs"
+          cp image/out/vm/*.log "$logs/" 2>/dev/null || echo "no serial logs in image/out/vm"
+          { df -h /; echo; ls -l image/out image/out/vm; } > "$logs/disk.txt" 2>&1 || true
+
+      - name: Keep the check's logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-check-logs-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/check-logs
+          if-no-files-found: ignore
+          retention-days: 14
+
       - name: Sign
         run: |
           rel=$RUNNER_TEMP/release/$VERSION
