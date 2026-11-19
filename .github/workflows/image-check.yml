@@ -74,7 +74,7 @@ jobs:
       # first release there is none, and a 0.0.0 build stands in.
       - name: Previous release
         run: |
-          prev=$(curl -fsS "$RELEASE_URL/latest?t=$(date +%s)" 2>/dev/null || true)
+          prev=$(curl -fsS --retry 5 --retry-all-errors --retry-delay 5 "$RELEASE_URL/latest?t=$(date +%s)" 2>/dev/null || true)
           if [ -z "$prev" ]; then
             echo "no release yet: building 0.0.0 as the version before"
             make image VERSION=0.0.0
@@ -82,9 +82,9 @@ jobs:
           fi
           echo "previous release $prev"
           d=$RUNNER_TEMP/prev && mkdir -p "$d/core" && cd "$d"
-          curl -fsSO "$RELEASE_URL/$prev/SHA256SUMS" && curl -fsSO "$RELEASE_URL/$prev/SHA256SUMS.gpg"
+          curl -fsSO --retry 5 --retry-all-errors --retry-delay 5 "$RELEASE_URL/$prev/SHA256SUMS" && curl -fsSO --retry 5 --retry-all-errors --retry-delay 5 "$RELEASE_URL/$prev/SHA256SUMS.gpg"
           gpg --batch --verify SHA256SUMS.gpg SHA256SUMS
-          awk '{print $2}' SHA256SUMS | while read -r f; do curl -fsS -o "$f" "$RELEASE_URL/$prev/$f"; done
+          awk '{print $2}' SHA256SUMS | while read -r f; do curl -fsS --retry 5 --retry-all-errors --retry-delay 5 -o "$f" "$RELEASE_URL/$prev/$f"; done
           sha256sum -c --quiet SHA256SUMS
           mkdir -p "$GITHUB_WORKSPACE/image/out/core"
           cp homelab_"$prev".* "$GITHUB_WORKSPACE/image/out/"
