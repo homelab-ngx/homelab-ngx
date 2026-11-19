@@ -478,19 +478,24 @@ espfiles() {
   vssh "d=\$(findmnt -no TARGET $1 | head -1); if [ -z \"\$d\" ]; then mkdir -p /run/esp && mount -o ro $1 /run/esp && d=/run/esp; fi
     cat \$d/EFI/Microsoft/Boot/bootmgfw.efi \$d/EFI/BOOT/BOOTX64.EFI | tr '\\n' ' '; [ \$d != /run/esp ] || umount /run/esp"
 }
+# inuki V MODULE: version V's initrd has the kernel module (its path under
+# drivers/, without .ko). The initrd's modules are an uncompressed archive
+# in the UKI, so a file's path can be read there. The path from lib/modules
+# on is the file's own; from kernel/ on it is also a line of modules.dep,
+# which lists every module of the kernel, in the initrd or not.
+inuki() { grep -aq "lib/modules/[^/]*/kernel/drivers/$2\.ko" "$out/homelab_$1.efi"; }
 # partuuids FILE: the UUIDs of a disk file's /var partition (and /nix, on a
 # version that gave the store its own).
 partuuids() { sfdisk -J "$1" | jq -r '[.partitiontable.partitions[] | select(.name == "var" or .name == "nix") | .uuid] | sort | join(" ")'; }
 
 step "1. the installer medium boots $version into installer mode"
 # The newest build's initrd has a storage driver of every kind the image
-# names besides mkosi's defaults. The initrd's modules are an uncompressed
-# archive in the UKI, so their paths can be read from the file.
+# names besides mkosi's defaults.
 newest=${versions[-1]}
-for m in usb/storage/uas mmc/core/mmc_block mmc/host/sdhci-pci ata/ata_piix scsi/megaraid/megaraid_sas scsi/mpt3sas/mpt3sas \
-  message/fusion/mptsas scsi/hpsa scsi/smartpqi/smartpqi scsi/aacraid/aacraid scsi/arcmsr/arcmsr scsi/3w-9xxx scsi/isci/isci \
+for m in usb/storage/uas mmc/core/mmc_block mmc/host/sdhci-pci mmc/host/sdhci-acpi ata/ata_piix scsi/megaraid/megaraid_sas scsi/mpt3sas/mpt3sas \
+  message/fusion/mptsas scsi/hpsa scsi/smartpqi/smartpqi scsi/aacraid/aacraid scsi/arcmsr/arcmsr scsi/3w-9xxx scsi/3w-sas scsi/isci/isci \
   scsi/mvsas/mvsas scsi/pm8001/pm80xx ufs/host/ufshcd-pci scsi/hv_storvsc scsi/vmw_pvscsi block/xen-blkfront; do
-  grep -aq "kernel/drivers/$m\.ko" "$out/homelab_$newest.efi" || die "the initrd of $newest has no $m"
+  inuki "$newest" "$m" || die "the initrd of $newest has no $m"
 done
 [ "$(stat -c %s "$out/homelab_$newest.efi")" -le 200000000 ] || die "the UKI of $newest is $(stat -c %s "$out/homelab_$newest.efi") bytes: over 200 MB"
 size=$(stat -c %s "$out/homelab_$version.raw")
@@ -993,7 +998,7 @@ ctl() {
   runs_from sda vda
 }
 drivers=
-if grep -aq 'kernel/drivers/scsi/vmw_pvscsi\.ko' "$out/homelab_$version.efi"; then
+if inuki "$version" scsi/vmw_pvscsi && inuki "$version" scsi/megaraid/megaraid_sas && inuki "$version" usb/storage/uas; then
   drivers=", its disk behind VMware's paravirtual SCSI"
   read -r espstart espsize < <(sfdisk -J "$vm/sys.raw" |
     jq -r '.partitiontable.partitions[] | select(.type == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B") | "\(.start) \(.size)"')
