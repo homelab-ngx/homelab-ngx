@@ -28,6 +28,14 @@ type claimOut struct {
 type tokenIn struct {
 	Token string `header:"X-Installer-Token" doc:"From claimInstaller."`
 }
+type stateIn struct {
+	Token string `header:"X-Installer-Token" required:"false" doc:"The holder's token: its page counts as open while it asks. A hold lapses after ten silent minutes."`
+}
+type takeOverIn struct {
+	Body struct {
+		Code string `json:"code" doc:"The six digits on the machine's own screen or serial console."`
+	}
+}
 type planIn struct {
 	Body struct {
 		Disk   string `json:"disk" doc:"Kernel name (nvme0n1)."`
@@ -72,6 +80,11 @@ func (h *HTTP) Register(a httpx.APIs) {
 		Summary: "Take the installer: the first browser to ask gets it, others see it in use.",
 	}, h.claim)
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "takeOverInstaller", Method: http.MethodPost, Path: "/installer/takeover", Tags: tags,
+		Errors:  append([]int{http.StatusTooManyRequests}, errs...),
+		Summary: "Take the installer from the browser that holds it, with the code the machine's console shows.",
+	}, h.takeOver)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "planInstall", Method: http.MethodPost, Path: "/installer/plan", Tags: tags, Errors: errs,
 		Summary: "What an install would do to a disk, as systemd-repart plans it. Changes nothing.",
 	}, h.plan)
@@ -97,6 +110,8 @@ func problem(err error) error {
 	switch {
 	case errors.Is(err, ErrClaimed):
 		return httpx.Conflict("installer_claimed", "%s", err)
+	case errors.Is(err, ErrLocked):
+		return httpx.TooManyRequests("takeover_locked", "%s", err)
 	case errors.Is(err, ErrBusy):
 		return httpx.Conflict("install_busy", "%s", err)
 	case errors.Is(err, ErrInvalid):
@@ -112,11 +127,26 @@ func (h *HTTP) active() error {
 	return nil
 }
 
-func (h *HTTP) state(ctx context.Context, _ *struct{}) (*stateOut, error) {
+func (h *HTTP) takeOver(_ context.Context, in *takeOverIn) (*claimOut, error) {
+	if err := h.active(); err != nil {
+		return nil, err
+	}
+	t, err := h.s.TakeOver(in.Body.Code)
+	if err != nil {
+		return nil, problem(err)
+	}
+	out := &claimOut{}
+	out.Body.Token = t
+	return out, nil
+}
+
+func (h *HTTP) state(ctx context.Context, in *stateIn) (*stateOut, error) {
+	mine := in != nil && h.s.Seen(in.Token)
 	st, err := h.s.State(ctx)
 	if err != nil {
 		return nil, err
 	}
+	st.Mine = mine
 	return &stateOut{Body: st}, nil
 }
 
@@ -151,7 +181,7 @@ func (h *HTTP) deletePart(ctx context.Context, in *deleteIn) (*stateOut, error) 
 	if err := h.s.DeletePartition(ctx, in.Token, in.Disk, in.Part, in.Body.Confirm); err != nil {
 		return nil, problem(err)
 	}
-	return h.state(ctx, nil)
+	return h.state(ctx, &stateIn{Token: in.Token})
 }
 
 func (h *HTTP) install(ctx context.Context, in *installIn) (*stateOut, error) {
@@ -161,7 +191,7 @@ func (h *HTTP) install(ctx context.Context, in *installIn) (*stateOut, error) {
 	if err := h.s.Install(ctx, in.Token, in.Body.Disk, in.Body.Erase, Setup{ESP: in.Body.ESP, Region: in.Body.Region, Hostname: in.Body.Hostname, Timezone: in.Body.Timezone, SSHKeys: in.Body.SSHKeys, IPv4: in.Body.IPv4}); err != nil {
 		return nil, problem(err)
 	}
-	return h.state(ctx, nil)
+	return h.state(ctx, &stateIn{Token: in.Token})
 }
 
 func (h *HTTP) powerOff(ctx context.Context, in *tokenIn) (*struct{}, error) {

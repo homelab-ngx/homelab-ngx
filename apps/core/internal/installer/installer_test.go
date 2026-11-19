@@ -463,13 +463,14 @@ func TestDefinitionsWithoutTheESP(t *testing.T) {
 	old, oldMount := definitions, mountDir
 	definitions, mountDir = src, filepath.Join(t.TempDir(), "esp")
 	defer func() { definitions, mountDir = old, oldMount }()
-	if d, _ := definitionsFor(false); d != src {
+	if d, _, _ := definitionsFor(false); d != src {
 		t.Errorf("own ESP: %s", d)
 	}
-	d, err := definitionsFor(true)
+	d, done, err := definitionsFor(true)
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer done()
 	entries, _ := os.ReadDir(d)
 	if len(entries) != 1 || entries[0].Name() != "10-root.conf" {
 		t.Errorf("definitions = %v", entries)

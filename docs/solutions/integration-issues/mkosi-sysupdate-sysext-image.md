@@ -275,6 +275,20 @@ on 2026-11-18:
   the host settings at its first start.
 - **The installer-mode daemon must answer `/api/version`**: the boot check
   waits for it, and without it the stick never reaches `boot-complete`.
+- **The installer is one browser's, but not for ever.** The first to ask
+  gets a token, which the page keeps in `localStorage`, so a closed tab
+  comes back to its install. The hold ends when the page has not asked for
+  ten minutes (no install running), or when someone types the six-digit
+  code the stick's console shows: being at the machine is the proof. A
+  restart of the daemon used to be the only way back in.
+- **A failed install into free space removes what it made**: the partitions
+  that were not on the disk before it started. Otherwise repart refuses the
+  next try, which would add the same partition types again. The temporary
+  partitions that hold the other free regions are also swept when the
+  installer starts, in case it stopped between making and deleting them.
+- **UDisks reads a new partition table on its own time.** `udevadm settle`
+  returning does not mean UDisks lists the new partitions, so the install
+  asks a few times before it reports them missing.
 
 ## The medium's size and the console
 

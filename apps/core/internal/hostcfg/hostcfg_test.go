@@ -397,3 +397,16 @@ func TestWired(t *testing.T) {
 		t.Fatalf("wired = %v, want %v", got, want)
 	}
 }
+
+// A folder of zones is not a zone.
+func TestTimezoneFolderIsRefused(t *testing.T) {
+	s, _, _ := newService(t)
+	for _, tz := range []string{"Europe", "Europe/Oslo"} {
+		if _, err := s.SetHost(context.Background(), Host{Hostname: "box", Timezone: tz}); !errors.Is(err, ErrInvalid) {
+			t.Errorf("time zone %q: %v", tz, err)
+		}
+	}
+	if _, err := s.SetHost(context.Background(), Host{Hostname: "box", Timezone: "Europe/Stockholm"}); err != nil {
+		t.Errorf("a zone file: %v", err)
+	}
+}

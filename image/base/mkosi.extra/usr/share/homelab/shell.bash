@@ -79,6 +79,15 @@ _hl_greet() {
   fi
   if [[ -e /var/lib/homelab/installer ]]; then
     _hl_line '󰇚' "installer: open http://$host.local${addr:+ or http://$addr} in a browser"
+    # The code that moves the installer to another browser (the daemon
+    # writes it at its start), and the address to scan with a phone.
+    local code=
+    [[ -r /run/homelab-installer/takeover-code ]] && code=$(</run/homelab-installer/takeover-code)
+    [[ -n $code ]] && _hl_line '󰌆' "take-over code: $code"
+    if [[ -n $addr ]] && command -v qrencode >/dev/null; then
+      echo
+      qrencode -t UTF8 -m 2 "http://$addr" | sed 's/^/  /'
+    fi
   else
     _hl_line '󰖟' "dashboard: http://$host.local${addr:+ · http://$addr}"
   fi

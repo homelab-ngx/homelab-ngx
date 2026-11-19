@@ -64,6 +64,7 @@ const (
 type InstallerState struct {
 	Active   bool          `json:"active" doc:"The daemon runs in installer mode (the installer stick)."`
 	Claimed  bool          `json:"claimed" doc:"Someone opened the installer first and holds it."`
+	Mine     bool          `json:"mine" doc:"The token sent with the request is the holder's."`
 	Step     Step          `json:"step" enum:"idle,installing,installed,failed"`
 	Phase    string        `json:"phase,omitempty" enum:"partition,boot,finish" doc:"While installing: partitioning and copying, the boot loader and kernel, the host name."`
 	Disk     string        `json:"disk,omitempty" doc:"The disk being or last installed onto."`
@@ -73,9 +74,19 @@ type InstallerState struct {
 	Disks    []InstallDisk `json:"disks"`
 	MinBytes uint64        `json:"min_bytes" doc:"The space an install needs."`
 	Current  hostcfg.IPv4  `json:"current" doc:"The installer medium's own address from DHCP: where a static setting starts."`
+	Machine  Machine       `json:"machine" doc:"What the installer found out about the machine before an install."`
 	// CanRestart is false after an install whose boot entry the firmware
 	// does not list: that machine is turned off and started by hand.
 	CanRestart bool `json:"can_restart" doc:"Installed, and the firmware has a boot entry for the new system: restartInstaller can start it."`
+}
+
+// Machine is what an install depends on besides the disk.
+type Machine struct {
+	Memory     uint64 `json:"memory" doc:"RAM in bytes; 0 when it could not be read."`
+	SecureBoot bool   `json:"secure_boot" doc:"Secure Boot is on. The image's kernel is not signed, so the installed system only starts with it off."`
+	// BootEntries is false where the firmware's variables are missing or
+	// read-only: the install cannot register its boot entry there.
+	BootEntries bool `json:"boot_entries" doc:"The firmware's boot entries can be written: the install registers the new system, and can restart into it."`
 }
 
 // InstallPlanRow is one partition in systemd-repart's plan for a disk.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,8 +13,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
+	"time"
 
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/hostcfg"
@@ -39,6 +43,30 @@ var (
 	ErrBusy = errors.New("an install is running or finished")
 	// ErrInvalid: the request names a disk, partition or host name that will not do.
 	ErrInvalid = errors.New("invalid")
+	// ErrLocked: too many wrong take-over codes.
+	ErrLocked = errors.New("too many wrong codes; wait a minute")
+)
+
+// The installer is one browser's at a time: the first to ask holds it (a
+// token every change carries). Its hold ends when the page has been silent
+// for claimIdle, or when someone types the take-over code shown on the
+// machine's own console; a restart of the daemon is no longer the only way
+// back in after a closed tab.
+const (
+	claimIdle     = 10 * time.Minute
+	takeOverTries = 5
+	takeOverLock  = time.Minute
+)
+
+// CodeFile is where the take-over code is kept for the console's greeting
+// (usr/share/homelab/shell.bash); root's.
+const CodeFile = "/run/homelab-installer/takeover-code"
+
+// settleTries is how often the install looks for its new partitions, a
+// second apart: UDisks can list a disk before it has read the new table.
+var (
+	settleTries = 15
+	settleWait  = time.Second
 )
 
 // Active reports whether the daemon runs on the installer stick.
@@ -53,8 +81,15 @@ type Service struct {
 	disks Disks
 	log   *slog.Logger
 
-	mu       sync.Mutex
-	token    string
+	mu    sync.Mutex
+	token string
+	// seen is when the holder's page last called; code is the take-over
+	// code, wrong counts the wrong tries and locked ends a lock-out.
+	seen     time.Time
+	code     string
+	wrong    int
+	locked   time.Time
+	now      func() time.Time
 	step     Step
 	disk     string
 	hostname string
@@ -68,7 +103,24 @@ type Service struct {
 
 // New returns the installer; disks is UDisks{} on the stick.
 func New(r cmdrunner.Runner, disks Disks, log *slog.Logger) *Service {
-	return &Service{r: r, disks: disks, log: log, step: StepIdle}
+	return &Service{r: r, disks: disks, log: log, step: StepIdle, code: newCode(), now: time.Now}
+}
+
+// newCode is six digits, easy to read off a screen and type on a phone.
+func newCode() string {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		panic(err) // no randomness: nothing here would be safe
+	}
+	return fmt.Sprintf("%06d", (uint32(b[0])<<24|uint32(b[1])<<16|uint32(b[2])<<8|uint32(b[3]))%1000000)
+}
+
+// WriteCode leaves the take-over code where the console's greeting reads it.
+func (s *Service) WriteCode(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(path, []byte(s.code+"\n"), 0o600)
 }
 
 // InstallerState returns the page's view. A nil service (any host but the stick)
@@ -84,11 +136,35 @@ func (s *Service) State(ctx context.Context) (InstallerState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return InstallerState{
-		Active: true, Claimed: s.token != "", Step: s.step, Phase: s.phase, Disk: s.disk, Hostname: s.hostname,
+		Active: true, Claimed: s.token != "" && !s.lapsed(), Step: s.step, Phase: s.phase, Disk: s.disk, Hostname: s.hostname,
 		Log: append([]string{}, s.lines...), Error: s.err, Disks: disks, MinBytes: MinBytes,
 		Current:    s.lease(ctx),
+		Machine:    machine(),
 		CanRestart: s.step == StepInstalled && s.entry != "",
 	}, nil
+}
+
+// Where the machine's facts are read; variables for tests.
+var (
+	meminfo = "/proc/meminfo"
+	efivars = "/sys/firmware/efi/efivars"
+)
+
+var memTotalRE = regexp.MustCompile(`(?m)^MemTotal:\s+(\d+) kB`)
+
+func machine() Machine {
+	var m Machine
+	b, _ := os.ReadFile(meminfo)
+	if g := memTotalRE.FindSubmatch(b); g != nil {
+		kb, _ := strconv.ParseUint(string(g[1]), 10, 64)
+		m.Memory = kb << 10
+	}
+	// Four attribute bytes, then 1 when Secure Boot is on.
+	if v, err := os.ReadFile(filepath.Join(efivars, "SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b2c")); err == nil && len(v) >= 5 {
+		m.SecureBoot = v[4] == 1
+	}
+	m.BootEntries = syscall.Access(efivars, 2 /* W_OK */) == nil
+	return m
 }
 
 // lease is the installer medium's own IPv4 setting from DHCP: where a static
@@ -128,24 +204,69 @@ func (s *Service) lease(ctx context.Context) hostcfg.IPv4 {
 var resolvConf = "/run/systemd/resolve/resolv.conf"
 
 // Claim gives the first caller the installer: the token every change needs.
+// A holder whose page went silent gives way to the next caller.
 func (s *Service) Claim() (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.token != "" {
+	if s.token != "" && !s.lapsed() {
 		return "", ErrClaimed
 	}
+	return s.issue()
+}
+
+// lapsed: the holder's page has not called for claimIdle and no install is
+// running. The caller holds s.mu.
+func (s *Service) lapsed() bool {
+	return s.step != StepInstalling && s.now().Sub(s.seen) > claimIdle
+}
+
+// issue makes a new token, which ends the old one. The caller holds s.mu.
+func (s *Service) issue() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	s.token = hex.EncodeToString(b)
+	s.token, s.seen = hex.EncodeToString(b), s.now()
 	return s.token, nil
 }
 
+// TakeOver gives the installer to whoever types the code on the machine's
+// console, whoever held it. An install that is running goes on.
+func (s *Service) TakeOver(code string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.now().Before(s.locked) {
+		return "", ErrLocked
+	}
+	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(code)), []byte(s.code)) != 1 {
+		if s.wrong++; s.wrong >= takeOverTries {
+			s.wrong, s.locked = 0, s.now().Add(takeOverLock)
+		}
+		return "", fmt.Errorf("%w: that is not the code on the machine's screen", ErrInvalid)
+	}
+	s.wrong = 0
+	s.log.Info("the installer was taken over with the console's code")
+	return s.issue()
+}
+
+// Seen notes that the holder's page is still open, and reports whether
+// token is the holder's.
+func (s *Service) Seen(token string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.holds(token) == nil
+}
+
+// holds checks the token and counts the call as the holder's page being
+// open. The caller holds s.mu.
 func (s *Service) holds(token string) error {
-	if token == "" || token != s.token {
+	if token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) != 1 {
 		return ErrClaimed
 	}
+	s.seen = s.now()
 	return nil
 }
 
@@ -208,10 +329,11 @@ func (s *Service) Plan(ctx context.Context, disk string, erase bool, esp string,
 	if err != nil {
 		return InstallPlan{}, err
 	}
-	defs, err := definitionsFor(shared != nil)
+	defs, done, err := definitionsFor(shared != nil)
 	if err != nil {
 		return InstallPlan{}, err
 	}
+	defer done()
 	empty := "allow"
 	if erase {
 		empty = "force"
@@ -260,35 +382,51 @@ func (s *Service) sharedESP(ctx context.Context, target InstallDisk, name string
 }
 
 // definitionsFor is the image's partition definitions, without the ESP's
-// when the boot loader goes on another disk's ESP.
-func definitionsFor(sharedESP bool) (string, error) {
+// when the boot loader goes on another disk's ESP. That copy is the
+// caller's own folder, removed by done: a plan asked for while another plan
+// or an install runs must not take its definitions away.
+func definitionsFor(sharedESP bool) (dir string, done func(), err error) {
 	if !sharedESP {
-		return definitions, nil
+		return definitions, func() {}, nil
 	}
-	dir := filepath.Join(filepath.Dir(mountDir), "definitions")
-	if err := os.RemoveAll(dir); err != nil {
-		return "", err
+	dir, err = workDir("definitions-")
+	if err != nil {
+		return "", nil, err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return "", err
-	}
+	done = func() { _ = os.RemoveAll(dir) }
 	entries, err := os.ReadDir(definitions)
 	if err != nil {
-		return "", err
+		done()
+		return "", nil, err
 	}
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), "00-esp") {
 			continue
 		}
 		b, err := os.ReadFile(filepath.Join(definitions, e.Name()))
-		if err != nil {
-			return "", err
+		if err == nil {
+			err = os.WriteFile(filepath.Join(dir, e.Name()), b, 0o644)
 		}
-		if err := os.WriteFile(filepath.Join(dir, e.Name()), b, 0o644); err != nil {
-			return "", err
+		if err != nil {
+			done()
+			return "", nil, err
 		}
 	}
-	return dir, nil
+	return dir, done, nil
+}
+
+// workDir makes a folder of the caller's own next to the mount point.
+func workDir(prefix string) (string, error) {
+	base := filepath.Dir(mountDir)
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		return "", err
+	}
+	dir, err := os.MkdirTemp(base, prefix)
+	if err != nil {
+		return "", err
+	}
+	// repart reads the definitions as root; the mode is for a plain reader.
+	return dir, os.Chmod(dir, 0o755)
 }
 
 func choice(d InstallDisk, erase bool) InstallChoice {
@@ -337,10 +475,8 @@ func (s *Service) Install(ctx context.Context, token, disk string, erase bool, s
 	if !hostnameRE.MatchString(setup.Hostname) {
 		return fmt.Errorf("%w: a host name is letters, digits and dashes, up to 63", ErrInvalid)
 	}
-	if setup.Timezone != "" {
-		if _, err := os.Stat(filepath.Join(zoneinfo, setup.Timezone)); err != nil || strings.Contains(setup.Timezone, "..") {
-			return fmt.Errorf("%w: %s is not a known time zone", ErrInvalid, setup.Timezone)
-		}
+	if setup.Timezone != "" && !hostcfg.KnownTimezone(zoneinfo, setup.Timezone) {
+		return fmt.Errorf("%w: %s is not a known time zone", ErrInvalid, setup.Timezone)
 	}
 	keys, err := hostcfg.CheckSSHKeys(setup.SSHKeys)
 	if err != nil {
@@ -416,6 +552,10 @@ func (s *Service) line(l string) {
 
 func (s *Service) run(ctx context.Context, d InstallDisk, erase bool, setup Setup) {
 	err := s.install(ctx, d, erase, setup)
+	if err != nil && !erase {
+		// What it made in the free space would be in the next try's way.
+		s.removeNew(ctx, d)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err != nil {
@@ -457,10 +597,11 @@ func (s *Service) install(ctx context.Context, d InstallDisk, erase bool, setup 
 			return nil
 		})
 	}
-	defs, err := definitionsFor(shared != nil)
+	defs, done, err := definitionsFor(shared != nil)
 	if err != nil {
 		return err
 	}
+	defer done()
 	version, kernel, err := s.runningKernel(ctx)
 	if err != nil {
 		return err
@@ -472,16 +613,13 @@ func (s *Service) install(ctx context.Context, d InstallDisk, erase bool, setup 
 	if err := s.partition(ctx, d, defs, empty, erase, setup.Region); err != nil {
 		return err
 	}
-	after, err := s.find(ctx, d.Name)
+	sharedPath := ""
+	if shared != nil {
+		sharedPath = shared.Path
+	}
+	esp, varPart, err := s.newPartitions(ctx, d.Name, sharedPath)
 	if err != nil {
 		return err
-	}
-	esp, varPart := partOf(after, typeESP), partOf(after, typeVar)
-	if shared != nil {
-		esp = shared.Path
-	}
-	if esp == "" || varPart == "" {
-		return errors.New("the new partitions are not on the disk")
 	}
 	s.setPhase("boot")
 	s.line("Installing the boot loader and kernel " + version)
@@ -505,6 +643,82 @@ func (s *Service) install(ctx context.Context, d InstallDisk, erase bool, setup 
 	s.setPhase("finish")
 	s.line("Setting the host name " + setup.Hostname)
 	return s.withMount(ctx, varPart, func(dir string) error { return seedVar(dir, setup) })
+}
+
+// removeNew deletes the partitions a failed install into free space left
+// on d: the ones that were not there before it started. The next try then
+// finds the free region as it was.
+func (s *Service) removeNew(ctx context.Context, before InstallDisk) {
+	_ = s.unreserve(ctx, before.Path)
+	_ = s.cmd(ctx, "udevadm", "settle")
+	after, err := s.find(ctx, before.Name)
+	if err != nil {
+		s.line("Could not look for what the failed install left: " + err.Error())
+		return
+	}
+	was := map[uint64]bool{}
+	for _, p := range before.Partitions {
+		was[p.Start] = true
+	}
+	for _, p := range after.Partitions {
+		if was[p.Start] {
+			continue
+		}
+		s.line("Removing " + p.Path + ", which the failed install made")
+		if err := s.disks.DeletePartition(ctx, p.Path); err != nil {
+			s.line("Could not remove " + p.Path + ": " + err.Error())
+		}
+	}
+}
+
+// Sweep deletes the temporary partitions an install holds free regions
+// with (region.go), left on a disk when the installer stopped between
+// making and deleting them. The installer runs it once at its start.
+func (s *Service) Sweep(ctx context.Context) {
+	disks, err := s.disks.List(ctx)
+	if err != nil {
+		s.log.Warn("could not list the disks to sweep", "error", err)
+		return
+	}
+	for _, d := range disks {
+		if d.InUse {
+			continue
+		}
+		for _, p := range d.Partitions {
+			if p.Label != reservedName && !strings.EqualFold(p.Type, reservedType) {
+				continue
+			}
+			s.log.Info("removing temporary partitions an earlier install left", "disk", d.Path)
+			if err := s.unreserve(ctx, d.Path); err != nil {
+				s.log.Warn("could not remove them", "disk", d.Path, "error", err)
+			}
+			break
+		}
+	}
+}
+
+// newPartitions finds the ESP (sharedESP when the boot loader goes on
+// another disk's) and the /var partition after partitioning. udev has
+// settled by then, but UDisks reads the new table on its own time, so it
+// looks a few times before it gives up.
+func (s *Service) newPartitions(ctx context.Context, disk, sharedESP string) (esp, varPart string, err error) {
+	for try := 1; ; try++ {
+		after, err := s.find(ctx, disk)
+		if err != nil {
+			return "", "", err
+		}
+		esp, varPart = partOf(after, typeESP), partOf(after, typeVar)
+		if sharedESP != "" {
+			esp = sharedESP
+		}
+		if esp != "" && varPart != "" {
+			return esp, varPart, nil
+		}
+		if try >= settleTries {
+			return "", "", errors.New("the new partitions are not on the disk")
+		}
+		time.Sleep(settleWait)
+	}
 }
 
 // cmd runs one install step, its output in the page's log.

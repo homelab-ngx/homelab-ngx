@@ -27,7 +27,13 @@ func runInstaller(ctx context.Context, socket string, log *slog.Logger) error {
 	mux := http.NewServeMux()
 	apis := httpx.APIs{Operator: httpx.NewAPI(mux, "homelab-daemon", version)}
 	system.RegisterVersion(apis) // the image's boot check waits for it
-	installer.NewHTTP(installer.New(cmdrunner.OS{}, installer.UDisks{}, logging.Logger("installer"))).Register(apis)
+	inst := installer.New(cmdrunner.OS{}, installer.UDisks{}, logging.Logger("installer"))
+	if err := inst.WriteCode(installer.CodeFile); err != nil {
+		log.Warn("the take-over code is not on the console", "error", err)
+	}
+	// Temporary partitions an install left when the stick lost power.
+	go inst.Sweep(ctx)
+	installer.NewHTTP(inst).Register(apis)
 	// The stick has no password: the installer's pages reach the same API
 	// through Caddy on the web socket, ungated.
 	h := httpx.Middleware(nil)(mux)

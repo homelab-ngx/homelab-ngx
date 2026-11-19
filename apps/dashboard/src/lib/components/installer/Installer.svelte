@@ -6,6 +6,7 @@
   import Disclosure from "#lib/components/Disclosure.svelte";
   import Help from "#lib/components/Help.svelte";
   import Modal from "#lib/components/Modal.svelte";
+  import Pill from "#lib/components/Pill.svelte";
   import DiskMap from "./DiskMap.svelte";
   import Ipv4Fields from "#lib/components/host/Ipv4Fields.svelte";
   import { untrack } from "svelte";
@@ -21,42 +22,66 @@
   const id = $props.id();
   const queryClient = useQueryClient();
   const KEY = ["daemon", "installer"] as const;
-  const query = createQuery(() => ({
-    queryKey: KEY,
-    queryFn: () => call<InstallerState>(api.GET("/installer")),
-    initialData: initial,
-    refetchInterval: (q) => (q.state.data?.step === "installing" ? 1_500 : 10_000),
-  }));
-  const st = $derived(query.data ?? initial);
-
-  // The first browser to open the installer holds it; the token lives as
-  // long as the tab.
+  // One browser holds the installer at a time: the first to open it, until
+  // its page has been closed for ten minutes or another takes it over with
+  // the code on the machine's screen. The token is kept for this browser,
+  // so a closed tab comes back to its install.
   const TOKEN = "homelab-installer-token";
   function stored(): string {
     try {
-      return sessionStorage.getItem(TOKEN) ?? "";
+      return localStorage.getItem(TOKEN) ?? "";
     } catch {
       return "";
     }
   }
   let token = $state(stored());
+  function hold(t: string) {
+    token = t;
+    try {
+      localStorage.setItem(TOKEN, t);
+    } catch {
+      /* the page still works for this load */
+    }
+    void queryClient.invalidateQueries({ queryKey: KEY });
+  }
+  const headers = $derived({ "X-Installer-Token": token });
+
+  const query = createQuery(() => ({
+    queryKey: KEY,
+    queryFn: () => call<InstallerState>(api.GET("/installer", { headers: token ? { "X-Installer-Token": token } : {} })),
+    initialData: initial,
+    refetchInterval: (q) => (q.state.data?.step === "installing" ? 1_500 : 10_000),
+  }));
+  const st = $derived(query.data ?? initial);
+  // A token the installer does not know (one from before it restarted)
+  // holds nothing.
+  const mine = $derived(st.mine);
+  // With a token kept from before, the first answer that carried it says
+  // whose the installer is; until then nothing is offered.
+  const settled = $derived(!token || query.isFetchedAfterMount);
+
   let claimError = $state("");
+  let claiming = false;
   $effect(() => {
-    if (token || st.claimed) return;
+    if (st.mine || st.claimed || claiming) return;
+    claiming = true;
     call(api.POST("/installer/claim"))
+      .then((r) => hold(r.token))
+      .catch((e: unknown) => (claimError = describe(e)))
+      .finally(() => (claiming = false));
+  });
+
+  let code = $state("");
+  function takeOver(e: SubmitEvent) {
+    e.preventDefault();
+    claimError = "";
+    call(api.POST("/installer/takeover", { body: { code } }))
       .then((r) => {
-        token = r.token;
-        try {
-          sessionStorage.setItem(TOKEN, r.token);
-        } catch {
-          /* the page still works for this load */
-        }
-        void queryClient.invalidateQueries({ queryKey: KEY });
+        code = "";
+        hold(r.token);
       })
       .catch((e: unknown) => (claimError = describe(e)));
-  });
-  const mine = $derived(!!token);
-  const headers = $derived({ "X-Installer-Token": token });
+  }
 
   // One disk at a time: the first one an install can go on, until another
   // is chosen; the segment selected on it, its largest free run at first.
@@ -205,8 +230,38 @@
     </ol>
   </header>
 
-  {#if !mine && st.claimed}
-    <p class="card">The installer is open in another browser.</p>
+  {#if mine && st.step !== "installing" && st.step !== "installed"}
+    <dl class="flex flex-wrap gap-x-6 gap-y-1">
+      <div class="flex gap-2">
+        <dt class="text-muted">Memory</dt>
+        <dd>{bytes(st.machine.memory)}</dd>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <dt class="text-muted"><Help label="Secure Boot">The system's kernel is not signed: the installed system starts only with Secure Boot off in the firmware.</Help></dt>
+        <dd>{#if st.machine.secure_boot}<Pill tone="warn">on</Pill>{:else}off{/if}</dd>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <dt class="text-muted"><Help label="Boot entries">Whether the firmware lets the install register the new system. Where it does not, pick the disk in the firmware's boot menu after the install.</Help></dt>
+        <dd>{#if st.machine.boot_entries}writable{:else}<Pill tone="warn">read-only</Pill>{/if}</dd>
+      </div>
+    </dl>
+  {/if}
+  {#if !mine && st.claimed && settled}
+    <form class="card grid gap-3" onsubmit={takeOver}>
+      <p>The installer is open in another browser.</p>
+      <div class="flex flex-wrap items-end gap-2">
+        <div class="grid gap-1">
+          <label for="{id}-code" class="text-muted">
+            <Help label="Code">The six digits on this machine's own screen, under the installer's address. They move the installer to this browser.</Help>
+          </label>
+          <input id="{id}-code" class="input w-32" inputmode="numeric" autocomplete="off" maxlength="6" bind:value={code} />
+        </div>
+        <button type="submit" class="btn btn-primary" disabled={code.trim().length !== 6}>Take over</button>
+      </div>
+      {#if claimError}<p role="alert" class="text-bad">{claimError}</p>{/if}
+    </form>
+  {:else if !mine}
+    {#if claimError}<p role="alert" class="card text-bad">{claimError}</p>{/if}
   {:else if claimError}
     <p role="alert" class="card text-bad">{claimError}</p>
   {:else if st.step === "installing" || st.step === "installed"}

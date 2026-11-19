@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/netip"
 	"net/url"
@@ -387,7 +388,7 @@ func (s *Service) SetHost(ctx context.Context, in Host) (HostSettings, error) {
 		if !tzRE.MatchString(in.Timezone) {
 			return HostSettings{}, invalid("timezone: an IANA zone such as Europe/Stockholm")
 		}
-		if _, err := os.Stat(filepath.Join(s.tzdir, in.Timezone)); err != nil {
+		if !KnownTimezone(s.tzdir, in.Timezone) {
 			return HostSettings{}, invalid("timezone: %s is not a known zone", in.Timezone)
 		}
 	}
@@ -821,4 +822,21 @@ func (s *Service) AdoptInstall(ctx context.Context, path string) bool {
 	_ = os.Remove(path)
 	s.log.Info("host name and time zone from the installer", "hostname", h.Hostname, "timezone", h.Timezone)
 	return true
+}
+
+// KnownTimezone reports whether name is a time zone in dir (the system's
+// zoneinfo): a zone file, which starts with TZif. A folder of zones
+// (Europe) or another file there (tzdata.zi) is not one.
+func KnownTimezone(dir, name string) bool {
+	if !tzRE.MatchString(name) {
+		return false
+	}
+	f, err := os.Open(filepath.Join(dir, name))
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	magic := make([]byte, 4)
+	_, err = io.ReadFull(f, magic)
+	return err == nil && string(magic) == "TZif"
 }

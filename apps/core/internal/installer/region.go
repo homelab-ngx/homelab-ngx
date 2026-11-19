@@ -117,9 +117,10 @@ func (s *Service) planOnCopy(ctx context.Context, d InstallDisk, defs string, re
 	if err != nil {
 		return InstallPlan{}, fmt.Errorf("the partition table: %w", err)
 	}
-	dir := filepath.Join(filepath.Dir(mountDir), "plan")
-	_ = os.RemoveAll(dir)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	// A folder for this plan alone: two plans at once would write over each
+	// other's copy.
+	dir, err := workDir("plan-")
+	if err != nil {
 		return InstallPlan{}, err
 	}
 	defer os.RemoveAll(dir)

@@ -3,7 +3,9 @@
 # it end to end. The disk image is the installer medium (an 8 GB stick):
 #   1. it has the disk UUID the image knows its installer medium by, stays
 #      under 1.5 GB, boots on its verity root into installer mode with root
-#      logged in on the screen and the serial port, and lists the disks
+#      logged in on the screen and the serial port, and lists the disks; a
+#      second browser is refused the installer and takes it over with the
+#      code the console shows
 #   2. it installs into the free region picked on a stand-in Windows disk (an
 #      ESP with another system's loaders, a gap, an NTFS partition), leaves
 #      the gap alone and turns off
@@ -376,12 +378,20 @@ hostcheck() {
   [ "$(api http://x/api/stacks/site | jq -r .running)" = true ] || die "the stack is not running"
 }
 
+# claim: take the installer (its token in $token): the first to ask gets it;
+# when this boot's installer is held already, with the console's code.
+claim() {
+  token=$(api -X POST http://x/api/installer/claim 2>/dev/null | jq -r '.token // empty' || true)
+  [ -n "$token" ] && return 0
+  token=$(post installer/takeover "{\"code\":\"$(vssh 'cat /run/homelab-installer/takeover-code')\"}" | jq -r '.token // empty' || true)
+  [ -n "$token" ] || die "the installer could not be claimed or taken over"
+}
 # installto DISK ERASE HOSTNAME [IPV4] [ESP] [REGION]: install from the
 # medium through the installer's API (into the free region starting at byte
 # REGION). The installer's token stays in $token.
 installto() {
   local st
-  token=$(api -X POST http://x/api/installer/claim | jq -r .token) || die "claim refused"
+  claim
   local plan="{\"disk\":\"$1\",\"erase\":$2${5:+,\"esp\":\"$5\"}${6:+,\"region\":$6}}"
   [ "$(api -X POST http://x/api/installer/plan -d "'$plan'" | jq -r .ok)" = true ] ||
     die "no plan for $1: $(api -X POST http://x/api/installer/plan -d "'$plan'" | jq -r .reason)"
@@ -433,7 +443,31 @@ jq -e '.active and (.disks[] | select(.name == "vda") | .in_use) and (.disks[] |
   and (.disks[] | select(.name == "vdc") | .beside.ok)' <<<"$st" >/dev/null || die "unexpected disks: $(jq -c '[.disks[] | {name, in_use, erase, beside}]' <<<"$st")"
 curl -sf "http://127.0.0.1:$httpport/" | grep -q '<html' || die "the dashboard does not answer over HTTP"
 autologin
-ok "$((size / 1000000)) MB, disk UUID $medium; verity root, boot-complete, no failed units; the medium in use, a blank disk and free space beside Windows offered; root logged in on the screen and the serial port"
+# The installer is one browser's, and not for ever: a second claim is
+# refused, the code on the console takes it over, and the token from before
+# holds nothing after that. A failed boot check never restarts the stick,
+# which has no tries to count. (A version before the take-over has none of
+# this.)
+held=
+if vssh 'test -e /run/homelab-installer/takeover-code'; then
+  code=$(vssh 'cat /run/homelab-installer/takeover-code')
+  [[ $code =~ ^[0-9]{6}$ ]] || die "the take-over code is not six digits: $code"
+  first=$(api -X POST http://x/api/installer/claim | jq -r .token) || die "the first claim was refused"
+  [ "$(api -X POST http://x/api/installer/claim | jq -r .code || true)" = installer_claimed ] || die "a second claim was not refused"
+  [ "$(post installer/takeover '{"code":"x"}' | jq -r .code || true)" = invalid_install ] || die "a wrong take-over code was not refused"
+  second=$(post installer/takeover "{\"code\":\"$code\"}" | jq -r .token) || die "the console's code did not take the installer over"
+  [ "$(api -H "'X-Installer-Token: $second'" http://x/api/installer | jq -r .mine)" = true ] || die "the installer is not the taker's"
+  [ "$(api -H "'X-Installer-Token: $first'" http://x/api/installer | jq -r .mine)" = false ] || die "the token from before the take-over still holds the installer"
+  # Read whole, then searched: grep -q would close the pipe on ssh.
+  greeting=$(vssh 'bash -lic true 2>/dev/null')
+  grep -q "take-over code: $code" <<<"$greeting" || die "the console's greeting does not show the take-over code"
+  grep -q '█' <<<"$greeting" || die "the console's greeting draws no QR code of the address"
+  [ "$(vssh '/usr/lib/systemd/systemd-bless-boot status')" = clean ] || die "the stick's boot is counted: $(vssh '/usr/lib/systemd/systemd-bless-boot status')"
+  [ "$(vssh 'systemctl show homelab-boot-check.service -p FailureAction --value')" = none ] || die "a failed boot check would restart the stick"
+  [ "$(jq -r '.machine.memory > 0 and (.machine.secure_boot | not) and .machine.boot_entries' <<<"$st")" = true ] || die "the machine's facts: $(jq -c .machine <<<"$st")"
+  held="; a second claim refused, taken over with the console's code"
+fi
+ok "$((size / 1000000)) MB, disk UUID $medium; verity root, boot-complete, no failed units; the medium in use, a blank disk and free space beside Windows offered; root logged in on the screen and the serial port$held"
 
 step "2. install into the free space next to the other system"
 # The large free region after the NTFS partition, not the 2 GB gap before it.

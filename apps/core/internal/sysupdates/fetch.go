@@ -19,7 +19,7 @@ package sysupdates
 //	/<v>/homelab_<v>.efi                      UKI          } an image update
 //	/<v>/homelab_<v>.root*.raw                root, verity }
 //	/<v>/core/homelab-core_<v>.raw            core extension
-//	/<v>/homelab_<v>.raw                      installer (never downloaded here)
+//	/<v>/homelab-ngx_<v>.img                  installer (never downloaded here)
 
 import (
 	"bytes"

@@ -796,6 +796,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/installer/takeover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Take the installer from the browser that holds it, with the code the machine's console shows. */
+        post: operations["takeOverInstaller"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/log-viewer-config": {
         parameters: {
             query?: never;
@@ -2898,11 +2915,15 @@ export interface components {
             hostname?: string;
             /** @description The install's output, newest last. */
             log: string[];
+            /** @description What the installer found out about the machine before an install. */
+            machine: components["schemas"]["Machine"];
             /**
              * Format: int64
              * @description The space an install needs.
              */
             min_bytes: number;
+            /** @description The token sent with the request is the holder's. */
+            mine: boolean;
             /**
              * @description While installing: partitioning and copying, the boot loader and kernel, the host name.
              * @enum {string}
@@ -2984,6 +3005,17 @@ export interface components {
         };
         Logs: {
             logs: string;
+        };
+        Machine: {
+            /** @description The firmware's boot entries can be written: the install registers the new system, and can restart into it. */
+            boot_entries: boolean;
+            /**
+             * Format: int64
+             * @description RAM in bytes; 0 when it could not be read.
+             */
+            memory: number;
+            /** @description Secure Boot is on. The image's kernel is not signed, so the installed system only starts with it off. */
+            secure_boot: boolean;
         };
         MetricFrames: {
             /** @description Each point's time in unix seconds, oldest first. */
@@ -3876,6 +3908,10 @@ export interface components {
             advertise_routes?: string[];
             /** @description Runs tailscaled; log it in once with tailscale up on the host. */
             enabled: boolean;
+        };
+        TakeOverInBody: {
+            /** @description The six digits on the machine's own screen or serial console. */
+            code: string;
         };
         Tunnel: {
             /** @description The tunnel's credentials file is stored; it is never shown. */
@@ -7498,7 +7534,10 @@ export interface operations {
     getInstaller: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description The holder's token: its page counts as open while it asks. A hold lapses after ten silent minutes. */
+                "X-Installer-Token"?: string;
+            };
             path?: never;
             cookie?: never;
         };
@@ -8074,6 +8113,125 @@ export interface operations {
             };
             /** @description Unprocessable Entity */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    takeOverInstaller: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TakeOverInBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaimOutBody"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Too Many Requests */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };
