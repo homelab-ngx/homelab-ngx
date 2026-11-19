@@ -118,13 +118,23 @@ func TestLSPProxiesAndConfiguresNixd(t *testing.T) {
 	if m := next(t, f); m["method"] != "initialized" {
 		t.Fatalf("got %v", m)
 	}
-	if m := next(t, f); m["method"] != "workspace/didChangeConfiguration" {
-		t.Fatalf("got %v", m)
+	// The settings note and the answer come from two goroutines, in either
+	// order.
+	var reply map[string]any
+	noted := false
+	for range 2 {
+		switch m := next(t, f); {
+		case m["method"] == "workspace/didChangeConfiguration":
+			noted = true
+		case m["id"] == "cfg":
+			reply = m
+		default:
+			t.Fatalf("got %v", m)
+		}
 	}
-	reply := next(t, f)
 	result, _ := reply["result"].([]any)
-	if reply["id"] != "cfg" || len(result) != 1 || !strings.Contains(fmt.Sprint(result[0]), "lib.nixosSystem") {
-		t.Fatalf("configuration reply = %v", reply)
+	if !noted || len(result) != 1 || !strings.Contains(fmt.Sprint(result[0]), "lib.nixosSystem") {
+		t.Fatalf("noted %v, configuration reply = %v", noted, reply)
 	}
 
 	// Closing the editor stops the server.
