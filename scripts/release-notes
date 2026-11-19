@@ -1,0 +1,184 @@
+#!/usr/bin/env bash
+# The release notes of a version, on stdout: the versions of what is in the
+# image, the commits since the release before grouped by their area, the
+# packages that changed, and how to install, update and verify. Nothing in
+# them is written by hand; the commit subjects are the text (CONTRIBUTING.md,
+# Writing).
+#
+#   scripts/release-notes VERSION [--previous VERSION] [--to REF]
+#       [--manifest FILE] [--previous-manifest FILE] [--caddy VERSION]
+#
+# The release before is the newest one on the release server below VERSION,
+# and the package lists are the releases' homelab_VERSION.manifest there
+# (mkosi's). A release without one gets no Packages section. --to names the
+# commit when the tag vVERSION does not exist yet. Needs git, jq and curl.
+set -euo pipefail
+
+release_url=${RELEASE_URL:-https://dl.homelab-ngx.com}
+repo_url=${REPO_URL:-https://github.com/homelab-ngx/homelab-ngx}
+# The areas of a commit subject, in the order the notes show them, and the
+# ones a user never meets.
+areas="installer image updates daemon dashboard stacks drafts storage backups notifications"
+upkeep="ci|image check|docs|contributing"
+
+version= previous= to= manifest= previous_manifest= caddy=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --previous) previous=$2; shift 2 ;;
+    --to) to=$2; shift 2 ;;
+    --manifest) manifest=$2; shift 2 ;;
+    --previous-manifest) previous_manifest=$2; shift 2 ;;
+    --caddy) caddy=$2; shift 2 ;;
+    -*) echo "release-notes: unknown option $1" >&2; exit 2 ;;
+    *) version=$1; shift ;;
+  esac
+done
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: release-notes X.Y.Z [--previous X.Y.Z] [--to REF]" >&2; exit 2; }
+to=${to:-v$version}
+git rev-parse --verify --quiet "$to^{commit}" >/dev/null || { echo "release-notes: no commit $to (--to names another)" >&2; exit 1; }
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+# A file of the release server, or nothing: a release from before the
+# manifests has none, and the notes are then shorter, not wrong.
+fetch() {
+  curl -fsS --retry 3 --retry-all-errors --retry-delay 2 -o "$2" "$1" 2>/dev/null || { rm -f "$2"; return 1; }
+}
+
+if [ -z "$previous" ]; then
+  if fetch "$release_url/versions" "$tmp/versions"; then
+    previous=$( { cat "$tmp/versions"; echo "$version"; } | sed '/^$/d' | sort -uV | awk -v v="$version" '$0 == v { print last; exit } { last = $0 }')
+  fi
+fi
+if [ -n "$previous" ]; then
+  git rev-parse --verify --quiet "v$previous^{commit}" >/dev/null || { echo "release-notes: no tag v$previous" >&2; exit 1; }
+fi
+
+if [ -z "$manifest" ] && fetch "$release_url/$version/homelab_$version.manifest" "$tmp/manifest"; then
+  manifest=$tmp/manifest
+fi
+if [ -z "$previous_manifest" ] && [ -n "$previous" ] && fetch "$release_url/$previous/homelab_$previous.manifest" "$tmp/previous-manifest"; then
+  previous_manifest=$tmp/previous-manifest
+fi
+
+if [ -n "$previous" ]; then
+  echo "Changes since [$previous]($repo_url/releases/tag/v$previous). These notes are generated from the commits and the image's package list."
+else
+  echo "The first release. These notes are generated from the commits and the image's package list."
+fi
+
+echo
+echo "## Versions"
+echo
+echo "| Component | Version |"
+echo "| --- | --- |"
+echo "| Core | $version |"
+if [ -n "$manifest" ]; then
+  jq -r '
+    (.packages | map({(.name): .version}) | add) as $p
+    | [["Kernel", "linux"], ["systemd", "systemd"], ["bcachefs-tools", "bcachefs-tools"], ["Nix", "nix"], ["Tailscale", "tailscale"]][]
+    | select($p[.[1]] != null) | "| \(.[0]) | \($p[.[1]]) |"' "$manifest"
+fi
+[ -z "$caddy" ] || echo "| Caddy | $caddy |"
+
+echo
+echo "## Changes"
+range=$to
+[ -z "$previous" ] || range=v$previous..$to
+git log --reverse --no-merges --format='%h%x09%H%x09%s' "$range" > "$tmp/commits"
+if [ ! -s "$tmp/commits" ]; then
+  echo
+  echo "No commits."
+else
+  awk -F'\t' -v areas="$areas" -v upkeep="$upkeep" -v repo="$repo_url" '
+    function row(n) { return "| [`" short[n] "`](" repo "/commit/" full[n] ") | " text[n] " |" }
+    function table(group,   n, any) {
+      for (n = 1; n <= NR; n++) if (of[n] == group) {
+        if (!any) { print "| Commit | What is now true |"; print "| --- | --- |"; any = 1 }
+        print row(n)
+      }
+    }
+    {
+      short[NR] = $1; full[NR] = $2; subject = $3
+      area = ""; rest = subject
+      if (match(subject, /^[A-Za-z][A-Za-z ,]*: /)) {
+        area = tolower(substr(subject, 1, RLENGTH - 2)); sub(/,.*/, "", area)
+        rest = substr(subject, RLENGTH + 1)
+      }
+      if (area ~ "^(" upkeep ")$") group = "upkeep"
+      else if (index(" " areas " ", " " area " ") && area != "") group = area
+      else { group = "other"; rest = subject }
+      gsub(/\|/, "\\|", rest)
+      of[NR] = group; text[NR] = rest; count[group]++
+    }
+    END {
+      k = split(areas " other", order, " ")
+      for (i = 1; i <= k; i++) if (count[order[i]]) {
+        print ""; print "### " toupper(substr(order[i], 1, 1)) substr(order[i], 2); print ""
+        table(order[i])
+      }
+      if (count["upkeep"]) {
+        print ""; print "<details>"; print "<summary>Upkeep (" count["upkeep"] ")</summary>"; print ""
+        table("upkeep")
+        print ""; print "</details>"
+      }
+    }' "$tmp/commits"
+fi
+
+if [ -n "$manifest" ] && [ -n "$previous_manifest" ]; then
+  jq -rn --slurpfile old "$previous_manifest" --slurpfile new "$manifest" '
+    ($old[0].packages | map({(.name): .version}) | add) as $o
+    | ($new[0].packages | map({(.name): .version}) | add) as $n
+    | [($o + $n | keys[]) as $k
+       | if $o[$k] == null then "| added | \($k) | | \($n[$k]) |"
+         elif $n[$k] == null then "| removed | \($k) | \($o[$k]) | |"
+         elif $o[$k] != $n[$k] then "| changed | \($k) | \($o[$k]) | \($n[$k]) |"
+         else empty end][]' > "$tmp/packages"
+  rows=$(wc -l < "$tmp/packages" | tr -d ' ')
+  echo
+  echo "## Packages"
+  echo
+  if [ "$rows" -eq 0 ]; then
+    echo "The same packages as $previous."
+  else
+    [ "$rows" -le 15 ] || { echo "<details>"; echo "<summary>$rows packages</summary>"; echo; }
+    echo "| | Name | Previous | New |"
+    echo "| --- | --- | --- | --- |"
+    cat "$tmp/packages"
+    [ "$rows" -le 15 ] || { echo; echo "</details>"; }
+  fi
+fi
+
+cat <<EOF
+
+## Install
+
+Write [homelab-ngx_$version.img]($release_url/$version/homelab-ngx_$version.img) to a USB stick of 8 GB or more and boot from it. The README has the steps. $release_url/installer is always the newest installer.
+
+## Update
+
+A host finds this version on its daily check. Install it under Settings > Updates in the dashboard, or on the host:
+
+\`\`\`bash
+homelab update download   # fetch and stage this version
+homelab update core       # the core extension, without a reboot
+homelab update image      # the image, into the free slot; it starts at the next reboot
+\`\`\`
+
+## Verify
+
+The files are listed in \`SHA256SUMS\`, which is signed with the release key (\`74BE38EB9E1F070C2AF87E4481D74B7E90B6ADB0\`). A host checks this itself before it stages an update.
+
+\`\`\`bash
+curl -fLO $release_url/$version/homelab-ngx_$version.img
+curl -fLO $release_url/$version/SHA256SUMS -O $release_url/$version/SHA256SUMS.gpg
+curl -fL ${repo_url/github.com/raw.githubusercontent.com}/v$version/apps/core/internal/sysupdates/release-signing.asc | gpg --import
+gpg --verify SHA256SUMS.gpg SHA256SUMS
+sha256sum -c --ignore-missing SHA256SUMS
+\`\`\`
+EOF
+if [ -n "$previous" ]; then
+  echo
+  echo "Every commit: $repo_url/compare/v$previous...v$version"
+fi

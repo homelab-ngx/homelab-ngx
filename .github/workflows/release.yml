@@ -1,6 +1,7 @@
 # Release: a tag vX.Y.Z on main builds the installer and update images, checks
 # them in a VM, signs SHA256SUMS and publishes to B2 behind dl.homelab-ngx.com.
-# The GitHub Release holds only the notes. The image builds and boots on the
+# The GitHub Release holds only the notes, which scripts/release-notes writes
+# from the commits and the package list. The image builds and boots on the
 # hosted runner (the image spike workflow proved it).
 #
 # The check here boots this version alone: the installer, the installs and the
@@ -14,6 +15,7 @@
 #   /<version>/homelab_<version>.efi              UKI          } an image update
 #   /<version>/homelab_<version>.root*.raw        root, verity }
 #   /<version>/core/homelab-core_<version>.raw    core extension
+#   /<version>/homelab_<version>.manifest         the image's package list (the notes)
 #   /<version>/SHA256SUMS, SHA256SUMS.gpg         every file above, signed
 #   /versions                                     published versions, oldest first
 #   /latest                                       the newest version
@@ -146,7 +148,7 @@ jobs:
           rel=$RUNNER_TEMP/release/$VERSION
           mkdir -p "$rel/core"
           cp image/out/homelab_"$VERSION".raw "$rel/homelab-ngx_$VERSION.img"
-          cp image/out/homelab_"$VERSION".efi image/out/homelab_"$VERSION".root*.raw "$rel/"
+          cp image/out/homelab_"$VERSION".efi image/out/homelab_"$VERSION".root*.raw image/out/homelab_"$VERSION".manifest "$rel/"
           cp image/out/core/homelab-core_"$VERSION".raw "$rel/core/"
           cd "$rel"
           sha256sum homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw > SHA256SUMS
@@ -186,7 +188,11 @@ jobs:
     env:
       VERSION: ${{ needs.release.outputs.version }}
     steps:
+      # The whole history and the tags: the notes list the commits since the
+      # release before.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: cachix/install-nix-action@v31
         with:
@@ -244,11 +250,12 @@ jobs:
             echo "the GitHub Release $tag exists already"
             exit 0
           fi
-          cat > notes.md <<EOF
-          Installer: $RELEASE_URL/$VERSION/homelab-ngx_$VERSION.img (write it to a USB stick; $RELEASE_URL/installer is always the newest).
-          Files and signed checksums: $RELEASE_URL/$VERSION/SHA256SUMS
-          EOF
-          gh release create "$tag" --verify-tag --title "$tag" --notes-file notes.md --generate-notes
+          # A run by hand is on main, so the notes name the tag's commit.
+          git rev-parse --verify --quiet "$tag^{commit}" >/dev/null || git fetch --quiet origin "refs/tags/$tag:refs/tags/$tag"
+          caddy=$(nix eval --raw .#packages.x86_64-linux.core-extension.caddy.version)
+          scripts/release-notes "$VERSION" --caddy "$caddy" > notes.md
+          cat notes.md >> "$GITHUB_STEP_SUMMARY"
+          gh release create "$tag" --verify-tag --title "$tag" --notes-file notes.md
 
       # dl.homelab-ngx.com/installer: the Cloudflare redirect rule that
       # homelab-ngx/infra makes, switched off (INSTALLER_REDIRECT names it),
