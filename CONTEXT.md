@@ -37,7 +37,7 @@ A stack written in the dashboard: a git repo the daemon keeps at `/var/lib/homel
 _Avoid_: scratch stack, local stack, template
 
 **Assistant**:
-The optional language model the stack editor asks for help (Claude, or an OpenAI-compatible endpoint), set up in Settings. One request per question: the draft's two files, what Check and the last Build printed, and the authoring guide (`internal/drafts/guide.md`). No tools, no loop, no variable values; its answer is notes and whole files the operator applies or discards.
+The optional language model the stack editor asks for help (Claude, or an OpenAI-compatible endpoint), set up in System Settings. One request per question: the draft's two files, what Check and the last Build printed, and the authoring guide (`internal/drafts/guide.md`). No tools, no loop, no variable values; its answer is notes and whole files the operator applies or discards.
 _Avoid_: agent, copilot, AI
 
 **Host module**:
@@ -185,7 +185,7 @@ A version of the image and the core extension (`vX.Y.Z`) built, checked and sign
 _Avoid_: update (that is the install), core deploy
 
 **Host settings**:
-An image host's own network setup, edited on Settings › Host: domain and certificate, LAN, firewall openings, the VPN and its devices, the tunnel's routes, Tailscale, host name and time zone. Kept in SQLite and applied by the daemon at once; read-only on a NixOS host.
+An image host's own network setup, edited on System Settings › Network: domain and certificate, LAN, firewall openings, the VPN and its devices, the tunnel's routes, Tailscale, host name and time zone. Kept in SQLite and applied by the daemon at once; read-only on a NixOS host.
 _Avoid_: host config (that is config.json), network settings
 
 **Notification**:

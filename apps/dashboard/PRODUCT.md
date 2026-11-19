@@ -29,7 +29,7 @@ Unraid-style runtime management on NixOS: a stack is added by giving a repo, the
 
 ## Capabilities and Constraints
 
-- Pages: Stacks (overview, a stack's page, add a stack), Storage, Backups, Notifications, Settings (including the core host). Updates and Logs are being folded into Stacks (2026-11-16); core and backup logs move under Settings.
+- Pages: Stacks (overview, a stack's page, add a stack), Storage, Backups, Notifications, System Settings (Updates for the core host, Network, the assistant, the security audit, logs). Updates and Logs are being folded into Stacks (2026-11-16); core and backup logs move under Settings.
 - Stack operations: add from a git repo or a local folder, approve grants, fill in variables (env, secret, path), start, stop, restart, update, update all, roll back to a generation, remove (data kept).
 - Built with SvelteKit (static SPA), Svelte 5 runes, Tailwind v4, bits-ui, TanStack Query and a client generated from the daemon's OpenAPI spec.
 - Terminology follows the repo's `CONTEXT.md` (stack, grant, generation, attempt, variable, core).

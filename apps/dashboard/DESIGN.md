@@ -214,7 +214,7 @@ components:
 
 # Design System: homelab
 
-<!-- Recorded from the shipped code (src/app.css and the Stacks, Storage and Backups surfaces) on 2026-11-16. The Stacks surface (overview, a stack's page, add a stack), Storage (the health ledger: capacity, subvolumes, disks), Backups (the run ledger, a backup's page, the backup and destination forms) and Settings > Logs have had a design pass. Notifications and Settings > Core have not; they inherit these tokens and components but are not evidence for any rule here. -->
+<!-- Recorded from the shipped code (src/app.css and the Stacks, Storage and Backups surfaces) on 2026-11-16. The Stacks surface (overview, a stack's page, add a stack), Storage (the health ledger: capacity, subvolumes, disks), Backups (the run ledger, a backup's page, the backup and destination forms) and Settings > Logs have had a design pass. System Settings (the index ledger and Updates) had its pass on 2026-11-19. Notifications has not; it inherits these tokens and components but is not evidence for any rule here. -->
 
 ## Overview
 
@@ -240,7 +240,7 @@ A cool-gray neutral field with one teal accent, four semantic status hues each p
 - **Harbor Mist** (accent-soft): the tint behind active nav, info pills and the update banner.
 
 ### Secondary
-- **Core Violet** (core / core-soft): only for the core host: Settings in the nav when active, the Core host card heading and its border at 40%, core status notices. Also ANSI magenta in log lines.
+- **Core Violet** (core / core-soft): only for the core host: System Settings in the nav when active, the Updates link on the settings ledger, the Updates page heading, its Version card heading and border at 40%, core status notices. Also ANSI magenta in log lines.
 
 ### Status
 - **Running Green** (ok / ok-soft): healthy, done, set, up to date.
@@ -304,7 +304,7 @@ The voice is terse and neutral. These rules apply to every page and dialog; the 
 
 ## Layout
 
-One centered column, max 72rem (`max-w-6xl`), 16px side padding, 24px top and bottom. A sticky header holds the wordmark, the nav (horizontally scrollable) and Settings pushed right behind a divider; below 640px Settings collapses to a gear icon.
+One centered column, max 72rem (`max-w-6xl`), 16px side padding, 24px top and bottom. A sticky header holds the wordmark, the nav (horizontally scrollable) and System Settings pushed right behind a divider; below 640px Settings collapses to a gear icon.
 
 Pages stack vertically: header row (title and summary left, actions right, wrapping), then an updates strip or banner, then alerts, then the main table, then setup cards in a two-column grid from 768px. Vertical rhythm is mostly 16px between blocks (mt-4), 20px before a major section, 32px before Setup; gaps of 8px between buttons and 12px between header groups.
 
@@ -408,6 +408,12 @@ Selecting a mark changes the run shown in place: the run is in the address (`?ru
 
 ### Ask
 `AskButton.svelte`: a small default button, "Ask", on a thing the assistant can explain — the log filter row, a failed backup run, stack update or core deploy, a notification that opened a problem; "Ask…" in a failed service's Row Menu. It shows only when an assistant is set up, and only where something went wrong (the log row excepted). It opens `AskDialog.svelte`, wide: while the model works its reasoning, then its raw answer, stream in a muted pre; the finished answer is shown in its parts (`AnswerParts.svelte`: a summary in medium weight, then a labelled cause and numbered steps), the model and usage on one muted line, and a field for another question. The stack editor's assistant uses the same parts (summary, Changes, To do). The model is asked for the parts in tags; a model that ignores them shows as plain text. The daemon reads the material itself (`POST /ask`); the page sends only what the thing is.
+
+### Settings Ledger
+The System Settings index: a list in three bands (This host, Assistant, This browser), each band headed in the table-header style. A row is the page's name as a link (semibold, 9rem wide), the status mark and word with one muted value beside it (dropped below 640px), and a chevron. A row that is a setting, not a page (Sign-in, Theme), ends in its small buttons instead. The index answers "is anything waiting?" without opening a page.
+
+### Update Card
+The Updates page (the core host) opens with one card, "Version". Its first line is the state: one mark and word (up to date, update ready, reboot to finish) and the version with what taking it means ("0.2.2 · needs a reboot"). The line ends in "Check now" and the one primary action for that state: "Update to X…" or "Reboot…". Under it, three values: Running, Newest release, Checked. A version that did not start is a warn line in the card, never folded. The card ends in "Update automatically": a time and a switch. One verb, update, covers the image and the core; the page shows one version, the newer of the two. Installed versions sit under it in a closed fold, "Versions on this host", with the words running, fallback, next boot and failed; "Development" (the build from main) is a second fold, shown only on a host with a source. "Reboot…" stays in the page header.
 
 ### Workbench (stack editor)
 The one full-width page (`Shell` `wide`): a light VS Code layout filling the viewport from 1280px. A sunken title bar holds the path and the toolbar (Save, Check, Build, Install, and a Row Menu with Delete); file tabs sit over a borderless editor on the page surface; one Output panel under it shows what Check and Build said; the assistant is a side bar opened from an activity bar on the right edge (remembered per browser); a sunken status bar ends it. Below 1280px the parts stack in that order, the activity bar first. The editors help as you type: the manifest tab completes fields and values and explains them on hover from the manifest's schema, and marks Check's problems on their field with a wavy underline in the fault colour; the flake.nix tab does the same from nixd (NixOS options and packages), whose state the status bar names ("Nix: nixd", "starting…", "off" with the reason on hover).

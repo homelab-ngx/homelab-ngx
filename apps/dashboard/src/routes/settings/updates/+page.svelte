@@ -96,7 +96,7 @@
 
 <p class="text-muted"><a class="link" href="/settings">System Settings</a> /</p>
 <div class="mt-1 flex flex-wrap items-start justify-between gap-2">
-  <h1 class="text-xl font-semibold text-core">
+  <h1 class="min-w-0 flex-1 text-xl font-semibold text-core">
     <Help label="Updates">
       The host's own software: the OS, the daemon and this dashboard. If an update does not come up healthy, the host returns to
       the version before by itself. Stacks update on their own pages.

@@ -146,23 +146,23 @@
     <ul class="flex flex-col divide-y divide-line">
       {#each versions as v (v.version)}
         {@const state = VERSION_STATE[v.state] ?? { tone: "idle" as const, label: v.state }}
-        <li class="flex min-h-10 flex-wrap items-center gap-x-3 py-1.5">
-          <span class="grow">
+        <li class="flex min-h-10 items-center gap-x-3 py-1.5">
+          <span class="min-w-0 grow">
             {v.version}
             {#if image.oneshot === v.version}<span class="text-muted">· boots once</span>{/if}
             {#if image.default === v.version}<span class="text-muted">· boots by default</span>{/if}
           </span>
-          <span class="w-24"><Pill tone={state.tone}>{state.label}</Pill></span>
-          <span class="flex w-8 justify-end">
+          <span class="w-24 shrink-0"><Pill tone={state.tone}>{state.label}</Pill></span>
+          <span class="flex w-8 shrink-0 justify-end">
             {#if v.version !== image.booted}<RowMenu name={v.version} items={bootMenu(v.version)} />{/if}
           </span>
         </li>
       {/each}
       {#if coreApart}
-        <li class="flex min-h-10 flex-wrap items-center gap-x-3 py-1.5">
-          <span class="grow">{coreApart} <span class="text-muted">· dashboard and daemon only</span></span>
-          <span class="w-24"><Pill tone="ok">running</Pill></span>
-          <span class="w-8"></span>
+        <li class="flex min-h-10 items-center gap-x-3 py-1.5">
+          <span class="min-w-0 grow">{coreApart} <span class="text-muted">· dashboard</span></span>
+          <span class="w-24 shrink-0"><Pill tone="ok">running</Pill></span>
+          <span class="w-8 shrink-0"></span>
         </li>
       {/if}
     </ul>
