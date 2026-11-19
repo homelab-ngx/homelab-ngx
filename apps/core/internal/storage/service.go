@@ -92,7 +92,10 @@ func Mountpoint(name string) string { return MountRoot + "/" + name }
 // mountpoint is not a directory directly under MountRoot.
 func MountName(mountpoint string) (string, bool) {
 	name, ok := strings.CutPrefix(mountpoint, MountRoot+"/")
-	return name, ok && mountNameRE.MatchString(name)
+	if !ok || !mountNameRE.MatchString(name) {
+		return "", false
+	}
+	return name, true
 }
 
 // ErrSubvolumeNotEmpty is returned when deleting a subvolume that still holds

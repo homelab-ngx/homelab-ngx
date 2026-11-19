@@ -381,6 +381,23 @@ func TestMountNames(t *testing.T) {
 			t.Fatalf("mounted at %v", mounts)
 		}
 	})
+	t.Run("no name, remembered outside the root, is pool", func(t *testing.T) {
+		h := newHarness(t)
+		h.fake.On("lsblk").Reply(lsblk(true))
+		h.fake.On("mount").Reply("")
+		if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/pool", AutoMount: true}); err != nil {
+			t.Fatal(err)
+		}
+		if st, err := h.svc.Status(ctx); err != nil || st.Pools[0].MountName != "pool" {
+			t.Fatalf("mount_name = %+v %v", st.Pools, err)
+		}
+		if err := h.svc.Mount(ctx, []string{"/dev/sdb"}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if p := h.pool(t); p.Mountpoint != "/var/mnt/pool" {
+			t.Fatalf("pool = %+v", p)
+		}
+	})
 	t.Run("a name is one directory", func(t *testing.T) {
 		h := newHarness(t)
 		h.fake.On("lsblk").Reply(lsblk(false))
