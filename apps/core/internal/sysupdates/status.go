@@ -76,7 +76,7 @@ func (m *Module) notifyRelease(ctx context.Context) {
 			Key:    releaseScope + up.Release,
 			Title:  "NixOS " + up.Release + " is available",
 			Detail: "Upgrade core from Settings when it suits you; stacks keep their own nixpkgs. Release notes: " + up.NotesUrl,
-			Path:   "/settings/core",
+			Path:   "/settings/updates",
 		})
 	}
 	if _, err := m.notify.Reconcile(ctx, releaseScope, current); err != nil {

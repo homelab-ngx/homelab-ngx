@@ -1,4 +1,4 @@
-/** Host settings (#96): the pure logic behind Settings › Host. */
+/** Host settings (#96): the pure logic behind System Settings › Network. */
 import { api, call, type Schema } from "./api/client.ts";
 
 export type HostSettings = Schema<"HostSettings">;

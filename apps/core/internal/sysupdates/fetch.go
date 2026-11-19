@@ -4,7 +4,7 @@ package sysupdates
 // once a day. A newer one is downloaded in the deploy unit (KindDownload),
 // its SHA256SUMS checked against the release key and every file against its
 // sum, and staged in the update folder as a build from main would be. The
-// operator is told once and installs it from the Core host page; nothing
+// operator is told once and installs it from the Updates page; nothing
 // installs by itself unless the operator set a time for it (boot.go).
 //
 // A download that stops keeps what it has (updates/.download/<version>) and
@@ -543,7 +543,7 @@ func (m *Module) notifyImageRelease(ctx context.Context) {
 			Key:    imageReleaseScope + st.Latest,
 			Title:  "Version " + st.Latest + " is ready to install",
 			Detail: "It is downloaded and verified. Install it from Settings when it suits you; it boots at the next reboot.",
-			Path:   "/settings/core",
+			Path:   "/settings/updates",
 		}}
 		st.Notified = st.Latest
 	default:

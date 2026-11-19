@@ -1,18 +1,43 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
+  import { ChevronRight } from "@lucide/svelte";
+  import { api, call, describe } from "#lib/api/client.ts";
   import { fetchAssistant, keys } from "#lib/api/queries.ts";
+  import { headline } from "#lib/components/core/core.ts";
   import Help from "#lib/components/Help.svelte";
   import PasswordForm from "#lib/components/PasswordForm.svelte";
   import Pill from "#lib/components/Pill.svelte";
-  import { describe } from "#lib/api/client.ts";
   import { session } from "#lib/auth.svelte.ts";
   import { assistantLabel } from "#lib/assistant.ts";
+  import { fetchHostSettings, hostKeys } from "#lib/host.ts";
   import { fetchAudits, POSTURE, RESULT, securityKeys } from "#lib/security.ts";
 
   const assistant = createQuery(() => ({ queryKey: keys.assistant, queryFn: fetchAssistant }));
   const assistantOn = $derived(!!assistant.data && assistant.data.provider !== "none");
   const audits = createQuery(() => ({ queryKey: securityKeys.audits, queryFn: fetchAudits }));
   const lastAudit = $derived(audits.data?.[0]);
+
+  // An image host answers the first; a NixOS host the second.
+  const image = createQuery(() => ({
+    queryKey: ["daemon", "system-updates", "image"],
+    queryFn: () => call(api.GET("/system-updates/image")),
+    retry: false,
+  }));
+  const status = createQuery(() => ({ queryKey: ["daemon", "system-updates", "status"], queryFn: () => call(api.GET("/system-updates/status")) }));
+  const updates = $derived.by(() => {
+    if (image.data) return headline(image.data);
+    const core = status.data?.core;
+    if (!core?.configured) return undefined;
+    return core.update_available ? { tone: "info" as const, state: "update ready", detail: "" } : { tone: "ok" as const, state: "up to date", detail: "" };
+  });
+
+  const host = createQuery(() => ({ queryKey: hostKeys.settings, queryFn: fetchHostSettings }));
+  const network = $derived.by(() => {
+    const s = host.data;
+    if (!s) return undefined;
+    if (s.applied.errors.length > 0) return { tone: "bad" as const, state: "not applied" };
+    return s.managed === "nixos" ? { tone: "info" as const, state: "nixos" } : { tone: "ok" as const, state: "applied" };
+  });
 
   let changing = $state(false);
   let signOutError = $state("");
@@ -47,85 +72,90 @@
   }
 </script>
 
-<svelte:head><title>Settings · Homelab-ngx</title></svelte:head>
+<svelte:head><title>System Settings · Homelab-ngx</title></svelte:head>
 
-<h1 class="text-xl font-semibold">Settings</h1>
+<h1 class="text-xl font-semibold">System Settings</h1>
+
+{#snippet row(name: string, href: string, core = false)}
+  <a class="w-36 shrink-0 rounded-sm font-semibold hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent {core ? 'text-core' : ''}" {href}>{name}</a>
+{/snippet}
+{#snippet go()}<ChevronRight class="size-4 shrink-0 text-muted" aria-hidden="true" />{/snippet}
 
 <div class="mt-5 grid max-w-3xl gap-4">
-  <section class="card border-core/40" aria-labelledby="core-h">
-    <h2 id="core-h" class="font-semibold text-core">
-      <Help label="Core host">The OS and the few things that must always work. It changes rarely, and stacks never change it.</Help>
-    </h2>
-    <p class="mt-1 text-muted">Release, updates, reboot.</p>
-    <a class="btn mt-3" href="/settings/core">Open core host</a>
+  <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="host-h">
+    <h2 id="host-h" class="label bg-sunken px-3 py-2">This host</h2>
+    <ul class="divide-y divide-line border-t border-line">
+      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
+        {@render row("Updates", "/settings/updates", true)}
+        <span class="flex min-w-0 grow flex-wrap items-center gap-x-2">
+          {#if updates}<Pill tone={updates.tone}>{updates.state}</Pill>{#if updates.detail}<span class="text-muted max-sm:hidden">{updates.detail}</span>{/if}{/if}
+        </span>
+        {@render go()}
+      </li>
+      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
+        {@render row("Network", "/settings/network")}
+        <span class="flex min-w-0 grow flex-wrap items-center gap-x-2">
+          {#if network}<Pill tone={network.tone}>{network.state}</Pill>{/if}
+          {#if host.data?.domain.domain}<span class="truncate text-muted max-sm:hidden">{host.data.domain.domain}</span>{/if}
+        </span>
+        {@render go()}
+      </li>
+      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
+        {@render row("Logs", "/settings/logs")}
+        <span class="grow text-muted">Host, backups</span>
+        {@render go()}
+      </li>
+    </ul>
   </section>
 
-  <section class="card" aria-labelledby="host-h">
-    <h2 id="host-h" class="font-semibold">
-      <Help label="Host">The host's domain and certificate, LAN, firewall, VPN, tunnel and Tailscale.</Help>
-    </h2>
-    <p class="mt-1 text-muted">Domain, VPN, firewall, tunnel.</p>
-    <a class="btn mt-3" href="/settings/host">Open host</a>
+  <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="assistant-h">
+    <h2 id="assistant-h" class="label bg-sunken px-3 py-2">Assistant</h2>
+    <ul class="divide-y divide-line border-t border-line">
+      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
+        {@render row("AI assistant", "/settings/assistant")}
+        <span class="grow">{#if assistant.data}<Pill tone={assistantOn ? "ok" : "idle"}>{assistantLabel(assistant.data)}</Pill>{/if}</span>
+        {@render go()}
+      </li>
+      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
+        {@render row("Security audit", "/settings/security")}
+        <span class="grow">
+          {#if lastAudit?.posture}<Pill tone={POSTURE[lastAudit.posture]}>{lastAudit.posture}</Pill>
+          {:else if lastAudit}<Pill tone={RESULT[lastAudit.result].tone}>{RESULT[lastAudit.result].label}</Pill>
+          {:else if audits.data}<Pill tone="idle">never</Pill>{/if}
+        </span>
+        {@render go()}
+      </li>
+    </ul>
   </section>
 
-  <section class="card" aria-labelledby="assistant-h">
-    <div class="flex flex-wrap items-center gap-2">
-      <h2 id="assistant-h" class="font-semibold">
-        <Help label="AI assistant">
-          Optional. With Claude or a self-run model connected, the stack editor can draft a stack from a description, review one
-          and fix a failed build.
-        </Help>
-      </h2>
-      {#if assistant.data}<Pill tone={assistantOn ? "ok" : "idle"}>{assistantLabel(assistant.data)}</Pill>{/if}
-    </div>
-    <a class="btn mt-3" href="/settings/assistant">{assistantOn ? "Change" : "Set up"}</a>
+  <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="browser-h">
+    <h2 id="browser-h" class="label bg-sunken px-3 py-2">This browser</h2>
+    <ul class="divide-y divide-line border-t border-line">
+      <li class="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
+        <span class="flex grow flex-wrap font-semibold">
+          <Help label="Sign-in">
+            One password unlocks the dashboard. A forgotten one is removed on the host with homelab auth reset; the next visitor sets
+            a new one.
+          </Help>
+        </span>
+        <span class="flex flex-wrap gap-2">
+          <button type="button" class="btn btn-sm" onclick={() => (changing = true)}>Change password…</button>
+          <button type="button" class="btn btn-sm" onclick={signOut}>Sign out</button>
+        </span>
+      </li>
+      <li class="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
+        <span id="theme-h" class="grow font-semibold">Theme</span>
+        <span class="flex gap-2" role="radiogroup" aria-labelledby="theme-h">
+          {#each ["system", "light", "dark"] as const as t (t)}
+            <button type="button" role="radio" aria-checked={theme === t} class="btn btn-sm aria-checked:border-accent aria-checked:text-accent" onclick={() => setTheme(t)}>
+              {t[0]!.toUpperCase() + t.slice(1)}
+            </button>
+          {/each}
+        </span>
+      </li>
+    </ul>
   </section>
-
-  <section class="card" aria-labelledby="audit-h">
-    <div class="flex flex-wrap items-center gap-2">
-      <h2 id="audit-h" class="font-semibold">
-        <Help label="Security audit">
-          The assistant's audit model reviews the host's exposure, access, stacks, secrets and updates, and says what to fix
-          first.
-        </Help>
-      </h2>
-      {#if lastAudit?.posture}<Pill tone={POSTURE[lastAudit.posture]}>{lastAudit.posture}</Pill>
-      {:else if lastAudit}<Pill tone={RESULT[lastAudit.result].tone}>{RESULT[lastAudit.result].label}</Pill>
-      {:else if audits.data}<Pill tone="idle">never</Pill>{/if}
-    </div>
-    <a class="btn mt-3" href="/settings/security">Open audit</a>
-  </section>
-
-  <section class="card" aria-labelledby="logs-h">
-    <h2 id="logs-h" class="font-semibold">Logs</h2>
-    <p class="mt-1 text-muted">Host and backup jobs.</p>
-    <a class="btn mt-3" href="/settings/logs">Open logs</a>
-  </section>
-
-  <section class="card" aria-labelledby="signin-h">
-    <h2 id="signin-h" class="font-semibold">
-      <Help label="Sign-in">
-        One password unlocks the dashboard. A forgotten one is removed on the host with homelab auth reset; the next visitor sets
-        a new one.
-      </Help>
-    </h2>
-    <div class="mt-3 flex flex-wrap gap-2">
-      <button type="button" class="btn" onclick={() => (changing = true)}>Change password…</button>
-      <button type="button" class="btn" onclick={signOut}>Sign out</button>
-    </div>
-    {#if signOutError}<p role="alert" class="mt-3 rounded-md bg-bad-soft px-3 py-2 text-bad">{signOutError}</p>{/if}
-  </section>
-
-  <section class="card" aria-labelledby="theme-h">
-    <h2 id="theme-h" class="font-semibold">Theme</h2>
-    <div class="mt-2 flex gap-2" role="radiogroup" aria-labelledby="theme-h">
-      {#each ["system", "light", "dark"] as const as t (t)}
-        <button type="button" role="radio" aria-checked={theme === t} class="btn aria-checked:border-accent aria-checked:text-accent" onclick={() => setTheme(t)}>
-          {t[0]!.toUpperCase() + t.slice(1)}
-        </button>
-      {/each}
-    </div>
-  </section>
+  {#if signOutError}<p role="alert" class="rounded-md bg-bad-soft px-3 py-2 text-bad">{signOutError}</p>{/if}
 </div>
 
 {#if changing}<PasswordForm onClose={() => (changing = false)} />{/if}

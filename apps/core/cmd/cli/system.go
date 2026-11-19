@@ -11,11 +11,11 @@ import (
 	"homelab-ngx.com/core/internal/sysupdates"
 )
 
-// systemCmd mirrors the Core host page's System card: status and reboot.
+// systemCmd mirrors the Updates page's System card: status and reboot.
 func systemCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "system",
-		Usage: "NixOS release, newer release, reboot (the Core host page's System card)",
+		Usage: "NixOS release, newer release, reboot (the Updates page's System card)",
 		Subcommands: []*cli.Command{
 			{
 				Name:  "status",

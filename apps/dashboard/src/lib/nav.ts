@@ -12,7 +12,7 @@ export const NAV: NavItem[] = [
   { label: "Notifications", href: "/notifications" },
 ];
 
-export const SETTINGS: NavItem = { label: "Settings", href: "/settings" };
+export const SETTINGS: NavItem = { label: "System Settings", href: "/settings" };
 
 /** The nav item a path belongs to. */
 export function current(pathname: string): string {

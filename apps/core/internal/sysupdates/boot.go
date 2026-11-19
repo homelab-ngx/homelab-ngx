@@ -149,7 +149,7 @@ func (m *Module) notifyBoot(ctx context.Context) {
 			Key:    imageBootScope + "check",
 			Title:  "This boot did not pass its check",
 			Detail: "The boot check found: " + why + ". The host stayed up, because this version ran before; restarting it would not help.",
-			Path:   "/settings/core",
+			Path:   "/settings/updates",
 		})
 	}
 	if fb, ok := coreFellBack(); ok {
@@ -157,7 +157,7 @@ func (m *Module) notifyBoot(ctx context.Context) {
 			Key:    imageBootScope + "core:" + fb.From,
 			Title:  "Core " + fb.From + " did not start",
 			Detail: "The daemon did not answer on it at boot, so the host runs core " + fb.To + ", the version before.",
-			Path:   "/settings/core",
+			Path:   "/settings/updates",
 		})
 	}
 	if _, err := m.notify.Reconcile(ctx, imageBootScope, current); err != nil {
