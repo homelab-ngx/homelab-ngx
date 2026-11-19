@@ -3,6 +3,7 @@ package hostcfg
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"strings"
 
@@ -65,7 +66,22 @@ func out(st HostSettings, err error) (*settingsOut, error) {
 	if err != nil {
 		return nil, problem(err)
 	}
+	ifs, _ := net.Interfaces()
+	st.Wired = wired(ifs)
 	return &settingsOut{Body: st}, nil
+}
+
+// wired picks the interfaces the image's wired network covers (en*, eth*:
+// 80-wired.network) that have a MAC address.
+func wired(ifs []net.Interface) []Interface {
+	out := []Interface{}
+	for _, i := range ifs {
+		if len(i.HardwareAddr) == 0 || !(strings.HasPrefix(i.Name, "en") || strings.HasPrefix(i.Name, "eth")) {
+			continue
+		}
+		out = append(out, Interface{Name: i.Name, MAC: i.HardwareAddr.String()})
+	}
+	return out
 }
 
 func (h *HTTP) get(ctx context.Context, _ *struct{}) (*settingsOut, error) { return out(h.s.Get(ctx)) }

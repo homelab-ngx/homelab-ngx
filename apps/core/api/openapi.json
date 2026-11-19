@@ -2431,6 +2431,14 @@
           "tunnel": {
             "$ref": "#/components/schemas/Tunnel"
           },
+          "wired": {
+            "description": "The host's wired network interfaces. Each wakes the host on a magic packet sent to its MAC address (Wake-on-LAN), where the firmware allows it.",
+            "items": {
+              "$ref": "#/components/schemas/Interface"
+            },
+            "readOnly": true,
+            "type": "array"
+          },
           "wireguard": {
             "$ref": "#/components/schemas/WireGuard"
           }
@@ -2444,6 +2452,7 @@
           "wireguard",
           "tunnel",
           "tailscale",
+          "wired",
           "applied"
         ],
         "type": "object"
@@ -2909,6 +2918,24 @@
           "min_bytes",
           "current",
           "can_restart"
+        ],
+        "type": "object"
+      },
+      "Interface": {
+        "additionalProperties": false,
+        "properties": {
+          "mac": {
+            "description": "Its MAC address, such as d8:43:ae:00:11:22.",
+            "type": "string"
+          },
+          "name": {
+            "description": "The interface's name, such as enp5s0.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "mac"
         ],
         "type": "object"
       },

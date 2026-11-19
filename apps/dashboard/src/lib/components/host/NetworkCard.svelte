@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { api, call, type Schema } from "#lib/api/client.ts";
+  import Help from "#lib/components/Help.svelte";
   import { changed, joinList, splitList, type HostSettings } from "#lib/host.ts";
   import HostCard from "./HostCard.svelte";
   import Ipv4Fields from "./Ipv4Fields.svelte";
@@ -34,5 +35,15 @@
       <label for="{id}-lan" class="text-muted">LAN subnets</label>
       <input id="{id}-lan" class="input" autocomplete="off" placeholder="192.168.1.0/24" bind:value={lan} />
     </div>
+    {#if settings.wired.length > 0}
+      <dl class="flex flex-wrap gap-x-6 gap-y-1">
+        <dt class="text-muted">
+          <Help label="MAC address">A powered-off host starts on a Wake-on-LAN packet sent to this address, where its firmware allows it.</Help>
+        </dt>
+        {#each settings.wired as nic (nic.name)}
+          <dd>{nic.mac} <span class="text-muted">{nic.name}</span></dd>
+        {/each}
+      </dl>
+    {/if}
   </div>
 </HostCard>

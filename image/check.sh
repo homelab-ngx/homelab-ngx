@@ -481,12 +481,25 @@ ssh -q -i "$vm/key2" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHo
 vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
 curl -sf "http://127.0.0.1:$httpport/" | grep -q '<html' || die "the dashboard does not answer over HTTP"
 [ "$(api http://x/api/host-settings | jq -r .managed)" = image ] || die "the daemon does not see an image host"
+# Wake-on-LAN: the wired card takes the image's link file under the name it
+# would have had, and the settings show its MAC address. (A version before
+# the link file has neither.)
+wol=
+if vssh 'test -e /usr/lib/systemd/network/80-wired.link'; then
+  nic=$(vssh 'ls /sys/class/net' | grep -E '^(en|eth)' | head -n1)
+  link=$(vssh "udevadm info -q property /sys/class/net/$nic")
+  grep -qx 'ID_NET_LINK_FILE=/usr/lib/systemd/network/80-wired.link' <<<"$link" || die "$nic does not take 80-wired.link: $(grep LINK_FILE <<<"$link")"
+  grep -qx "ID_NET_NAME_PATH=$nic" <<<"$link" || die "the wired card is named $nic, not by its path: $(grep ID_NET_NAME <<<"$link" | tr '\n' ' ')"
+  mac=$(vssh "cat /sys/class/net/$nic/address")
+  api http://x/api/host-settings | jq -e --arg m "$mac" '.wired[] | select(.mac == $m)' >/dev/null || die "the settings do not show $nic's MAC address $mac"
+  wol="; $nic takes 80-wired.link (Wake-on-LAN) under its own name, its MAC address in the settings"
+fi
 put host-settings/domain "{\"domain\":\"$domain\"}" || die "domain refused"
 for _ in $(seq 1 15); do served 2>/dev/null && break; sleep 2; done
 served || die "the dashboard is not served at homelab.$domain"
 signed=" (no sign-in on $version)"
 hassignin && signin && signed=" behind its sign-in"
-ok "daemon $(api http://x/api/version | jq -r .version), dashboard over HTTP and at https://homelab.$domain$signed"
+ok "daemon $(api http://x/api/version | jq -r .version), dashboard over HTTP and at https://homelab.$domain$signed$wol"
 
 step "5. a bcachefs pool through the daemon"
 vssh 'bcachefs format -q --replicas=2 /dev/vdb /dev/vdc >/dev/null'

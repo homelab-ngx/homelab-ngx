@@ -2659,6 +2659,8 @@ export interface components {
             network: components["schemas"]["Network"];
             tailscale: components["schemas"]["Tailscale"];
             tunnel: components["schemas"]["Tunnel"];
+            /** @description The host's wired network interfaces. Each wakes the host on a magic packet sent to its MAC address (Wake-on-LAN), where the firmware allows it. */
+            readonly wired: components["schemas"]["Interface"][];
             wireguard: components["schemas"]["WireGuard"];
         };
         IPv4: {
@@ -2823,6 +2825,12 @@ export interface components {
             phase?: "partition" | "boot" | "finish";
             /** @enum {string} */
             step: "idle" | "installing" | "installed" | "failed";
+        };
+        Interface: {
+            /** @description Its MAC address, such as d8:43:ae:00:11:22. */
+            mac: string;
+            /** @description The interface's name, such as enp5s0. */
+            name: string;
         };
         Keep: {
             /** Format: int64 */

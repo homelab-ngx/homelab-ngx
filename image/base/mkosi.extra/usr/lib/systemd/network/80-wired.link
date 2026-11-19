@@ -1,0 +1,17 @@
+# Wired network cards wake the host on a magic packet (Wake-on-LAN), so a
+# host that is powered off can be started from the network. The firmware
+# must allow it too (often "Wake on LAN" or "Power on by PCI-E"; ErP off).
+#
+# A .link file that matches replaces systemd's 99-default.link for the
+# device, so its naming and MAC policy are repeated here. Path=* leaves
+# virtual interfaces (a stack's veth, a bridge) to the default: they have no
+# hardware path.
+[Match]
+Type=ether
+Path=*
+
+[Link]
+NamePolicy=keep kernel database onboard slot path
+AlternativeNamesPolicy=database onboard slot path mac
+MACAddressPolicy=persistent
+WakeOnLan=magic

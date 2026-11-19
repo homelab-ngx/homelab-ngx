@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -378,5 +380,20 @@ func TestSSHKeys(t *testing.T) {
 	}
 	if _, err := os.Stat(p); err == nil {
 		t.Error("the keys file stayed after every key was removed")
+	}
+}
+
+func TestWired(t *testing.T) {
+	mac := net.HardwareAddr{0xd8, 0x43, 0xae, 0, 0x11, 0x22}
+	got := wired([]net.Interface{
+		{Name: "lo"},
+		{Name: "enp5s0", HardwareAddr: mac},
+		{Name: "ve-drafts", HardwareAddr: mac},
+		{Name: "wg-homelab"},
+		{Name: "eth0", HardwareAddr: mac},
+	})
+	want := []Interface{{Name: "enp5s0", MAC: "d8:43:ae:00:11:22"}, {Name: "eth0", MAC: "d8:43:ae:00:11:22"}}
+	if !slices.Equal(got, want) {
+		t.Fatalf("wired = %v, want %v", got, want)
 	}
 }

@@ -37,8 +37,16 @@ type HostSettings struct {
 	WireGuard WireGuard `json:"wireguard"`
 	Tunnel    Tunnel    `json:"tunnel"`
 	Tailscale Tailscale `json:"tailscale"`
+	// Wired is read from the host for every answer; it is not a setting.
+	Wired []Interface `json:"wired" readOnly:"true" doc:"The host's wired network interfaces. Each wakes the host on a magic packet sent to its MAC address (Wake-on-LAN), where the firmware allows it."`
 	// Applied is when the daemon last wrote the host's files, and what failed.
 	Applied Applied `json:"applied"`
+}
+
+// Interface is one of the host's wired network interfaces.
+type Interface struct {
+	Name string `json:"name" doc:"The interface's name, such as enp5s0."`
+	MAC  string `json:"mac" doc:"Its MAC address, such as d8:43:ae:00:11:22."`
 }
 
 // Applied is the last apply's outcome.
