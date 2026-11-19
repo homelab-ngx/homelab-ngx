@@ -367,7 +367,13 @@ stackrefused() {
 # hostcheck: everything the host settings asked for is in place.
 hostcheck() {
   served || die "the dashboard is not served at homelab.$domain"
-  https site / | grep -q image-check || die "the stack's route is not served at site.$domain"
+  # After a boot the daemon answers before it has started the stacks again.
+  sitewait=0
+  until https site / 2>/dev/null | grep -q image-check; do
+    [ "$sitewait" -lt 120 ] || die "the stack's route is not served at site.$domain"
+    sleep 2
+    sitewait=$((sitewait + 2))
+  done
   vssh 'wg show wg-homelab peers' | grep -q . || die "the VPN has no device"
   vssh 'ip -4 -o addr show wg-homelab' | grep -q 10.10.0.1/24 || die "the VPN interface has no address"
   vssh 'grep -q "originServerName: site.'"$domain"'" /var/lib/homelab/cloudflared/config.yml' || die "the tunnel route is not in cloudflared's config"
@@ -594,7 +600,7 @@ reboot_vm
 booted "$version"
 hostcheck
 [ "$(vssh 'cat /etc/machine-id')" = "$installed" ] || die "the machine ID changed over a reboot"
-ok "everything still in place, the machine ID too"
+ok "everything still in place, the machine ID too (the stack's route ${sitewait}s after the daemon)"
 
 if [ -n "$next" ]; then
   step "9. $next downloads from a release server, then a core update to it through the API"
