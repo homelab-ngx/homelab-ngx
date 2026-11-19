@@ -42,8 +42,8 @@ type Host struct {
 	// MirrorsDir holds a bare git mirror per stack, for its commit list.
 	// Empty: commits are not read.
 	MirrorsDir string
-	// GitHubTokenFile is the token the mirrors fetch private repos with.
-	GitHubTokenFile string
+	// GitHubTokenFiles are where the token for private repos may be.
+	GitHubTokenFiles []string
 	// BuildsDir holds one wrapper flake per version 7 stack: the stack's
 	// module on the daemon's base. Daemon state, not backed up.
 	BuildsDir string
@@ -72,7 +72,7 @@ type GPU struct {
 func DefaultHost(r cmdrunner.Runner) Host {
 	return Host{
 		Runner: r, StateDir: StacksStateDir, ProfilesDir: "/nix/var/nix/profiles/per-stack", RoutesDir: "/var/lib/homelab-stack-routes",
-		MirrorsDir: "/var/lib/homelab-daemon/stack-mirrors", GitHubTokenFile: "/run/secrets/nix/GITHUB_TOKEN",
+		MirrorsDir: "/var/lib/homelab-daemon/stack-mirrors", GitHubTokenFiles: GitHubTokenFiles,
 		BuildsDir: "/var/lib/homelab-daemon/stack-builds",
 		StoreDir:  "/nix/store", StoreFile: "/var/lib/homelab-daemon/nix-store.json",
 		VarsDir: "/run/homelab-stack-vars", AgeKeyFile: "/var/lib/sops-age/keys.txt",

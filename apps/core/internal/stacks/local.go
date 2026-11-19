@@ -83,6 +83,7 @@ func prefetch(ctx context.Context, r cmdrunner.Runner, ref string) (prefetched, 
 		Module: "stacks", Name: "nix",
 		Args: []string{"--extra-experimental-features", "nix-command flakes",
 			"flake", "prefetch", "--json", "--refresh", "--", ref},
+		Env: nixEnv(),
 	}
 	if p := localPath(ref); p != "" {
 		c.AsUser = ownerOf(p)

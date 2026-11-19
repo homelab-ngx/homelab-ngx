@@ -162,7 +162,7 @@ func (s *Service) buildLogged(ctx context.Context, o *operation, url, fragment s
 	args = append(append(args, extra...), "--", ref+fragment)
 	res, err := s.r.Run(ctx, cmdrunner.Cmd{
 		Module: "stacks", Name: "nix",
-		Args: args,
+		Args: args, Env: nixEnv(),
 		OnLine: func(_, line string) {
 			s.mu.Lock()
 			o.log.line(line)

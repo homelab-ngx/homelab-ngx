@@ -108,7 +108,7 @@ func New(st *store.Store, src Source, host Host, notifier Notifier, log *slog.Lo
 		return ReadNixpkgsRelease(ctx, s.r, rev)
 	}
 	if host.MirrorsDir != "" {
-		s.history = gitHistory{r: host.Runner, dir: host.MirrorsDir, tokenFile: host.GitHubTokenFile}
+		s.history = gitHistory{r: host.Runner, dir: host.MirrorsDir, tokenFiles: host.GitHubTokenFiles}
 	}
 	return s
 }

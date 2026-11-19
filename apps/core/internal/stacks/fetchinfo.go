@@ -74,9 +74,9 @@ func readInfo(r store.Stack) fetchInfo {
 // gitHistory reads commits with git: a local checkout in place, anything
 // else through a blob-less bare mirror per stack.
 type gitHistory struct {
-	r         cmdrunner.Runner
-	dir       string // mirrors
-	tokenFile string // GitHub token, the one nix uses for private repos
+	r          cmdrunner.Runner
+	dir        string   // mirrors
+	tokenFiles []string // where the host's GitHub token may be; the first that has one
 }
 
 // maxCommits bounds the commits listed per fetch.
@@ -184,14 +184,10 @@ func (h gitHistory) Log(ctx context.Context, name, source, since, rev string) ([
 // auth gives git the GitHub token through its environment: never argv, which
 // any user on the host can read.
 func (h gitHistory) auth(u string) []string {
-	if h.tokenFile == "" || !strings.HasPrefix(u, "https://github.com/") {
+	if !strings.HasPrefix(u, "https://github.com/") {
 		return nil
 	}
-	raw, err := os.ReadFile(h.tokenFile)
-	if err != nil {
-		return nil
-	}
-	tok := strings.TrimSpace(string(raw))
+	tok := githubToken(h.tokenFiles)
 	if tok == "" {
 		return nil
 	}
@@ -209,4 +205,30 @@ func commitsView(info fetchInfo) []StackCommit {
 		out = append(out, StackCommit{Rev: c.Rev, Subject: c.Subject, At: time.Unix(c.At, 0)})
 	}
 	return out
+}
+
+// GitHubTokenFiles is where a host keeps the token its stacks' private
+// repos are fetched with: the image host's, then the one a NixOS host's
+// secrets put in place.
+var GitHubTokenFiles = []string{"/var/lib/homelab/github-token", "/run/secrets/nix/GITHUB_TOKEN"}
+
+// githubToken is the token in the first of files that holds one.
+func githubToken(files []string) string {
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if tok := strings.TrimSpace(string(raw)); err == nil && tok != "" {
+			return tok
+		}
+	}
+	return ""
+}
+
+// nixEnv gives nix the host's GitHub token for a private repo, through its
+// environment: never argv, which any user on the host can read. Nix's own
+// config on a NixOS host may name the same token; the image's cannot.
+func nixEnv() []string {
+	if tok := githubToken(GitHubTokenFiles); tok != "" {
+		return []string{"NIX_CONFIG=access-tokens = github.com=" + tok}
+	}
+	return nil
 }
