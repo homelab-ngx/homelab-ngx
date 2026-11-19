@@ -74,7 +74,14 @@ jobs:
       # first release there is none, and a 0.0.0 build stands in.
       - name: Previous release
         run: |
-          prev=$(curl -fsS --retry 5 --retry-all-errors --retry-delay 5 "$RELEASE_URL/latest?t=$(date +%s)" 2>/dev/null || true)
+          # Only a 404 means there is no release: a server that does not
+          # answer must not turn the check into one without the update.
+          code=$(curl -sS --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/latest" -w '%{http_code}' "$RELEASE_URL/latest?t=$(date +%s)")
+          case $code in
+            200) prev=$(tr -d '[:space:]' < "$RUNNER_TEMP/latest") ;;
+            404) prev= ;;
+            *) echo "::error::$RELEASE_URL/latest answered HTTP $code"; exit 1 ;;
+          esac
           if [ -z "$prev" ]; then
             echo "no release yet: building 0.0.0 as the version before"
             make image VERSION=0.0.0
@@ -103,7 +110,7 @@ jobs:
         run: make image-variant FROM="$VERSION" VERSION="$BROKEN"
 
       - name: make image-check
-        run: make image-check
+        run: make image-check CPUS="$(nproc)"
 
       # A failed check leaves the VMs' serial logs behind (image/out/vm). They
       # tell a slow boot from one that hung, so they outlive the runner.

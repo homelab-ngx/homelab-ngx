@@ -82,7 +82,7 @@ jobs:
         run: make image VERSION="$VERSION"
 
       - name: make image-check
-        run: make image-check
+        run: make image-check CPUS="$(nproc)"
 
       # A failed check leaves the VMs' serial logs behind (image/out/vm). They
       # tell a slow boot from one that hung, so they outlive the runner.
@@ -139,7 +139,15 @@ jobs:
           curl -fsSO --retry 5 --retry-all-errors --retry-delay 5 "$RELEASE_URL/$VERSION/homelab_$VERSION.efi"
           grep " homelab_$VERSION.efi\$" SHA256SUMS | sha256sum -c --quiet
 
-          { curl -fsS --retry 5 --retry-all-errors --retry-delay 5 "$RELEASE_URL/versions?t=$(date +%s)" 2>/dev/null || true; echo "$VERSION"; } | sed '/^$/d' | sort -uV > versions
+          # Only a 404 means no version is published yet: on any other
+          # failure stop, or /versions would lose every earlier release.
+          code=$(curl -sS --retry 5 --retry-all-errors --retry-delay 5 -o published -w '%{http_code}' "$RELEASE_URL/versions?t=$(date +%s)")
+          case $code in
+            200) ;;
+            404) : > published ;;
+            *) echo "::error::$RELEASE_URL/versions answered HTTP $code"; exit 1 ;;
+          esac
+          { cat published; echo "$VERSION"; } | sed '/^$/d' | sort -uV > versions
           echo "$VERSION" > latest
           uptext versions versions
           uptext latest latest
