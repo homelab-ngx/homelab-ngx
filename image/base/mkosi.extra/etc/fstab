@@ -1,2 +1,2 @@
 PARTLABEL=var /var ext4 defaults,x-initrd.mount,x-systemd.growfs 0 2
-PARTLABEL=nix /nix ext4 defaults,x-systemd.growfs 0 2
+PARTLABEL=nix /nix ext4 defaults,x-initrd.mount,x-systemd.growfs 0 2

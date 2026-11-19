@@ -1,0 +1,18 @@
+# Before the root is opened: wait for the disk the boot loader started from,
+# so a second disk with the same root (an installer medium next to an
+# install) does not win by being found first. Pulled in by the drop-in on
+# systemd-veritysetup@root.service.
+[Unit]
+Description=Wait for the disk the boot loader started from
+DefaultDependencies=no
+After=systemd-udevd.service systemd-udev-trigger.service
+Before=systemd-veritysetup@root.service initrd-root-device.target
+Conflicts=shutdown.target
+Before=shutdown.target
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/homelab/loader-disk-wait
+# Above the script's own waits (30 s and 10 s); a failure does not stop the
+# boot either (Wants=, not Requires=).
+TimeoutStartSec=60

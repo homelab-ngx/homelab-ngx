@@ -1,0 +1,28 @@
+# Which disk a /dev/disk/by-partuuid or by-partlabel link points at when two
+# disks claim it. The installer medium and a disk installed from it carry the
+# same labels (var, nix) and, at the same version, the same root and verity
+# partition UUIDs. udev gives a contested link to the device with the highest
+# link priority, and between equals to the one it saw last.
+#
+# So: the partitions of the disk the boot loader started from come first
+# (udev marks that disk in the initrd; in the running system it marks the
+# disk of the root). The installer medium's come last, wherever it did not
+# start the boot: a medium left in never takes an installed host's root,
+# /var or /nix. A partition inherits both properties from its disk
+# (60-persistent-storage.rules).
+#
+# The initrd carries this file too (mkosi.initrd.conf), and its
+# homelab-loader-disk.service waits for the disks before the root is opened.
+
+ACTION=="remove", GOTO="homelab_disk_end"
+SUBSYSTEM!="block", GOTO="homelab_disk_end"
+ENV{DEVTYPE}!="partition", GOTO="homelab_disk_end"
+
+ENV{ID_PART_GPT_AUTO_ROOT_DISK}=="1", OPTIONS+="link_priority=100", GOTO="homelab_disk_end"
+
+# The installer medium's partition table UUID: the same for every build,
+# since repart derives it from Seed= in mkosi.conf. The initrd's
+# usr/lib/homelab/loader-disk-wait knows it too.
+ENV{ID_PART_TABLE_UUID}=="87c3c032-7402-4b1b-af68-60c93c977667", OPTIONS+="link_priority=-100"
+
+LABEL="homelab_disk_end"

@@ -1,0 +1,83 @@
+#!/bin/sh
+# Waits, before the root is opened, for the disk the root should come from.
+# The installer medium and a disk installed from it have the same root and
+# verity partition UUIDs, and 61-homelab-disk.rules gives the link to the
+# right one, but only among the disks udev has seen: a root opened while its
+# disk is still being found would come from the other one.
+#
+# A disk that never shows up costs seconds, not the boot: this always exits
+# 0, and the root is then opened from whatever has the link.
+
+# The installer medium's partition table UUID, as in 61-homelab-disk.rules.
+medium=87c3c032-7402-4b1b-af68-60c93c977667
+
+log() { echo "homelab-loader-disk: $*" >/dev/kmsg; }
+
+# The whole disk a partition's link points at, as a kernel name (sda,
+# nvme0n1); nothing when the link is not there or is not a partition.
+disk_of() {
+  dev=$(readlink -f "$1" 2>/dev/null) || return 0
+  sys=/sys/class/block/${dev##*/}
+  [ -e "$sys/partition" ] || return 0
+  parent=$(readlink -f "$sys/..") || return 0
+  echo "${parent##*/}"
+}
+
+# Whether a disk has a partition with this UUID, asked of the kernel: udev
+# may have given the link to another disk.
+has_partition() {
+  for uevent in /sys/class/block/"$1"/*/uevent; do
+    [ -r "$uevent" ] || continue
+    while read -r line; do
+      [ "$line" = "PARTUUID=$2" ] && return 0
+    done <"$uevent"
+  done
+  return 1
+}
+
+# The partition the boot loader started from, as homelab-esp reads it.
+var=/sys/firmware/efi/efivars/LoaderDevicePartUUID-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
+[ -r "$var" ] || exit 0
+loader=$(tail -c +5 "$var" | tr -d '\000' | tr 'A-F' 'a-f')
+[ -n "$loader" ] || exit 0
+
+# --settle: its disk's other partitions have their links by then too.
+if ! udevadm wait --settle --timeout=30 "/dev/disk/by-partuuid/$loader"; then
+  log "the boot loader's partition $loader did not appear"
+  exit 0
+fi
+loader_disk=$(disk_of "/dev/disk/by-partuuid/$loader")
+[ -n "$loader_disk" ] || exit 0
+
+# The root partition's UUID is the first half of the root hash.
+hash=
+read -r cmdline </proc/cmdline
+for arg in $cmdline; do
+  case $arg in roothash=*) hash=${arg#roothash=} ;; esac
+done
+[ "${#hash}" -ge 32 ] || exit 0
+h=$(echo "$hash" | cut -c1-32 | tr 'A-F' 'a-f')
+root=$(echo "$h" | cut -c1-8)-$(echo "$h" | cut -c9-12)-$(echo "$h" | cut -c13-16)-$(echo "$h" | cut -c17-20)-$(echo "$h" | cut -c21-32)
+link=/dev/disk/by-partuuid/$root
+
+# The root is on the loader's disk when that disk has it. Otherwise (an
+# install that shares another disk's boot partition) it is on some disk that
+# is not an installer medium, which may take longer to appear than the
+# medium does.
+on_loader=no
+has_partition "$loader_disk" "$root" && on_loader=yes
+
+tries=20
+while :; do
+  disk=$(disk_of "$link")
+  if [ "$on_loader" = yes ]; then
+    [ "$disk" = "$loader_disk" ] && exit 0
+  elif [ -n "$disk" ]; then
+    [ "$(blkid -p -o value -s PTUUID "/dev/$disk" 2>/dev/null)" != "$medium" ] && exit 0
+  fi
+  tries=$((tries - 1))
+  [ "$tries" -gt 0 ] || break
+  sleep 0.5
+done
+log "the root partition $root is on ${disk:-no disk yet}, not where expected (the loader started from $loader_disk)"
+exit 0
