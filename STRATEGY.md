@@ -1,6 +1,6 @@
 ---
 name: homelab-ngx
-last_updated: 2026-11-18
+last_updated: 2026-11-19
 ---
 
 # Strategy
@@ -20,6 +20,14 @@ live in stacks: a stack is a repo with a flake and a manifest, and it runs as
 its own NixOS system in a systemd-nspawn container, with its own lock,
 variables, private network, update and rollback. So a service update cannot
 rebuild, restart or break core. Everything stays on one machine, without VMs.
+
+Services are Nix first: a stack is built from a commit the operator chose,
+not pulled as an image someone else assembled. A stack can still run a
+container image when upstream ships nothing else. Storage is bcachefs.
+
+It does the job of Unraid or TrueNAS SCALE, one machine for storage and
+services run from a browser, for an operator who would rather read and pin
+what runs than pick it from an app list.
 
 ## Users
 
@@ -75,5 +83,16 @@ A stack's manifest (version 8) declares the variables it needs (env, secret,
 path or address), and the operator fills them in on the host. Route labels are
 served under the host's domain, and a path's owner and group take the host's
 ids. So a stack repo names no secret, host directory, hostname, LAN address or
-uid, and anyone can install it. A catalogue the dashboard installs from comes
-later.
+uid, and anyone can install it.
+
+## Later
+
+Not built, and listed in the README's roadmap:
+
+- a catalogue the dashboard installs stacks from;
+- Secure Boot, with a signed kernel image;
+- a documentation site;
+- creating a pool and changing its drives in the dashboard, and snapshots;
+- network shares over SMB and NFS;
+- ZFS as a second filesystem for pools;
+- a CI job that builds each release twice and compares the two.
