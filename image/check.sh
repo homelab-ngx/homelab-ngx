@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # check.sh: boot the image `make image` built (image/out) in a VM and check
 # it end to end. The disk image is the installer medium (an 8 GB stick):
-#   1. it stays under 1.5 GB, boots on its verity root into installer mode and
-#      lists the disks
+#   1. it has the disk UUID the image knows its installer medium by, stays
+#      under 1.5 GB, boots on its verity root into installer mode with root
+#      logged in on the screen and the serial port, and lists the disks
 #   2. it installs into the free region picked on a stand-in Windows disk (an
 #      ESP with another system's loaders, a gap, an NTFS partition), leaves
 #      the gap alone and turns off
-#   3. it erases a blank disk and installs onto it
-#   4. that disk boots alone with the core merged and the installer's host
-#      name; a domain set through the host settings serves the dashboard over
-#      HTTPS
+#   3. as a USB stick it boots as the installer next to that install (same
+#      version, so the same root partition UUIDs and labels), running from
+#      the stick alone; it erases a blank disk and installs onto it
+#   4. that disk boots alone with the core merged, the installer's host name
+#      and a machine ID of its own, asking for a login; a domain set through
+#      the host settings serves the dashboard over HTTPS
 #   5. a bcachefs pool is formatted and mounted through the daemon
 #   6. a stack (the drafts template) is built by Nix and serves a page from
 #      the pool at its route under the domain
@@ -28,8 +31,17 @@
 #  13. the free-space install boots alone, next to the other system's files
 #  14. an erased disk whose boot loader goes on another disk's ESP boots
 #      with that ESP at /boot and Windows in its boot menu
+#  15. it boots the same with the stick left in: nothing of the stick's is
+#      used, and nobody is logged in on a console
+#  16. the stick boots next to it on a machine without a firmware UUID,
+#      installs over it, and restarts from the page into the new system with
+#      the stick still in
+#  17. that system has the same machine ID on its next boot; every install
+#      of the run has its own
 # The firmware's variables last the whole run, as on a real machine, so the
-# boot entries the installs register are used.
+# boot entries the installs register are used. Where the stick has to start
+# next to an installed disk (steps 3 and 16) the firmware is told to try it
+# first, like a machine set to start from USB.
 # Steps 9-10 need two versions in image/out and step 11 three:
 #   make image VERSION=0.0.1 && make image VERSION=0.0.2 && make image VERSION=0.0.3
 # Run inside the image shell (`make image-check`). Leaves image/out/vm;
@@ -52,7 +64,7 @@ core=$out/core/homelab-core_$version.raw
 domain=check.example.com
 
 # step "N. what": a step's heading; scripts/run reads the progress line.
-steps=14
+steps=17
 step() { printf '\nprogress: %d%%\n▸ %s\n' "$(((${1%%.*} - 1) * 100 / steps))" "$*"; }
 ok() { printf '  ✓ %s\n' "$*"; }
 die() {
@@ -106,23 +118,47 @@ sshport=$(shuf -i 20000-29999 -n1)
 httpport=$((sshport + 1))
 # The release server step 9 runs; the VM reaches it at 10.0.2.2.
 relport=$((sshport + 2))
+# The VM's firmware UUID. No install may take it for its machine ID.
+fwuuid=9a0c1e2f-3b4d-4e5f-8a9b-0c1d2e3f4a5b
 
-# boot DISK [EXTRA...]: start the VM headless with root's SSH key as a
-# systemd credential, the pool disks, and DISK first.
+# boot [--order] [--no-uuid] DISK...: start the VM headless with root's SSH
+# key as a systemd credential and the disks: virtio disks (vda, vdb, ... in
+# the order given), or, written usb:FILE, a USB stick (the only sd disk),
+# which the kernel finds after the others as on a real machine.
+# The firmware starts what its own boot order says, as the installs left it.
+# With --order it tries the disks in the order given instead, like a machine
+# set to start from USB first. Every disk is in that order: OVMF deletes the
+# boot entries of a disk that is not, also the ones an install registered.
+# --no-uuid leaves the machine without a firmware UUID, as some boards are.
 boot() {
-  local first=$1
-  shift
+  local order='' uuid=(-uuid "$fwuuid") disks=() first='' n=0 d dev
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --order) order=1 ;;
+      --no-uuid) uuid=() ;;
+      *) break ;;
+    esac
+    shift
+  done
   if [ ! -e "$vm/vars.fd" ]; then
     cp "$HOMELAB_OVMF/OVMF_VARS.fd" "$vm/vars.fd"
     chmod 644 "$vm/vars.fd"
   fi
-  local extra=()
-  for d in "$@"; do extra+=(-drive "if=virtio,format=raw,file=$d,cache=unsafe"); done
-  qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp "$cpus" -m "$mem" \
-    -uuid 9a0c1e2f-3b4d-4e5f-8a9b-0c1d2e3f4a5b \
+  case " $*" in *" usb:"*) disks+=(-device qemu-xhci) ;; esac
+  for d in "$@"; do
+    dev=virtio-blk-pci
+    case $d in usb:*) dev=usb-storage d=${d#usb:} ;; esac
+    [ -n "$first" ] || first=$d
+    if [ -z "$order" ] && [ "$dev" = virtio-blk-pci ]; then
+      disks+=(-drive "if=virtio,format=raw,file=$d,cache=unsafe")
+    else
+      disks+=(-drive "if=none,id=disk$n,format=raw,file=$d,cache=unsafe" -device "$dev,drive=disk$n${order:+,bootindex=$n}")
+    fi
+    n=$((n + 1))
+  done
+  qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp "$cpus" -m "$mem" "${uuid[@]}" \
     -drive "if=pflash,format=raw,readonly=on,file=$HOMELAB_OVMF/OVMF_CODE.fd" \
-    -drive "if=pflash,format=raw,file=$vm/vars.fd" \
-    -drive "if=virtio,format=raw,file=$first,cache=unsafe" "${extra[@]}" \
+    -drive "if=pflash,format=raw,file=$vm/vars.fd" "${disks[@]}" \
     -smbios "type=11,value=io.systemd.credential.binary:ssh.authorized_keys.root=$(base64 -w0 < "$vm/key.pub")" \
     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$sshport-:22,hostfwd=tcp:127.0.0.1:$httpport-:80" \
     -display none -serial "file:$vm/serial-$(basename "$first" .raw).log" \
@@ -166,10 +202,64 @@ off() {
   rm -f "$vm/qemu.pid"
 }
 api() { vssh "curl -s --fail-with-body --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json' $*"; }
-# console_users: who is logged in on the console (a login session, not SSH).
+# console_users: who is logged in on a console and on which (a login
+# session, not SSH), a line each: "root ttyS0" on the serial port; the
+# screen's is tty1, or a pty under kmscon.
 console_users() {
   vssh 'for s in $(loginctl list-sessions --no-legend | awk "{print \$1}"); do
-    [ "$(loginctl show-session "$s" -p Service --value)" = login ] && loginctl show-session "$s" -p Name --value; done; true'
+    [ "$(loginctl show-session "$s" -p Service --value)" = login ] &&
+      echo "$(loginctl show-session "$s" -p Name --value) $(loginctl show-session "$s" -p TTY --value)"; done; true'
+}
+# autologin: root is logged in on the screen and on the serial port, as the
+# installer medium does.
+autologin() {
+  local users
+  for _ in $(seq 1 15); do
+    users=$(console_users)
+    awk '$1 == "root" && $2 == "ttyS0" { serial = 1 } $1 == "root" && $2 != "ttyS0" { screen = 1 }
+      END { exit !(serial && screen) }' <<<"$users" && return 0
+    sleep 2
+  done
+  die "root is not logged in on both the screen and the serial port: $(tr '\n' ';' <<<"$users")"
+}
+# installer: the installer's state, once its API answers.
+installer() {
+  for _ in $(seq 1 30); do api http://x/api/installer >/dev/null 2>&1 && break; sleep 2; done
+  api http://x/api/installer || die "the installer does not answer"
+}
+# stickname: the installer medium's kernel name in the VM (vda as a virtio
+# disk, sda as a USB stick), found by its disk UUID.
+stickname() { vssh 'lsblk -dno NAME,PTUUID' | awk -v u="$medium" 'tolower($2) == u { print $1 }'; }
+# runs_from DISK [LOADER]: the running system is all DISK's: its /var, its
+# /nix and both halves of its verity root (data and hash), started by the
+# boot loader on LOADER (DISK unless given). Disks by kernel name.
+runs_from() {
+  local got want="loader=${2:-$1} var=$1 nix=$1 root=$1 $1"
+  got=$(vssh 'bash -s' <<'EOS'
+set -eu
+disk() { lsblk -ndo PKNAME "$1"; }
+uuid=$(tail -c +5 /sys/firmware/efi/efivars/LoaderDevicePartUUID-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f | tr -d '\000' | tr A-F a-f)
+# Every partition with the loader's UUID: more than one disk shows here.
+loader=$(lsblk -lno PKNAME,PARTUUID | awk -v u="$uuid" '$2 == u { print $1 }' | tr '\n' ' ')
+dm=$(basename "$(readlink -f /dev/mapper/root)")
+root=$(for s in /sys/block/"$dm"/slaves/*; do disk "/dev/${s##*/}"; done | tr '\n' ' ')
+var=$(disk "$(findmnt -no SOURCE -M /var | tail -1)")
+nix=$(disk "$(findmnt -no SOURCE -M /nix | tail -1)")
+echo "loader=${loader% } var=$var nix=$nix root=${root% }"
+EOS
+  ) || die "could not tell which disk the system runs from"
+  [ "$got" = "$want" ] || die "the system does not run from one disk: $got (expected $want)"
+}
+# ownid: the installed host's machine ID (in $id) is the one kept on its
+# /var, not the firmware's UUID, and no other install's of this run.
+ids=''
+ownid() {
+  id=$(vssh 'cat /etc/machine-id')
+  [[ $id =~ ^[0-9a-f]{32}$ ]] || die "the machine ID is not one: $id"
+  [ "$id" = "$(vssh 'cat /var/lib/homelab/machine-id')" ] || die "the machine ID $id is not the one on /var"
+  [ "$id" != "${fwuuid//-/}" ] || die "the machine ID is the firmware's UUID"
+  case " $ids " in *" $id "*) die "another install has the machine ID $id too" ;; esac
+  ids+=" $id"
 }
 # put PATH JSON: PUT a body to the daemon's API, the body over stdin.
 put() { vssh "cat > /tmp/body.json" <<<"$2" && api -X PUT "http://x/api/$1" -d @/tmp/body.json >/dev/null; }
@@ -269,11 +359,11 @@ hostcheck() {
   [ "$(api http://x/api/stacks/site | jq -r .running)" = true ] || die "the stack is not running"
 }
 
-# install DISK ERASE HOSTNAME [IPV4] [ESP] [REGION]: install from the medium
-# through the installer's API (into the free region starting at byte REGION),
-# then turn the machine off from the page's button.
-install() {
-  local token st
+# installto DISK ERASE HOSTNAME [IPV4] [ESP] [REGION]: install from the
+# medium through the installer's API (into the free region starting at byte
+# REGION). The installer's token stays in $token.
+installto() {
+  local st
   token=$(api -X POST http://x/api/installer/claim | jq -r .token) || die "claim refused"
   local plan="{\"disk\":\"$1\",\"erase\":$2${5:+,\"esp\":\"$5\"}${6:+,\"region\":$6}}"
   [ "$(api -X POST http://x/api/installer/plan -d "'$plan'" | jq -r .ok)" = true ] ||
@@ -286,6 +376,10 @@ install() {
     sleep 5
   done
   [ "$st" = installed ] || die "install onto $1: $st: $(api http://x/api/installer | jq -r '.error + "\n" + (.log[-15:] | join("\n"))')"
+}
+# install ...: installto, then turn the machine off from the page's button.
+install() {
+  installto "$@"
   api -X POST -H "'X-Installer-Token: $token'" http://x/api/installer/poweroff >/dev/null || true
   off
 }
@@ -295,22 +389,32 @@ espfiles() {
   vssh "d=\$(findmnt -no TARGET $1 | head -1); if [ -z \"\$d\" ]; then mkdir -p /run/esp && mount -o ro $1 /run/esp && d=/run/esp; fi
     cat \$d/EFI/Microsoft/Boot/bootmgfw.efi \$d/EFI/BOOT/BOOTX64.EFI | tr '\\n' ' '; [ \$d != /run/esp ] || umount /run/esp"
 }
+# partuuids FILE: the UUIDs of a disk file's /var and /nix partitions.
+partuuids() { sfdisk -J "$1" | jq -r '[.partitiontable.partitions[] | select(.name == "var" or .name == "nix") | .uuid] | sort | join(" ")'; }
 
 step "1. the installer medium boots $version into installer mode"
 size=$(stat -c %s "$out/homelab_$version.raw")
 # 1.26 GB in November 2026; the limit catches it growing back.
 [ "$size" -le 1500000000 ] || die "the installer medium is $size bytes: it should stay under 1.5 GB"
+# The image tells its installer medium from an installed disk by the medium's
+# disk UUID, the same in every build: the constant it carries must be this.
+medium=$(sfdisk --disk-id "$out/homelab_$version.raw" | tr A-F a-f)
+for f in mkosi.extra/usr/lib/udev/rules.d/61-homelab-disk.rules mkosi.initrd.conf/mkosi.extra/usr/lib/homelab/loader-disk-wait; do
+  known=$(grep -v '^ *#' "$here/base/$f" | grep -oiE '[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}' | tr A-F a-f | sort -u) ||
+    die "no disk UUID for the installer medium in image/base/$f"
+  [ "$known" = "$medium" ] || die "the installer medium's disk UUID is $medium, but image/base/$f has $known"
+done
 boot "$vm/stick.raw" "$vm/disk.raw" "$vm/beside.raw"
 booted "$version"
 vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
-for _ in $(seq 1 30); do api http://x/api/installer >/dev/null 2>&1 && break; sleep 2; done
-st=$(api http://x/api/installer) || die "the installer does not answer"
+[ "$(stickname)" = vda ] || die "the disk with the medium's UUID is $(stickname), not vda"
+runs_from vda
+st=$(installer)
 jq -e '.active and (.disks[] | select(.name == "vda") | .in_use) and (.disks[] | select(.name == "vdb") | .erase.ok)
   and (.disks[] | select(.name == "vdc") | .beside.ok)' <<<"$st" >/dev/null || die "unexpected disks: $(jq -c '[.disks[] | {name, in_use, erase, beside}]' <<<"$st")"
 curl -sf "http://127.0.0.1:$httpport/" | grep -q '<html' || die "the dashboard does not answer over HTTP"
-for _ in $(seq 1 15); do console_users | grep -qx root && break; sleep 2; done
-console_users | grep -qx root || die "the installer's console does not log root in"
-ok "$((size / 1000000)) MB; verity root, boot-complete, no failed units; the medium in use, a blank disk and free space beside Windows offered; root logged in on the console"
+autologin
+ok "$((size / 1000000)) MB, disk UUID $medium; verity root, boot-complete, no failed units; the medium in use, a blank disk and free space beside Windows offered; root logged in on the screen and the serial port"
 
 step "2. install into the free space next to the other system"
 # The large free region after the NTFS partition, not the 2 GB gap before it.
@@ -322,21 +426,44 @@ ingap=$(sfdisk -J "$vm/beside.raw" | jq --argjson n "$ntfs" '[.partitiontable.pa
 sfdisk -d "$vm/beside.raw" | grep -q homelab-reserved && die "a temporary partition was left on the disk"
 ok "installed into vdc's selected free region (not the gap before the other system) and turned off"
 
-step "3. erase a disk and install"
-# Without the first install: its root has the stick's partition UUIDs.
-boot "$vm/stick.raw" "$vm/disk.raw"
-install vdb true installed
-ok "installed onto vdb and turned off"
+step "3. the USB stick boots as the installer next to that install; erase a disk and install"
+# The first install stays attached: its root and verity partitions have the
+# stick's UUIDs, its /var and /nix the stick's labels, and as virtio disks
+# the kernel finds them before the stick. The firmware would start that
+# install (its boot entry is first), so it is told to start the stick.
+boot --order "usb:$vm/stick.raw" "$vm/disk.raw" "$vm/beside.raw"
+booted "$version"
+stick=$(stickname)
+[ -n "$stick" ] || die "the stick is not among the VM's disks"
+runs_from "$stick"
+st=$(installer)
+jq -e --arg s "$stick" '.active and (.disks[] | select(.name == $s) | .in_use) and (.disks[] | select(.name == "vda") | .erase.ok)
+  and (.disks[] | select(.name == "vdb") | (.in_use | not) and .erase.ok)' <<<"$st" >/dev/null ||
+  die "not the installer, or unexpected disks: $(jq -c '{active, disks: [.disks[] | {name, in_use, erase}]}' <<<"$st")"
+autologin
+# Step 13 starts the first install through its boot entry: the firmware must
+# have kept it when it was told an order (see boot).
+esp=$(sfdisk -J "$vm/beside.raw" | jq -r '.partitiontable.partitions[0].uuid')
+vssh efibootmgr | grep -qi "GPT,$esp," || die "the firmware dropped the first install's boot entry: $(vssh efibootmgr | tr '\n' ';')"
+install vda true installed
+# Every install has partition UUIDs of its own, and none the medium's disk UUID.
+[ "$(sfdisk --disk-id "$vm/disk.raw" | tr A-F a-f)" != "$medium" ] || die "the installed disk has the medium's disk UUID"
+[ -n "$(partuuids "$vm/disk.raw")" ] && [ "$(partuuids "$vm/disk.raw")" != "$(partuuids "$vm/beside.raw")" ] ||
+  die "two installs share their /var and /nix partition UUIDs: $(partuuids "$vm/disk.raw")"
+ok "the stick ($stick) ran from itself next to an install of $version and offered that disk; installed onto vda and turned off"
 
-step "4. the installed disk boots $version with its core, its name, time zone, SSH key and a domain"
+step "4. the installed disk boots $version with its core, its name, machine ID, time zone, SSH key and a domain"
 boot "$vm/disk.raw" "$vm/pool1.raw" "$vm/pool2.raw"
 booted "$version"
+runs_from vda
+ownid
+installed=$id
 vssh 'test "$(findmnt -no SIZE /var | tr -d G | cut -d. -f1)" -gt 30' || die "/var does not fill the disk"
 vssh 'systemd-sysext status --no-legend' | grep -q homelab-core || die "the core extension is not merged"
 for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
 api http://x/api/version >/dev/null || die "the daemon does not answer"
 [ "$(api http://x/api/installer | jq -r .active)" = false ] || die "the installed host runs the installer"
-console_users | grep -q . && die "the installed host logs $(console_users | tr '\n' ' ')in on the console" || true
+console_users | grep -q . && die "the installed host logs someone in on a console: $(console_users | tr '\n' ';')" || true
 [ "$(vssh cat /proc/sys/kernel/hostname)" = installed ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname), not the installer's"
 [ "$(api http://x/api/host-settings | jq -r .host.hostname)" = installed ] || die "the installer's host name is not in the settings"
 vssh 'readlink /etc/localtime' | grep -q Europe/Stockholm || die "the installer's time zone is not set"
@@ -399,7 +526,8 @@ step "8. after a reboot"
 reboot_vm
 booted "$version"
 hostcheck
-ok "everything still in place"
+[ "$(vssh 'cat /etc/machine-id')" = "$installed" ] || die "the machine ID changed over a reboot"
+ok "everything still in place, the machine ID too"
 
 if [ -n "$next" ]; then
   step "9. $next downloads from a release server, then a core update to it through the API"
@@ -506,6 +634,8 @@ step "13. the free-space install boots alone, beside the other system"
 stop
 boot "$vm/beside.raw"
 booted "$version"
+runs_from vda
+ownid
 [ "$(vssh cat /proc/sys/kernel/hostname)" = beside ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
 [ "$(espfiles /dev/vda1)" = "WINDOWS-BOOTMGR WINDOWS-FALLBACK " ] || die "the other system's loaders changed: $(espfiles /dev/vda1)"
 vssh 'lsblk -no PARTTYPENAME /dev/vda' | grep -q "Microsoft basic data" || die "the other system's partition is gone"
@@ -521,6 +651,9 @@ boot "$vm/stick.raw" "$vm/sys.raw" "$vm/win2.raw"
 install vdb true crossdisk "" vdc1
 boot "$vm/sys.raw" "$vm/win2.raw"
 booted "$version"
+runs_from vda vdb
+ownid
+crossdisk=$id
 [ "$(vssh cat /proc/sys/kernel/hostname)" = crossdisk ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
 vssh 'ls /boot/EFI/Linux/ >/dev/null; findmnt -no SOURCE /boot' | grep -q '^/dev/vdb1$' || die "/boot is not the other disk's ESP: $(vssh 'findmnt -no SOURCE /boot')"
 vssh 'ls /boot/EFI/Linux/' | grep -q "^homelab_$version.efi$" || die "the kernel is not on the other disk's ESP"
@@ -529,5 +662,68 @@ vssh 'bootctl list' | grep -q 'id: auto-windows' || die "the boot menu has no Wi
 vssh 'bootctl list' | grep -B1 'id: homelab_' | grep -q '(default)' || die "the system is not the boot menu's default"
 [ "$(espfiles /dev/vdb1)" = "WINDOWS-BOOTMGR WINDOWS-FALLBACK " ] || die "the other system's loaders changed: $(espfiles /dev/vdb1)"
 ok "boots from the other disk's ESP, mounted at /boot; Windows in its menu, its loaders untouched"
+
+step "15. that install boots with the stick left in"
+# The firmware's boot order has the install first, as the installer left it.
+stop
+boot "$vm/sys.raw" "$vm/win2.raw" "usb:$vm/stick.raw"
+booted "$version"
+[ -n "$(stickname)" ] || die "the stick is not among the VM's disks"
+runs_from vda vdb
+for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
+[ "$(api http://x/api/installer | jq -r .active)" = false ] || die "the installed host runs the installer with the stick in"
+[ "$(vssh cat /proc/sys/kernel/hostname)" = crossdisk ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
+[ "$(vssh 'cat /etc/machine-id')" = "$crossdisk" ] || die "the machine ID changed with the stick in"
+vssh 'ls /boot/EFI/Linux/ >/dev/null; findmnt -no SOURCE /boot' | grep -q '^/dev/vdb1$' || die "/boot is not the other disk's ESP: $(vssh 'findmnt -no SOURCE /boot')"
+console_users | grep -q . && die "the installed host logs someone in on a console with the stick in: $(console_users | tr '\n' ';')" || true
+vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
+ok "runs from its own disk and the other disk's ESP, the stick ($(stickname)) unused; nobody logged in on a console"
+
+step "16. the stick boots next to that install, installs over it and restarts into the new system"
+# A machine set to start from USB first, and without a firmware UUID. The
+# other disk and its ESP are away: the new install brings its own.
+stop
+boot --order --no-uuid "usb:$vm/stick.raw" "$vm/sys.raw"
+booted "$version"
+stick=$(stickname)
+[ -n "$stick" ] || die "the stick is not among the VM's disks"
+runs_from "$stick"
+st=$(installer)
+jq -e --arg s "$stick" '.active and (.disks[] | select(.name == $s) | .in_use)
+  and (.disks[] | select(.name == "vda") | (.in_use | not) and .erase.ok)' <<<"$st" >/dev/null ||
+  die "not the installer, or unexpected disks: $(jq -c '{active, disks: [.disks[] | {name, in_use, erase}]}' <<<"$st")"
+autologin
+installto vda true again
+[ "$(api http://x/api/installer | jq -r .can_restart)" = true ] || die "the installer cannot restart into the new system: $(vssh efibootmgr | tr '\n' ';')"
+qemu=$(cat "$vm/qemu.pid")
+was=$(vssh 'cat /proc/sys/kernel/random/boot_id')
+api -X POST -H "'X-Installer-Token: $token'" http://x/api/installer/restart >/dev/null || true
+# The same VM comes back by itself, the stick still first in the order the
+# firmware was told.
+now=''
+for _ in $(seq 1 60); do
+  now=$(vssh 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) && [ "$now" != "$was" ] && break
+  sleep 3
+done
+[ -n "$now" ] && [ "$now" != "$was" ] || die "the machine did not restart (serial log in $vm)"
+kill -0 "$qemu" 2>/dev/null || die "the VM turned off instead of restarting"
+booted "$version"
+for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
+[ "$(api http://x/api/installer | jq -r .active)" = false ] || die "the restart started the installer again, not the new system"
+[ -n "$(stickname)" ] || die "the stick is not among the VM's disks"
+runs_from vda
+[ "$(vssh cat /proc/sys/kernel/hostname)" = again ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
+console_users | grep -q . && die "the installed host logs someone in on a console with the stick in: $(console_users | tr '\n' ';')" || true
+vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
+ok "the stick ($stick) ran from itself and offered the installed disk; after the install the page's restart brought up the new system from vda, the stick still in"
+
+step "17. the machine ID without a firmware UUID, and one for every install"
+ownid
+stop
+boot --no-uuid "$vm/sys.raw"
+booted "$version"
+[ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "the machine ID changed over a boot: $(vssh 'cat /etc/machine-id'), was $id"
+[ "$(vssh 'cat /var/lib/homelab/machine-id')" = "$id" ] || die "the machine ID on /var changed over a boot"
+ok "the same on the next boot; $(wc -w <<<"$ids") installs, each with its own"
 
 printf '\nimage-check passed: %s%s%s\n' "$version" "${next:+ → $next}" "${broken:+, fell back from $broken}"
