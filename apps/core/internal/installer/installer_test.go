@@ -7,6 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/godbus/dbus/v5"
@@ -205,6 +208,23 @@ func TestSeedVar(t *testing.T) {
 			t.Errorf("%s is %v: other system users cannot enter it", sub, fi.Mode().Perm())
 		}
 	}
+
+	// A machine ID of the install's own: 32 lowercase hex digits and a
+	// newline, read-only, and another one for the next install.
+	idFile := filepath.Join(dir, "lib/homelab/machine-id")
+	first, _ := os.ReadFile(idFile)
+	if !regexp.MustCompile(`^[0-9a-f]{32}\n$`).Match(first) {
+		t.Errorf("machine-id = %q", first)
+	}
+	if fi, err := os.Stat(idFile); err != nil || fi.Mode().Perm() != 0o444 {
+		t.Errorf("machine-id: %v %v", fi, err)
+	}
+	if err := seedVar(dir, Setup{Hostname: "box"}); err != nil {
+		t.Fatal(err)
+	}
+	if second, _ := os.ReadFile(idFile); len(second) != 33 || string(second) == string(first) {
+		t.Errorf("a second install's machine-id = %q, the first's %q", second, first)
+	}
 }
 
 func TestImageVersion(t *testing.T) {
@@ -290,14 +310,148 @@ Boot0004* UEFI OS	HD(1,GPT,bca2e54c-c0ef-4bf3-8576-fa62deb9de4b,0x800,0x200000)/
 `
 
 func TestFirstInOrder(t *testing.T) {
-	if got, ok := firstInOrder(listing, "BCA2E54C-C0EF-4BF3-8576-FA62DEB9DE4B"); !ok || got != "0003,0001,0000,0004" {
-		t.Errorf("the Kingston's loader first: %q %v", got, ok)
+	if entry, got, ok := firstInOrder(listing, "BCA2E54C-C0EF-4BF3-8576-FA62DEB9DE4B"); !ok || entry != "0003" || got != "0003,0001,0000,0004" {
+		t.Errorf("the Kingston's loader first: %q %q %v", entry, got, ok)
 	}
-	if got, ok := firstInOrder(listing, "7b8341ba-dfeb-4cb2-a549-37d59fcafc57"); !ok || got != "0001,0000,0003,0004" {
-		t.Errorf("the Samsung's loader first: %q %v", got, ok)
+	if entry, got, ok := firstInOrder(listing, "7b8341ba-dfeb-4cb2-a549-37d59fcafc57"); !ok || entry != "0001" || got != "0001,0000,0003,0004" {
+		t.Errorf("the Samsung's loader first: %q %q %v", entry, got, ok)
 	}
-	if _, ok := firstInOrder(listing, "00000000-0000-0000-0000-000000000000"); ok {
+	if _, _, ok := firstInOrder(listing, "00000000-0000-0000-0000-000000000000"); ok {
 		t.Error("an ESP without an entry")
+	}
+}
+
+func quiet() *slog.Logger { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+
+// argv is the commands f ran whose argv starts with prefix, one per line.
+func argv(f *cmdrunnertest.Fake, prefix ...string) string {
+	var out []string
+	for _, c := range f.CallsMatching(prefix...) {
+		out = append(out, strings.Join(append([]string{c.Name}, c.Args...), " "))
+	}
+	return strings.Join(out, "\n")
+}
+
+func TestRepartSeedIsRandom(t *testing.T) {
+	// The default seed is the machine ID: two installs from one machine
+	// would share partition UUIDs.
+	oldMount := mountDir
+	mountDir = filepath.Join(t.TempDir(), "esp")
+	defer func() { mountDir = oldMount }()
+	d := assess(windows(512 * mib))
+	f := cmdrunnertest.NewFake()
+	f.On("systemd-repart").Reply("[]")
+	f.On("udevadm").Reply("")
+	f.On("blockdev", "--getss").Reply("512\n")
+	f.On("sfdisk").Reply("")
+	s := New(f, fakeDisks{list: []InstallDisk{d}}, quiet())
+	ctx := context.Background()
+	if _, err := s.Plan(ctx, "nvme0n1", true, "", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Plan(ctx, "nvme0n1", false, "", d.Free[1].Start); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.partition(ctx, d, definitions, "force", true, 0); err != nil {
+		t.Fatal(err)
+	}
+	runs := f.CallsMatching("systemd-repart")
+	if len(runs) != 3 {
+		t.Fatalf("repart ran %d times:\n%s", len(runs), argv(f, "systemd-repart"))
+	}
+	for _, c := range runs {
+		if !slices.Contains(c.Args, "--seed=random") {
+			t.Errorf("repart without a random seed: %v", c.Args)
+		}
+	}
+	if !slices.Contains(runs[2].Args, "--dry-run=no") || slices.Contains(runs[0].Args, "--dry-run=no") || slices.Contains(runs[1].Args, "--dry-run=no") {
+		t.Errorf("the plans are dry runs, the install is not:\n%s", argv(f, "systemd-repart"))
+	}
+}
+
+func TestBootFirstKeepsTheEntry(t *testing.T) {
+	// The firmware refuses the new order: the entry is still known.
+	f := cmdrunnertest.NewFake()
+	f.On("blkid").Reply("bca2e54c-c0ef-4bf3-8576-fa62deb9de4b\n")
+	f.On("efibootmgr").Reply(listing)
+	f.On("efibootmgr", "-q", "-o").Fail("Could not set BootOrder: No space left on device")
+	s := New(f, fakeDisks{}, quiet())
+	ctx := context.Background()
+	if err := s.bootFirst(ctx, "/dev/sda1"); err == nil {
+		t.Fatal("a refused boot order passed")
+	}
+	if got := argv(f, "efibootmgr", "-q"); got != "efibootmgr -q -o 0003,0001,0000,0004" {
+		t.Errorf("ran %q", got)
+	}
+	s.step = StepInstalled
+	if st, err := s.State(ctx); err != nil || !st.CanRestart {
+		t.Errorf("state = %+v %v", st, err)
+	}
+
+	// An ESP the firmware lists no entry for.
+	f = cmdrunnertest.NewFake()
+	f.On("blkid").Reply("00000000-0000-0000-0000-000000000000\n")
+	f.On("efibootmgr").Reply(listing)
+	s = New(f, fakeDisks{}, quiet())
+	if err := s.bootFirst(ctx, "/dev/sdb1"); err == nil {
+		t.Fatal("an ESP without an entry passed")
+	}
+	s.step = StepInstalled
+	if st, err := s.State(ctx); err != nil || st.CanRestart {
+		t.Errorf("state = %+v %v", st, err)
+	}
+}
+
+func TestRestart(t *testing.T) {
+	f := cmdrunnertest.NewFake()
+	f.On("efibootmgr", "-q", "-n").Reply("")
+	f.On("systemctl", "reboot").Reply("")
+	s := New(f, fakeDisks{}, quiet())
+	ctx := context.Background()
+	tok, err := s.Claim()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.entry = "0003"
+	if err := s.Restart(ctx, tok); !errors.Is(err, ErrInvalid) {
+		t.Errorf("restart before an install: %v", err)
+	}
+	if st, _ := s.State(ctx); st.CanRestart {
+		t.Error("can_restart before an install")
+	}
+	s.step, s.entry = StepInstalled, ""
+	if err := s.Restart(ctx, tok); !errors.Is(err, ErrInvalid) {
+		t.Errorf("restart without a boot entry: %v", err)
+	}
+	s.entry = "0003"
+	if err := s.Restart(ctx, "wrong"); !errors.Is(err, ErrClaimed) {
+		t.Errorf("restart without the token: %v", err)
+	}
+	if n := len(f.CallsMatching("efibootmgr")) + len(f.CallsMatching("systemctl")); n != 0 {
+		t.Fatalf("a refused restart ran %d commands", n)
+	}
+	if err := s.Restart(ctx, tok); err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, c := range f.Calls() {
+		if c.Name == "efibootmgr" || c.Name == "systemctl" {
+			got = append(got, strings.Join(append([]string{c.Name}, c.Args...), " "))
+		}
+	}
+	if strings.Join(got, "; ") != "efibootmgr -q -n 0003; systemctl reboot" {
+		t.Errorf("ran %q", got)
+	}
+
+	// The firmware refuses BootNext: no restart into the installer again.
+	f = cmdrunnertest.NewFake()
+	f.On("efibootmgr", "-q", "-n").Fail("Could not set BootNext")
+	f.On("systemctl", "reboot").Reply("")
+	s = New(f, fakeDisks{}, quiet())
+	tok, _ = s.Claim()
+	s.step, s.entry = StepInstalled, "0003"
+	if err := s.Restart(ctx, tok); err == nil || len(f.CallsMatching("systemctl")) != 0 {
+		t.Errorf("restart after a refused BootNext: %v, systemctl ran %d times", err, len(f.CallsMatching("systemctl")))
 	}
 }
 

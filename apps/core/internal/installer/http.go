@@ -87,6 +87,10 @@ func (h *HTTP) Register(a httpx.APIs) {
 		OperationID: "powerOffInstaller", Method: http.MethodPost, Path: "/installer/poweroff", Tags: tags, Errors: errs,
 		Summary: "Turn the machine off after the install, so the stick can come out.",
 	}, h.powerOff)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "restartInstaller", Method: http.MethodPost, Path: "/installer/restart", Tags: tags, Errors: errs,
+		Summary: "Restart into the installed system; the stick can stay in. Only when getInstaller says can_restart.",
+	}, h.restart)
 }
 
 func problem(err error) error {
@@ -165,6 +169,16 @@ func (h *HTTP) powerOff(ctx context.Context, in *tokenIn) (*struct{}, error) {
 		return nil, err
 	}
 	if err := h.s.PowerOff(ctx, in.Token); err != nil {
+		return nil, problem(err)
+	}
+	return nil, nil
+}
+
+func (h *HTTP) restart(ctx context.Context, in *tokenIn) (*struct{}, error) {
+	if err := h.active(); err != nil {
+		return nil, err
+	}
+	if err := h.s.Restart(ctx, in.Token); err != nil {
 		return nil, problem(err)
 	}
 	return nil, nil

@@ -2,7 +2,8 @@
 // (the image whose /var holds the installer marker) the dashboard shows only
 // the installer page. It lists the disks through UDisks2, can delete a
 // partition to make room, shows systemd-repart's plan, installs (repart,
-// then systemd-boot and the kernel) and turns the machine off.
+// then systemd-boot and the kernel), then restarts into the new system or
+// turns the machine off.
 package installer
 
 import "homelab-ngx.com/core/internal/hostcfg"
@@ -72,6 +73,9 @@ type InstallerState struct {
 	Disks    []InstallDisk `json:"disks"`
 	MinBytes uint64        `json:"min_bytes" doc:"The space an install needs."`
 	Current  hostcfg.IPv4  `json:"current" doc:"The installer medium's own address from DHCP: where a static setting starts."`
+	// CanRestart is false after an install whose boot entry the firmware
+	// does not list: that machine is turned off and started by hand.
+	CanRestart bool `json:"can_restart" doc:"Installed, and the firmware has a boot entry for the new system: restartInstaller can start it."`
 }
 
 // InstallPlanRow is one partition in systemd-repart's plan for a disk.

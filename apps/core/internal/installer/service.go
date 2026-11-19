@@ -61,6 +61,9 @@ type Service struct {
 	phase    string
 	lines    []string
 	err      string
+	// entry is the firmware's boot entry for the installed system (four hex
+	// digits), empty when none was found.
+	entry string
 }
 
 // New returns the installer; disks is UDisks{} on the stick.
@@ -83,7 +86,8 @@ func (s *Service) State(ctx context.Context) (InstallerState, error) {
 	return InstallerState{
 		Active: true, Claimed: s.token != "", Step: s.step, Phase: s.phase, Disk: s.disk, Hostname: s.hostname,
 		Log: append([]string{}, s.lines...), Error: s.err, Disks: disks, MinBytes: MinBytes,
-		Current: s.lease(ctx),
+		Current:    s.lease(ctx),
+		CanRestart: s.step == StepInstalled && s.entry != "",
 	}, nil
 }
 
@@ -219,7 +223,7 @@ func (s *Service) Plan(ctx context.Context, disk string, erase bool, esp string,
 	}
 	res, _ := s.r.Run(ctx, cmdrunner.Cmd{
 		Module: "installer", Name: "systemd-repart",
-		Args: []string{"--definitions=" + defs, "--dry-run=yes", "--empty=" + empty, "--json=short", d.Path},
+		Args: []string{"--definitions=" + defs, seedRandom, "--dry-run=yes", "--empty=" + empty, "--json=short", d.Path},
 	})
 	return parsePlan(res.Stdout, res.Output), nil
 }
@@ -317,6 +321,12 @@ func parsePlan(stdout, output string) InstallPlan {
 	return InstallPlan{Reason: reason, Rows: []InstallPlanRow{}}
 }
 
+// seedRandom has systemd-repart make up partition UUIDs. Its default seed
+// is the machine ID, so two disks installed on one machine would get the
+// same ESP, /var and /nix partition UUIDs, and a system could not tell its
+// own from the other's.
+const seedRandom = "--seed=random"
+
 var hostnameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
 // Install starts the install onto disk (erased, or into
@@ -363,7 +373,7 @@ func (s *Service) Install(ctx context.Context, token, disk string, erase bool, s
 	if s.step == StepInstalling || s.step == StepInstalled {
 		return ErrBusy
 	}
-	s.step, s.phase, s.disk, s.hostname, s.lines, s.err = StepInstalling, "partition", disk, setup.Hostname, nil, ""
+	s.step, s.phase, s.disk, s.hostname, s.lines, s.err, s.entry = StepInstalling, "partition", disk, setup.Hostname, nil, "", ""
 	go s.run(context.WithoutCancel(ctx), d, erase, setup)
 	return nil
 }
@@ -384,7 +394,7 @@ func (s *Service) partition(ctx context.Context, d InstallDisk, defs, empty stri
 		}()
 	}
 	s.line("Partitioning " + d.Path)
-	err = s.cmd(ctx, "systemd-repart", "--definitions="+defs, "--empty="+empty, "--dry-run=no", d.Path)
+	err = s.cmd(ctx, "systemd-repart", "--definitions="+defs, seedRandom, "--empty="+empty, "--dry-run=no", d.Path)
 	_ = s.cmd(ctx, "udevadm", "settle")
 	return err
 }
@@ -420,7 +430,8 @@ func (s *Service) run(ctx context.Context, d InstallDisk, erase bool, setup Setu
 // install puts the system on d: the image's partition definitions through
 // systemd-repart (the running root slot is copied block for block, and the
 // new /var gets the core extension), then systemd-boot and the running
-// kernel on the disk's ESP, then the host name in the new /var.
+// kernel on the disk's ESP, then the host name and a machine ID in the new
+// /var.
 //
 // systemd-sysinstall runs the same steps, but its `bootctl install` writes
 // /etc/kernel/entry-token into the new root, which is read-only here, and
@@ -574,7 +585,8 @@ func (s *Service) fsType(ctx context.Context, dev string) (string, error) {
 
 // bootFirst puts the firmware's boot entry for systemd-boot on esp first
 // in the boot order: bootctl install adds its entry but can leave an older
-// one (another system's systemd-boot) in front of it.
+// one (another system's systemd-boot) in front of it. The entry is kept for
+// Restart, also when the order could not be changed.
 func (s *Service) bootFirst(ctx context.Context, esp string) error {
 	res, err := s.r.Run(ctx, cmdrunner.Cmd{Module: "installer", Name: "blkid", Args: []string{"-s", "PART_ENTRY_UUID", "-o", "value", esp}})
 	if err != nil {
@@ -585,10 +597,13 @@ func (s *Service) bootFirst(ctx context.Context, esp string) error {
 	if err != nil {
 		return err
 	}
-	order, ok := firstInOrder(res.Stdout, uuid)
+	entry, order, ok := firstInOrder(res.Stdout, uuid)
 	if !ok {
 		return fmt.Errorf("no boot entry for %s", esp)
 	}
+	s.mu.Lock()
+	s.entry = entry
+	s.mu.Unlock()
 	return s.cmd(ctx, "efibootmgr", "-q", "-o", order)
 }
 
@@ -597,9 +612,10 @@ var (
 	bootEntryRE = regexp.MustCompile(`(?m)^Boot([0-9A-Fa-f]{4})\*? .*HD\(\d+,GPT,([0-9a-fA-F-]+),.*\\EFI\\systemd\\systemd-boot`)
 )
 
-// firstInOrder reads efibootmgr's listing and returns the boot order with
-// the systemd-boot entry on the ESP with partition UUID uuid first.
-func firstInOrder(listing, uuid string) (string, bool) {
+// firstInOrder reads efibootmgr's listing and returns the systemd-boot
+// entry on the ESP with partition UUID uuid, and the boot order with that
+// entry first.
+func firstInOrder(listing, uuid string) (entry, order string, ok bool) {
 	var ours string
 	for _, m := range bootEntryRE.FindAllStringSubmatch(listing, -1) {
 		if strings.EqualFold(m[2], uuid) {
@@ -607,17 +623,17 @@ func firstInOrder(listing, uuid string) (string, bool) {
 		}
 	}
 	if ours == "" {
-		return "", false
+		return "", "", false
 	}
-	order := []string{ours}
+	list := []string{ours}
 	if m := bootOrderRE.FindStringSubmatch(listing); m != nil {
 		for _, n := range strings.Split(m[1], ",") {
 			if n = strings.ToUpper(n); n != "" && n != ours {
-				order = append(order, n)
+				list = append(list, n)
 			}
 		}
 	}
-	return strings.Join(order, ","), true
+	return ours, strings.Join(list, ","), true
 }
 
 // finishESP puts the running kernel where image updates keep theirs
@@ -703,9 +719,15 @@ const SetupFile = "/var/lib/homelab/install.json"
 // zoneinfo holds the time zones a Setup may name.
 var zoneinfo = "/usr/share/zoneinfo"
 
-// seedVar writes the Setup into the new /var (mounted at dir), checks
-// repart copied the core extension in, and makes the directories the
-// install created root's and world-readable, as a fresh /var's are.
+// MachineIDFile is the installed system's machine ID on its /var. The
+// image's initrd binds it over /etc/machine-id, so every install has an ID
+// of its own, whatever the firmware's UUID is.
+const MachineIDFile = "/var/lib/homelab/machine-id"
+
+// seedVar writes the Setup and a new machine ID into the new /var (mounted
+// at dir), checks repart copied the core extension in, and makes the
+// directories the install created root's and world-readable, as a fresh
+// /var's are.
 func seedVar(dir string, setup Setup) error {
 	if _, err := os.Stat(filepath.Join(dir, "lib", "extensions", "homelab-core.raw")); err != nil {
 		return fmt.Errorf("the core extension is not in the new /var: %w", err)
@@ -723,7 +745,34 @@ func seedVar(dir string, setup Setup) error {
 			return err
 		}
 	}
-	return rootOwned(p, 0o644)
+	if err := rootOwned(p, 0o644); err != nil {
+		return err
+	}
+	id, err := machineID()
+	if err != nil {
+		return err
+	}
+	m := filepath.Join(dir, strings.TrimPrefix(MachineIDFile, "/var/"))
+	// Read-only, so one left by an install that failed is removed first.
+	if err := os.Remove(m); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.WriteFile(m, []byte(id+"\n"), 0o444); err != nil {
+		return err
+	}
+	return rootOwned(m, 0o444)
+}
+
+// machineID is a random machine ID as machine-id(5) wants it: 32 lowercase
+// hex digits, a version 4 UUID without its dashes.
+func machineID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	b[6] = b[6]&0x0f | 0x40
+	b[8] = b[8]&0x3f | 0x80
+	return hex.EncodeToString(b), nil
 }
 
 // rootOwned makes path root's with mode; a path the install did not create
@@ -750,5 +799,30 @@ func (s *Service) PowerOff(ctx context.Context, token string) error {
 		return err
 	}
 	_, err = s.r.Run(ctx, cmdrunner.Cmd{Module: "installer", Name: "systemctl", Args: []string{"poweroff"}})
+	return err
+}
+
+// Restart starts the installed system: the firmware's next boot is set to
+// its entry, whatever the boot order says, and the machine restarts. The
+// installer medium can stay in.
+func (s *Service) Restart(ctx context.Context, token string) error {
+	s.mu.Lock()
+	err := s.holds(token)
+	entry := s.entry
+	switch {
+	case err != nil:
+	case s.step != StepInstalled:
+		err = fmt.Errorf("%w: nothing is installed yet", ErrInvalid)
+	case entry == "":
+		err = fmt.Errorf("%w: the firmware has no boot entry for the installed system; turn the machine off and pick the disk in the firmware's boot menu", ErrInvalid)
+	}
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if _, err := s.r.Run(ctx, cmdrunner.Cmd{Module: "installer", Name: "efibootmgr", Args: []string{"-q", "-n", entry}}); err != nil {
+		return fmt.Errorf("setting the next boot to entry %s: %w", entry, err)
+	}
+	_, err = s.r.Run(ctx, cmdrunner.Cmd{Module: "installer", Name: "systemctl", Args: []string{"reboot"}})
 	return err
 }

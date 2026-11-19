@@ -237,14 +237,28 @@
         </div>
       </Disclosure>
       {#if st.step === "installed"}
+        <!-- Without a firmware boot entry for the new system there is no
+             restart into it: the machine is turned off and started by hand. -->
         <ol class="grid list-decimal gap-1 pl-5">
-          <li>Turn off</li>
-          <li>Remove the installer medium</li>
-          <li>Turn on, then open <a class="link" href="http://{st.hostname}.local">http://{st.hostname}.local</a></li>
+          {#if st.can_restart}
+            <li>Restart</li>
+            <li>Open <a class="link" href="http://{st.hostname}.local">http://{st.hostname}.local</a></li>
+            <li>Remove the installer medium</li>
+          {:else}
+            <li>Turn off</li>
+            <li>Remove the installer medium</li>
+            <li>Turn on, then open <a class="link" href="http://{st.hostname}.local">http://{st.hostname}.local</a></li>
+          {/if}
         </ol>
-        <div>
-          <button type="button" class="btn btn-primary" disabled={pending} onclick={() => act(() => call(api.POST("/installer/poweroff", { headers })))}>Turn off</button>
+        <div class="flex flex-wrap items-center gap-2">
+          {#if st.can_restart}
+            <button type="button" class="btn btn-primary" disabled={pending} onclick={() => act(() => call(api.POST("/installer/restart", { headers })))}>Restart</button>
+          {/if}
+          <button type="button" class="btn {st.can_restart ? '' : 'btn-primary'}" disabled={pending} onclick={() => act(() => call(api.POST("/installer/poweroff", { headers })))}>Turn off</button>
         </div>
+        {#if st.can_restart}
+          <p class="text-xs text-muted">After Turn off, remove the installer medium before turning on.</p>
+        {/if}
       {/if}
     </section>
   {:else if pick && disk && page === "system"}

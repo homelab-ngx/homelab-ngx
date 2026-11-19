@@ -139,7 +139,7 @@ func (s *Service) planOnCopy(ctx context.Context, d InstallDisk, defs string, re
 	}
 	res, _ := s.r.Run(ctx, cmdrunner.Cmd{
 		Module: "installer", Name: "systemd-repart",
-		Args: []string{"--definitions=" + defs, "--dry-run=yes", "--empty=allow", "--json=short", file},
+		Args: []string{"--definitions=" + defs, seedRandom, "--dry-run=yes", "--empty=allow", "--json=short", file},
 	})
 	return planOnDisk(parsePlan(res.Stdout, res.Output), file, d.Path), nil
 }
