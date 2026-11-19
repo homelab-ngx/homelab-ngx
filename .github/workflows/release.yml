@@ -6,8 +6,8 @@
 # The check here boots this version alone: the installer, the installs and the
 # installed disk (image/check.sh steps 1-8, 13, 14). The update from the
 # release before and the fall back from a broken image (steps 9-11) are in
-# image-check.yml, run by hand and twice a week; while no host runs the image
-# a release does not wait for them.
+# image-check.yml. Run it before tagging, unless the build machine passed the
+# full check on the same commit (CONTRIBUTING.md, Releasing).
 #
 # Layout on RELEASE_URL (https://dl.homelab-ngx.com):
 #   /<version>/homelab-ngx_<version>.img          installer (the whole disk)

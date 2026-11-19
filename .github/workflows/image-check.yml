@@ -2,8 +2,9 @@
 # from the release server boots, updates to a build of this commit, and a
 # third, broken build falls back by itself. A release (release.yml) boots its
 # own version alone and leaves these steps to this workflow. Run it by hand
-# (Actions > image check > Run workflow) after a change to booting, updates or
-# fall back; it also runs twice a week on main.
+# (Actions > image check > Run workflow) on main before tagging a release,
+# unless the build machine passed the full check on the same commit
+# (CONTRIBUTING.md, Releasing). It also runs twice a week on main.
 #
 # It signs SHA256SUMS with the release key and authorizes the B2 key, so a
 # release's credentials are proven too, and publishes nothing.
