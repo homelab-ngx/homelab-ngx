@@ -232,9 +232,13 @@ installer() {
 stickname() { vssh 'lsblk -dno NAME,PTUUID' | awk -v u="$medium" 'tolower($2) == u { print $1 }'; }
 # runs_from DISK [LOADER]: the running system is all DISK's: its /var, its
 # /nix and both halves of its verity root (data and hash), started by the
-# boot loader on LOADER (DISK unless given). Disks by kernel name.
+# boot loader on LOADER (DISK unless given). Disks by kernel name. The
+# initrd's two services never fail a boot; what they could not do is in the
+# kernel log, and nothing may be.
 runs_from() {
   local got want="loader=${2:-$1} var=$1 nix=$1 root=$1 $1"
+  got=$(vssh 'dmesg | grep -E "homelab-(loader-disk|machine-id):"; true')
+  [ -z "$got" ] || die "the initrd could not do its part: $got"
   got=$(vssh 'bash -s' <<'EOS'
 set -eu
 disk() { lsblk -ndo PKNAME "$1"; }
@@ -257,6 +261,8 @@ ownid() {
   id=$(vssh 'cat /etc/machine-id')
   [[ $id =~ ^[0-9a-f]{32}$ ]] || die "the machine ID is not one: $id"
   [ "$id" = "$(vssh 'cat /var/lib/homelab/machine-id')" ] || die "the machine ID $id is not the one on /var"
+  vssh 'findmnt -no SOURCE /etc/machine-id' | grep -q '\[/lib/homelab/machine-id\]$' ||
+    die "/etc/machine-id is not /var's file bound over it: $(vssh 'findmnt -no SOURCE /etc/machine-id')"
   [ "$id" != "${fwuuid//-/}" ] || die "the machine ID is the firmware's UUID"
   case " $ids " in *" $id "*) die "another install has the machine ID $id too" ;; esac
   ids+=" $id"
@@ -459,6 +465,7 @@ runs_from vda
 ownid
 installed=$id
 vssh 'test "$(findmnt -no SIZE /var | tr -d G | cut -d. -f1)" -gt 30' || die "/var does not fill the disk"
+vssh 'test "$(findmnt -no SIZE /nix | tr -d G | cut -d. -f1)" -gt 10' || die "/nix is not mounted at its full size: $(vssh 'findmnt -no SOURCE,SIZE /nix')"
 vssh 'systemd-sysext status --no-legend' | grep -q homelab-core || die "the core extension is not merged"
 for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
 api http://x/api/version >/dev/null || die "the daemon does not answer"
