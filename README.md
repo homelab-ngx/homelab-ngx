@@ -17,6 +17,8 @@
 <p align="center">
   <a href="https://dl.homelab-ngx.com/installer"><b>Download the installer</b></a>
   &nbsp;|&nbsp;
+  <a href="https://demo.homelab-ngx.com">Try the demo</a>
+  &nbsp;|&nbsp;
   <a href="https://github.com/homelab-ngx/homelab-ngx/releases">Release notes</a>
   &nbsp;|&nbsp;
   <a href="#install">Install</a>
