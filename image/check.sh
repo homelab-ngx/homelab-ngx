@@ -398,6 +398,11 @@ hostcheck() {
   [ "$(vssh cat /proc/sys/kernel/hostname)" = checkhost ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
   vssh 'readlink /etc/localtime' | grep -q Europe/Stockholm || die "the time zone is not set"
   [ "$(api http://x/api/stacks/site | jq -r .running)" = true ] || die "the stack is not running"
+  # Caddy's way to the daemon is web.sock, behind the sign-in. In the daemon's
+  # group it could open the CLI's socket, which asks for none.
+  vssh 'gid=$(getent group homelab-daemon | cut -d: -f3); pid=$(systemctl show caddy -p MainPID --value)
+    ! id -nG caddy | grep -qw homelab-daemon && ! grep "^Groups:" /proc/$pid/status | grep -qw "$gid"' ||
+    die "Caddy is in the homelab-daemon group"
 }
 
 # claim: take the installer (its token in $token): the first to ask gets it;
