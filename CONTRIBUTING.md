@@ -81,8 +81,8 @@ x86_64 Linux and on Apple silicon Macs; the image builds only on Linux.
 ## Releasing
 
 A tag `vX.Y.Z` on main publishes a release (`.github/workflows/release.yml`).
-Its check boots the new version alone (`image/check.sh` steps 1-8, 13 and
-14). It does not check the update from the release before or the fall back
+Its check boots the new version alone (`image/check.sh` steps 1-8 and
+13-17). It does not check the update from the release before or the fall back
 from a broken image (steps 9-11).
 
 So before you tag, the full check must have passed on the commit you tag.
