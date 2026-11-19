@@ -85,6 +85,66 @@ x86_64 Linux and on Apple silicon Macs; the image builds only on Linux.
   put secret values in argv. Details:
   `docs/solutions/conventions/homelab-cli-automation.md`.
 
+## Writing
+
+This covers the README, the docs, commit messages, issues and release
+notes. Dashboard copy has its own, stricter rules in
+`apps/dashboard/DESIGN.md`.
+
+The reader runs a home server and has never seen this repo. Write to them
+plainly:
+
+- **Short sentences that state a fact.** "You" is the reader. "We" is the
+  project, and only where the project made a choice.
+- **What is true now, in the present tense.** Planned work goes under
+  Roadmap and nowhere else.
+- **A fact behind every adjective.** "Small" is followed by the size. When
+  there is no fact, the adjective goes.
+- **The limit next to the claim.** If a feature stops somewhere, the same
+  paragraph says where.
+- **One word for one thing.** `CONTEXT.md` has the terms: a stack is always
+  a stack.
+- **Say it once.** A paragraph ends when its last fact is stated.
+- **Headings name their subject** in a few words, in sentence case.
+
+Compare:
+
+> homelab-ngx offers powerful, seamless updates that just work.
+
+> An update is written to the other root slot. If it does not boot, the host
+> starts the slot before.
+
+> Stacks aren't just containers, they're a whole new way to run services.
+
+> A stack is a repo with a flake and a manifest. It runs as its own NixOS
+> system in a systemd-nspawn container.
+
+The first of each pair could describe any project. These habits make text
+read that way, so leave them out:
+
+- praise without a measure: seamless, powerful, robust, modern, simply,
+  effortless, "just works", "the best";
+- "not just X, but Y", and three items in a row where the facts gave two;
+- a last line that repeats the paragraph, or an opening that announces it;
+- several hedges on one claim: say it, or say what is unknown;
+- em dashes, emoji, exclamation marks, and a question as a heading.
+
+### Commit subjects
+
+A subject is `area: what is now true`, in lowercase, as a statement:
+
+```
+installer: an existing ESP needs 400 MB free
+updates: no restart loop on a good version
+```
+
+The release notes are made from these subjects, so write each one for
+someone who runs the OS and does not read the code. Every subject has an
+area. The areas are `installer`, `image`, `updates`, `daemon`, `dashboard`,
+`stacks`, `drafts`, `storage`, `backups` and `notifications`, and for work a
+user never meets: `ci`, `image check`, `docs` and `CONTRIBUTING`. The notes
+fold that second group under "Upkeep".
+
 ## Releasing
 
 A tag `vX.Y.Z` on main publishes a release (`.github/workflows/release.yml`).
@@ -112,6 +172,13 @@ it, writes the GitHub Release and moves the installer link. Once the version
 is uploaded only `announce` runs again, and each of its steps can run twice.
 To announce an uploaded version outside its run, start the workflow by hand
 with the version.
+
+Nobody writes the release notes. `scripts/release-notes X.Y.Z` makes them
+from the commit subjects since the release before and from the two
+releases' package lists, and the workflow publishes what it prints. Run it
+with `--to main` before tagging to read the notes the tag would get; a
+subject that reads badly there is fixed in the next commit's subject, not in
+the notes.
 
 ## Knowledge
 
