@@ -30,13 +30,25 @@ on its own. A dashboard and a CLI manage both.
 
 ## Requirements
 
-- x86_64 with UEFI.
+- x86_64 with UEFI, and Secure Boot turned off in the firmware: the kernel
+  is not signed.
 - A disk of 64 GB or more, either blank or with that much free space next to
-  another OS.
+  another OS. The system disk can be NVMe, SATA, a USB disk, eMMC, or sit
+  behind a RAID or SAS controller (LSI/Broadcom, HPE Smart Array, Adaptec,
+  Areca, 3ware); in a VM, a virtio, VMware, Hyper-V or Xen disk.
 - 6 GB of RAM or more if the host builds its own updates; less is enough when
   it installs published releases.
-- A network. The host is headless and is set up and managed from a browser on
-  another device.
+- A wired network with DHCP, at least for the install: the installer has no
+  Wi-Fi and no setup at the console. The host is headless and is set up and
+  managed from a browser on another device.
+
+Graphics firmware is in for Intel and AMD, network firmware for Intel,
+Realtek and Broadcom cards; Mellanox ConnectX and Aquantia cards need none.
+Not in: Wi-Fi, Nvidia, and Fibre Channel cards.
+
+What is tested is what `image/check.sh` boots in a VM: virtio, USB (plain
+and UAS), VMware's paravirtual SCSI and a MegaRAID controller. The other drivers are in the
+image and have not been run by this project.
 
 ## Install
 

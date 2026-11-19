@@ -45,6 +45,10 @@
 #      the stick still in
 #  17. that system has the same machine ID on its next boot; every install
 #      of the run has its own
+#  18. it boots with its disk behind VMware's paravirtual SCSI controller, a
+#      MegaRAID and USB UAS (the boot loader on a virtio disk, which the
+#      firmware can read): the initrd has the storage drivers the image
+#      names besides mkosi's defaults
 # The firmware's variables last the whole run, as on a real machine, so the
 # boot entries the installs register are used. Where the stick has to start
 # next to an installed disk (steps 3 and 16) the firmware is told to try it
@@ -71,7 +75,7 @@ core=$out/core/homelab-core_$version.raw
 domain=check.example.com
 
 # step "N. what": a step's heading; scripts/run reads the progress line.
-steps=17
+steps=18
 step() { printf '\nprogress: %d%%\n▸ %s\n' "$(((${1%%.*} - 1) * 100 / steps))" "$*"; }
 ok() { printf '  ✓ %s\n' "$*"; }
 die() {
@@ -117,6 +121,8 @@ windisk() {
 windisk "$vm/beside.raw" 2G
 # A blank disk whose boot loader goes on another Windows disk's ESP.
 qemu-img create -q -f raw "$vm/sys.raw" 80G
+# A disk sold as 64 GB: 64 billion bytes, 59.6 GiB.
+qemu-img create -q -f raw "$vm/small.raw" 64000000000
 windisk "$vm/win2.raw"
 cpus=${CPUS:-4}
 # A build on the host (BUILD=1): one Go compile takes about 2.5 GB.
@@ -131,7 +137,12 @@ fwuuid=9a0c1e2f-3b4d-4e5f-8a9b-0c1d2e3f4a5b
 # boot [--order] [--no-uuid] DISK...: start the VM headless with root's SSH
 # key as a systemd credential and the disks: virtio disks (vda, vdb, ... in
 # the order given), or, written usb:FILE, a USB stick (the only sd disk),
-# which the kernel finds after the others as on a real machine.
+# which the kernel finds after the others as on a real machine. pvscsi:FILE,
+# megasas:FILE and uas:FILE put a disk behind VMware's paravirtual SCSI
+# controller or a MegaRAID, or in a USB enclosure that speaks UAS. The
+# firmware has no driver for those, so it cannot start from such a disk.
+# (QEMU's MegaRAID fails writes that force unit access, so that disk says it
+# has no FUA. Its LSI SAS controller shows Linux no disk at all.)
 # The firmware starts what its own boot order says, as the installs left it.
 # With --order it tries the disks in the order given instead, like a machine
 # set to start from USB first. Every disk is in that order: OVMF deletes the
@@ -154,7 +165,12 @@ boot() {
   case " $*" in *" usb:"*) disks+=(-device qemu-xhci) ;; esac
   for d in "$@"; do
     dev=virtio-blk-pci
-    case $d in usb:*) dev=usb-storage d=${d#usb:} ;; esac
+    case $d in
+      usb:*) dev=usb-storage d=${d#usb:} ;;
+      pvscsi:*) disks+=(-device "pvscsi,id=scsi$n") dev="scsi-hd,bus=scsi$n.0" d=${d#pvscsi:} ;;
+      megasas:*) disks+=(-device "megasas-gen2,id=scsi$n") dev="scsi-hd,bus=scsi$n.0,dpofua=off" d=${d#megasas:} ;;
+      uas:*) disks+=(-device qemu-xhci -device "usb-uas,id=scsi$n") dev="scsi-hd,bus=scsi$n.0" d=${d#uas:} ;;
+    esac
     [ -n "$first" ] || first=$d
     if [ -z "$order" ] && [ "$dev" = virtio-blk-pci ]; then
       disks+=(-drive "if=virtio,format=raw,file=$d,cache=unsafe")
@@ -430,6 +446,16 @@ espfiles() {
 partuuids() { sfdisk -J "$1" | jq -r '[.partitiontable.partitions[] | select(.name == "var" or .name == "nix") | .uuid] | sort | join(" ")'; }
 
 step "1. the installer medium boots $version into installer mode"
+# The newest build's initrd has a storage driver of every kind the image
+# names besides mkosi's defaults. The initrd's modules are an uncompressed
+# archive in the UKI, so their paths can be read from the file.
+newest=${versions[-1]}
+for m in usb/storage/uas mmc/core/mmc_block mmc/host/sdhci-pci ata/ata_piix scsi/megaraid/megaraid_sas scsi/mpt3sas/mpt3sas \
+  message/fusion/mptsas scsi/hpsa scsi/smartpqi/smartpqi scsi/aacraid/aacraid scsi/arcmsr/arcmsr scsi/3w-9xxx scsi/isci/isci \
+  scsi/mvsas/mvsas scsi/pm8001/pm80xx ufs/host/ufshcd-pci scsi/hv_storvsc scsi/vmw_pvscsi block/xen-blkfront; do
+  grep -aq "kernel/drivers/$m\.ko" "$out/homelab_$newest.efi" || die "the initrd of $newest has no $m"
+done
+[ "$(stat -c %s "$out/homelab_$newest.efi")" -le 200000000 ] || die "the UKI of $newest is $(stat -c %s "$out/homelab_$newest.efi") bytes: over 200 MB"
 size=$(stat -c %s "$out/homelab_$version.raw")
 # 1.26 GB in November 2026; the limit catches it growing back.
 [ "$size" -le 1500000000 ] || die "the installer medium is $size bytes: it should stay under 1.5 GB"
@@ -439,7 +465,7 @@ medium=$(sfdisk --disk-id "$out/homelab_$version.raw" | tr A-F a-f)
 for f in mkosi.extra/usr/lib/udev/rules.d/61-homelab-disk.rules mkosi.initrd.conf/mkosi.extra/usr/lib/homelab/loader-disk-wait; do
   grep -v '^ *#' "$here/base/$f" | grep -qi "$medium" || die "the installer medium's disk UUID is $medium, which image/base/$f does not name"
 done
-boot "$vm/stick.raw" "$vm/disk.raw" "$vm/beside.raw"
+boot "$vm/stick.raw" "$vm/disk.raw" "$vm/beside.raw" "$vm/small.raw"
 booted "$version"
 vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
 [ "$(stickname)" = vda ] || die "the disk with the medium's UUID is $(stickname), not vda"
@@ -449,6 +475,15 @@ jq -e '.active and (.disks[] | select(.name == "vda") | .in_use) and (.disks[] |
   and (.disks[] | select(.name == "vdc") | .beside.ok)' <<<"$st" >/dev/null || die "unexpected disks: $(jq -c '[.disks[] | {name, in_use, erase, beside}]' <<<"$st")"
 curl -sf "http://127.0.0.1:$httpport/" | grep -q '<html' || die "the dashboard does not answer over HTTP"
 autologin
+# A disk sold as 64 GB takes an install, where the image's partitions fit it
+# (a version before that says it is too small).
+small=
+if [ "$(jq -r '.min_bytes' <<<"$st")" -le 64000000000 ]; then
+  jq -e '.disks[] | select(.name == "vdd") | .erase.ok' <<<"$st" >/dev/null || die "a 64 GB disk is refused: $(jq -c '.disks[] | select(.name == "vdd") | .erase' <<<"$st")"
+  plan=$(post installer/plan '{"disk":"vdd","erase":true}')
+  [ "$(jq -r .ok <<<"$plan")" = true ] || die "no plan for a 64 GB disk: $(jq -r .reason <<<"$plan")"
+  small="; a 64 GB disk offered, with a plan that fits"
+fi
 # The installer is one browser's, and not for ever: a second claim is
 # refused, the code on the console takes it over, and the token from before
 # holds nothing after that. A failed boot check never restarts the stick,
@@ -473,7 +508,7 @@ if vssh 'test -e /run/homelab-installer/takeover-code'; then
   [ "$(jq -r '.machine.memory > 0 and (.machine.secure_boot | not) and .machine.boot_entries' <<<"$st")" = true ] || die "the machine's facts: $(jq -c .machine <<<"$st")"
   held="; a second claim refused, taken over with the console's code"
 fi
-ok "$((size / 1000000)) MB, disk UUID $medium; verity root, boot-complete, no failed units; the medium in use, a blank disk and free space beside Windows offered; root logged in on the screen and the serial port$held"
+ok "$((size / 1000000)) MB, disk UUID $medium; verity root, boot-complete, no failed units; the medium in use, a blank disk and free space beside Windows offered; root logged in on the screen and the serial port$small$held"
 
 step "2. install into the free space next to the other system"
 # The large free region after the NTFS partition, not the 2 GB gap before it.
@@ -851,5 +886,29 @@ booted "$version"
 [ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "the machine ID changed over a boot: $(vssh 'cat /etc/machine-id'), was $id"
 [ "$(vssh 'cat /var/lib/homelab/machine-id')" = "$id" ] || die "the machine ID on /var changed over a boot"
 ok "the same on the next boot; $(wc -w <<<"$ids") installs, each with its own"
+
+step "18. the system boots with its disk behind other controllers"
+# A version before the drivers were named cannot: its disk would not be found.
+if grep -aq 'kernel/drivers/scsi/vmw_pvscsi\.ko' "$out/homelab_$version.efi"; then
+  # The VM's firmware reads none of these controllers, so the boot loader
+  # and kernel start from a copy of the system's ESP on a virtio disk; the
+  # initrd then has to find the root, /var and /nix behind the controller.
+  read -r espstart espsize < <(sfdisk -J "$vm/sys.raw" |
+    jq -r '.partitiontable.partitions[] | select(.type == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B") | "\(.start) \(.size)"')
+  qemu-img create -q -f raw "$vm/esp.raw" $(((espsize + 4096) * 512))
+  printf 'label: gpt\n2048,%s,U\n' "$espsize" | sfdisk -q "$vm/esp.raw"
+  dd if="$vm/sys.raw" of="$vm/esp.raw" bs=512 skip="$espstart" seek=2048 count="$espsize" conv=notrunc,sparse status=none
+  for c in pvscsi megasas uas; do
+    stop
+    boot --order --no-uuid "$vm/esp.raw" "$c:$vm/sys.raw"
+    booted "$version"
+    runs_from sda vda
+    [ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "behind $c another system booted"
+    vssh 'systemctl --failed --no-legend' | grep . && die "failed units behind $c" || true
+  done
+  ok "the same system with its disk behind VMware's paravirtual SCSI, a MegaRAID and USB UAS"
+else
+  ok "skipped: $version is from before the image named its storage drivers"
+fi
 
 printf '\nimage-check passed: %s%s%s\n' "$version" "${next:+ → $next}" "${broken:+, fell back from $broken}"

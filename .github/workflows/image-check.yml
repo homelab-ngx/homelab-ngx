@@ -1,4 +1,4 @@
-# The full image check (image/check.sh, all 14 steps): the newest release
+# The full image check (image/check.sh, all its steps): the newest release
 # from the release server boots, updates to a build of this commit, and a
 # third, broken build falls back by itself. A release (release.yml) boots its
 # own version alone and leaves these steps to this workflow. Run it by hand

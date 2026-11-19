@@ -233,6 +233,34 @@ the running image, where the version before goes back when it does not
 start; the host reboots into the new image only after that. A core that
 went back leaves the image in its slot and starts no reboot.
 
+## The initrd's storage drivers are named, not found
+
+mkosi's `default` for `KernelInitrdModules=` is a short list, not "what a
+disk could be on". Read off a built UKI in November 2026 it gave NVMe, VMD
+and usb-storage, with AHCI, virtio and xHCI built into Arch's kernel, and
+nothing else: no UAS (most USB 3 enclosures, so also an installer written to
+a USB SSD), no eMMC, no RAID or SAS controller, no Hyper-V or VMware disk.
+Such a machine starts the kernel and then waits for a root that never shows.
+
+`mkosi.conf` names the rest by path. To see what a build has, look in the
+UKI: the modules are an uncompressed cpio after the main initrd, so
+`grep -a 'kernel/drivers/scsi/' homelab_<v>.efi` lists them. `image/check.sh`
+does that for one module of each kind, and boots with the system disk
+behind three of QEMU's controllers (pvscsi, megasas, usb-uas). The check's
+OVMF reads none of them, so its boot loader starts from a copy of the ESP on
+a virtio disk and the initrd finds the rest. Two emulation quirks: QEMU's
+megasas fails FUA writes (the disk is given `dpofua=off`), and its
+mptsas1068 comes up in the kernel with no disk behind it, so that one is not
+booted.
+
+## A 64 GB disk is 59.6 GiB
+
+The partition minimums added up to 63.4 GiB, so a disk sold as 64 GB was
+refused as "smaller than 64 GB". `/var`'s minimum is 34 GiB now, the sum
+58.4 GiB and the installer's `MinBytes` 59 GiB. Change a minimum in
+`repart.sysinstall.d` and `MinBytes` together; the check plans an install
+onto a disk of 64 billion bytes.
+
 ## Installing from the stick (#104)
 
 The installer runs repart with `usr/lib/repart.sysinstall.d`, then `bootctl

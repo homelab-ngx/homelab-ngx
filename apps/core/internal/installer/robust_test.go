@@ -222,3 +222,14 @@ func TestMachine(t *testing.T) {
 		t.Fatalf("machine = %+v", m)
 	}
 }
+
+// A disk sold as 64 GB (64 billion bytes) takes an install; one sold as
+// 60 GB does not.
+func TestA64GBDiskFits(t *testing.T) {
+	if d := assess(InstallDisk{Name: "sda", Size: 64_000_000_000, Table: "none"}); !d.Erase.OK {
+		t.Errorf("64 GB: %+v", d.Erase)
+	}
+	if d := assess(InstallDisk{Name: "sda", Size: 60_000_000_000, Table: "none"}); d.Erase.OK || d.Erase.Reason == "" {
+		t.Errorf("60 GB: %+v", d.Erase)
+	}
+}
