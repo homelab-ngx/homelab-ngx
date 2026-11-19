@@ -1,0 +1,57 @@
+# The demo: the dashboard built in demo mode (apps/dashboard/src/demo), where
+# a made-up host in the browser answers every call, published to GitHub
+# Pages. It follows main. The Pages site and its domain are set up outside
+# this repo; until they are, the deploy job fails and the build still passes.
+name: demo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - apps/dashboard/**
+      - .github/workflows/demo.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: demo
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
+
+      - name: Build the demo
+        working-directory: apps/dashboard
+        run: |
+          npm ci
+          npm run build:demo
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/dashboard/build
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

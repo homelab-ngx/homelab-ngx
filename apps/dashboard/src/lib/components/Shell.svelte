@@ -2,6 +2,7 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { CircleQuestionMark, Settings } from "@lucide/svelte";
   import type { Snippet } from "svelte";
+  import { DEMO } from "#lib/api/client.ts";
   import { fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
   import { help, toggleHelp } from "#lib/help.svelte.ts";
   import type { NavItem } from "#lib/nav.ts";
@@ -29,6 +30,9 @@
 <svelte:window {onkeydown} />
 
 <div class="flex min-h-dvh flex-col">
+  {#if DEMO}
+    <p class="bg-accent-soft px-4 py-1 text-center text-xs text-accent">Demo. Dummy data; reloading resets it.</p>
+  {/if}
   <header class="sticky top-0 z-30 min-w-0 border-b border-line bg-surface/95 backdrop-blur">
     <nav aria-label="Main" class="mx-auto flex max-w-6xl items-center gap-1 px-4 py-2">
       <!-- The page links scroll sideways on a phone; Help and Settings stay on screen. -->

@@ -152,10 +152,22 @@ fold that second group under "Upkeep".
 ### Screenshots
 
 The README's screenshots are in `docs/images`, each page in a light and a
-dark file. `make screenshots HOMELAB_URL=... HOMELAB_PASSWORD=...` takes them
-from a running host (`apps/dashboard/scripts/screenshots.mjs` has the other
-variables). A screenshot shows the host's names and addresses, and the commit
-checks read text only, so look at each file before you commit it.
+dark file. `make screenshots` takes them from the demo, so they show a
+made-up host. Run it after a change to a page they show.
+
+### The demo
+
+`make demo-serve` builds the dashboard in demo mode and serves it. In that
+build a made-up host in the browser answers every call
+(`apps/dashboard/src/demo`), and no other build contains that code. A push
+to main publishes it (`.github/workflows/demo.yml`).
+
+- `fetch.ts` has one handler for each GET in the daemon's API. The type
+  check fails when the API changes and the demo did not.
+- `host.ts` holds the host and the changes the demo acts out. Any other
+  change answers `not_in_demo`.
+- `make demo-check` loads every page of the demo in a browser and fails on
+  an error.
 
 ## Releasing
 

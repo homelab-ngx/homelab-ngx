@@ -22,7 +22,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .ONESHELL:
 .DEFAULT_GOAL := help
-.PHONY: help gen gen-check verify verify-changed daemon-test runner-test dashboard-test dashboard-deps nix-check image image-check image-variant screenshots
+.PHONY: help gen gen-check verify verify-changed daemon-test runner-test dashboard-test dashboard-deps nix-check image image-check image-variant screenshots demo demo-serve demo-check
 
 PKG ?= ./...
 BASE ?= HEAD
@@ -37,7 +37,10 @@ help:
 	make runner-test       the backup runner (apps/backup-runner): gofmt, vet, go test -race, static build  [RUN=TestY]
 	make dashboard-test    svelte-check, vitest  [FILE=src/lib/x.test.ts, relative to apps/dashboard]
 	make dashboard-deps    npm ci in apps/dashboard (after package-lock.json changes)
-	make screenshots       the README's screenshots into docs/images, from a running host  [HOMELAB_URL= HOMELAB_PASSWORD= STACK= INSTALLER_URL= | PLACEHOLDERS=1]
+	make screenshots       the README's screenshots into docs/images, from the demo  [or a host: HOMELAB_URL= HOMELAB_PASSWORD= STACK= INSTALLER_URL=]
+	make demo              build the demo: the dashboard on a made-up host, into apps/dashboard/build
+	make demo-serve        build the demo and serve it at http://localhost:3002
+	make demo-check        build the demo and load every page of it in a browser
 	make nix-check         nix fmt --fail-on-change, nix flake check --no-build
 	make image             build the image host (mkosi) and the core extension into image/out  [VERSION=]
 	make image-variant     a second version copied from a built one, for image-check's fall back  [FROM= VERSION=]
@@ -102,9 +105,30 @@ dashboard-deps:
 # The dashboard dev shell has the browser. The variables are read from the
 # environment (apps/dashboard/scripts/screenshots.mjs), so the password is in
 # no command line.
-export HOMELAB_PASSWORD STACK INSTALLER_URL PLACEHOLDERS
-screenshots:
-	nix develop .#dashboard -c node $(CURDIR)/apps/dashboard/scripts/screenshots.mjs
+export HOMELAB_PASSWORD STACK INSTALLER_URL
+# The dashboard dev shell sets a HOMELAB_URL of its own, so the host to
+# capture goes in under another name.
+screenshots: $(if $(HOMELAB_URL),,demo)
+	nix develop .#dashboard -c env SCREENSHOT_HOST=$(HOMELAB_URL) node $(CURDIR)/apps/dashboard/scripts/screenshots.mjs
+
+# The demo: the dashboard answered by a made-up host in the browser
+# (apps/dashboard/src/demo). demo.yml publishes this build.
+demo:
+	cd apps/dashboard
+	npm run build:demo
+
+demo-serve: demo
+	cd apps/dashboard
+	npm run preview:demo
+
+# First the build the image ships: it must hold nothing of the demo. The
+# name is one only the demo's host has.
+demo-check:
+	cd apps/dashboard
+	npm run build
+	! grep -rq 'git\.home\.example' build || { echo "the normal build contains the demo (apps/dashboard/src/demo)"; exit 1; }
+	npm run build:demo
+	nix develop $(CURDIR)#dashboard -c node $(CURDIR)/apps/dashboard/scripts/demo-check.mjs
 
 nix-check:
 	nix fmt -- --fail-on-change

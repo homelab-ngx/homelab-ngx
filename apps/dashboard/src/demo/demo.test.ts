@@ -1,0 +1,112 @@
+import { describe, expect, it } from "vitest";
+import openapi from "../../../core/api/openapi.json" with { type: "json" };
+import type { Schema } from "#lib/api/client.ts";
+import { demoFetchFor } from "./fetch.ts";
+import { newHost } from "./host.ts";
+
+/** A demo host on a clock the test moves. */
+function demo() {
+  let t = Date.UTC(2026, 10, 19, 12);
+  const fetch = demoFetchFor(newHost(() => t));
+  const send = async <T>(method: string, path: string, body?: unknown) => {
+    const r = await fetch(new Request(`http://demo/api${path}`, { method, body: body === undefined ? undefined : JSON.stringify(body) }));
+    return { status: r.status, body: (r.status === 204 || r.headers.get("Content-Type") === null ? undefined : await r.json()) as T };
+  };
+  return {
+    get: async <T>(path: string) => (await send<T>("GET", path)).body,
+    post: <T>(path: string, body?: unknown) => send<T>("POST", path, body),
+    send,
+    wait: (ms: number) => (t += ms),
+  };
+}
+
+const fill: Record<string, string> = { name: "photos", id: "1", run: "100", unit: "x", uuid: "x" };
+
+describe("the demo's API", () => {
+  it("answers every GET the daemon's document describes", async () => {
+    const d = demo();
+    // Paths the demo answers 404 on purpose, and the event stream (metrics.ts).
+    const none = new Set(["/drafts/{name}", "/security/audits/{id}", "/metrics/stream"]);
+    for (const [path, ops] of Object.entries(openapi.paths)) {
+      if (!("get" in ops) || none.has(path)) continue;
+      const url = path.replace(/{(\w+)}/g, (_, n: string) => fill[n] ?? "1").replace("/stack-updates/1", "/stack-updates/1000");
+      const r = await d.send("GET", url + (path === "/metrics/history" ? "?range=24h" : path === "/logs" ? "?unit=x" : ""));
+      expect(r.status, path).toBe(200);
+    }
+  });
+
+  it("answers a change it does not act out with not_in_demo", async () => {
+    const d = demo();
+    for (const [method, path] of [["DELETE", "/stacks/photos"], ["PUT", "/host-settings/host"], ["POST", "/stacks"]] as const) {
+      const r = await d.send<{ code: string }>(method, path, {});
+      expect([r.status, r.body.code], path).toEqual([403, "not_in_demo"]);
+    }
+    expect((await d.get<Schema<"Stack">[]>("/stacks")).length).toBe(6);
+  });
+
+  it("approves a stack's new grant, then updates it", async () => {
+    const d = demo();
+    const before = await d.get<Schema<"Stack">>("/stacks/home");
+    expect([before.update_state, before.new_grants.length]).toEqual(["needs_approval", 1]);
+    await d.post("/stacks/home/approve", { rev: before.fetched.rev });
+    expect((await d.get<Schema<"Stack">>("/stacks/home")).update_state).toBe("commits_available");
+
+    expect((await d.post("/stacks/home/update")).status).toBe(202);
+    expect((await d.get<Schema<"Stack">>("/stacks/home")).operation?.kind).toBe("update");
+    d.wait(7000);
+    const after = await d.get<Schema<"Stack">>("/stacks/home");
+    expect([after.operation, after.update_state, after.generation]).toEqual([undefined, "up_to_date", before.generation + 1]);
+    const log = await d.get<Schema<"StackUpdate">[]>("/stack-updates?stack=home");
+    expect([log[0]!.kind, log[0]!.result]).toEqual(["update", "healthy"]);
+  });
+
+  it("refuses to approve a commit that is not the fetched one", async () => {
+    const r = await demo().post<{ code: string }>("/stacks/home/approve", { rev: "0000" });
+    expect([r.status, r.body.code]).toEqual([409, "stale_revision"]);
+  });
+
+  it("updates a stack and rolls it back", async () => {
+    const d = demo();
+    const before = await d.get<Schema<"Stack">>("/stacks/media");
+    await d.post("/stacks/media/update");
+    d.wait(7000);
+    expect((await d.get<Schema<"Stack">>("/stacks/media")).generation).toBe(before.generation + 1);
+    await d.post("/stacks/media/rollback", { generation: before.generation });
+    d.wait(4000);
+    const after = await d.get<Schema<"Stack">>("/stacks/media");
+    expect([after.generation, after.operation]).toEqual([before.generation, undefined]);
+  });
+
+  it("runs a backup and keeps the run", async () => {
+    const d = demo();
+    const { body } = await d.post<{ run_id: number }>("/backups/2/run");
+    expect((await d.get<Schema<"Backup">>("/backups/2")).running).toBe(true);
+    expect((await d.post("/backups/2/run")).status).toBe(409);
+    d.wait(9000);
+    const b = await d.get<Schema<"Backup">>("/backups/2");
+    expect([b.running, b.recent_runs[0]!.id, b.recent_runs[0]!.result]).toEqual([false, body.run_id, "success"]);
+    expect((await d.get<Schema<"BackupRunDetail">>(`/backup-runs/${body.run_id}`)).items.every((i) => i.result === "success")).toBe(true);
+  });
+
+  it("downloads the new image, installs it and boots it", async () => {
+    const d = demo();
+    await d.post("/system-updates/image/download");
+    d.wait(7000);
+    expect((await d.get<Schema<"ImageStatus">>("/system-updates/image")).available).toEqual(["0.2.6"]);
+    await d.post("/system-updates/image/release", { reboot: "" });
+    d.wait(6000);
+    const staged = await d.get<Schema<"ImageStatus">>("/system-updates/image");
+    expect([staged.pending_reboot, staged.installed[0]]).toEqual([true, { version: "0.2.6", state: "pending", tries_left: 3 }]);
+    await d.post("/system-updates/reboot");
+    const after = await d.get<Schema<"ImageStatus">>("/system-updates/image");
+    expect([after.booted, after.pending_reboot]).toEqual(["0.2.6", false]);
+  });
+
+  it("stops and starts a stack and its units", async () => {
+    const d = demo();
+    await d.post("/stacks/git/stop");
+    expect((await d.get<Schema<"ServiceInfo">[]>("/services")).find((s) => s.stack === "git")!.active_state).toBe("inactive");
+    await d.post("/stacks/git/start");
+    expect((await d.get<Schema<"Stack">>("/stacks/git")).running).toBe(true);
+  });
+});

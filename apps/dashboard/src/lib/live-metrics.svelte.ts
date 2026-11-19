@@ -14,15 +14,35 @@ import {
   type Snapshot,
 } from "./metrics.ts";
 
+/** The part of an EventSource this reads; the demo has its own (src/demo). */
+interface Source {
+  addEventListener(type: string, fn: (e: Event) => void): void;
+  close(): void;
+  onerror: ((e: Event) => void) | null;
+}
+
 export class LiveMetrics {
   frames = $state.raw<Frames>(emptyFrames());
   info = $state.raw<HostInfo | undefined>();
   connected = $state(false);
-  #es: EventSource | undefined;
+  #es: Source | undefined;
+  #wanted = false;
 
   open() {
+    this.#wanted = true;
     if (this.#es) return;
-    const es = new EventSource("/api/metrics/stream");
+    // The demo has no daemon to stream from (src/demo). The condition is
+    // written out so that any other build drops the import.
+    if (import.meta.env.MODE === "demo") {
+      void import("../demo/index.ts").then((m) => {
+        if (this.#wanted && !this.#es) this.#listen(m.demoMetrics());
+      });
+      return;
+    }
+    this.#listen(new EventSource("/api/metrics/stream"));
+  }
+
+  #listen(es: Source) {
     es.addEventListener("snapshot", (e) => {
       const s = JSON.parse((e as MessageEvent<string>).data) as Snapshot;
       this.info = s.info;
@@ -39,6 +59,7 @@ export class LiveMetrics {
   }
 
   close() {
+    this.#wanted = false;
     this.#es?.close();
     this.#es = undefined;
     this.connected = false;

@@ -2,19 +2,21 @@
 // dark theme, 1366x768. Run it through `make screenshots` (the dashboard dev
 // shell brings the browser):
 //
+//   make screenshots
+//       from the demo (src/demo), which the target builds first: a made-up
+//       host, so nothing of a real one is in a picture
 //   make screenshots HOMELAB_URL=https://host.example HOMELAB_PASSWORD=...
-//       the pages of a running host, signed in with its dashboard password
+//       from a running host instead, signed in with its dashboard password
 //       STACK=name            the stack whose page is shown (default: the first listed)
 //       INSTALLER_URL=http:// an installer stick's page, for the installer shot
-//   make screenshots PLACEHOLDERS=1
-//       grey panels with each page's name, for a page nobody has captured yet
 //
-// A screenshot shows the host's names and addresses. Look at each file
-// before committing it: the commit checks read text, not images.
+// A screenshot of a real host shows its names and addresses. Look at each
+// file before committing it: the commit checks read text, not images.
 import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { DEMO_URL, serveDemo } from "./demo-server.mjs";
 
 const out = join(dirname(fileURLToPath(import.meta.url)), "../../../docs/images");
 const size = { width: 1366, height: 768 };
@@ -33,32 +35,19 @@ function fail(message) {
   process.exit(1);
 }
 
-async function placeholders(browser) {
-  // The dashboard's own colours (src/app.css).
-  const colours = { light: ["#f4f5f7", "#5d6773", "#0f6e8c"], dark: ["#101317", "#8e99a6", "#5cb8d6"] };
-  const page = await browser.newPage({ viewport: size });
-  for (const [name] of [...pages, ["installer"]]) {
-    for (const theme of themes) {
-      const [bg, muted, accent] = colours[theme];
-      await page.setContent(`<body style="margin:0;height:100vh;display:grid;place-content:center;text-align:center;
-        background:${bg};color:${muted};font:20px system-ui,sans-serif">
-        <div style="font-size:44px;font-weight:600;color:${accent}">${name}</div>
-        <div style="margin-top:12px">Screenshot to come &middot; ${size.width}&times;${size.height} &middot; ${theme}</div></body>`);
-      await page.screenshot({ path: join(out, `${name}-${theme}.png`) });
-    }
-  }
-}
-
 async function shoot(page, name, theme) {
   // Charts and lists fill in after the first paint.
   await page.waitForLoadState("networkidle");
+  await page.waitForTimeout(1500);
   await page.screenshot({ path: join(out, `${name}-${theme}.png`) });
   console.log(`${name}-${theme}.png`);
 }
 
 async function capture(browser) {
-  const base = (env.HOMELAB_URL ?? "").replace(/\/$/, "");
-  if (!base || !env.HOMELAB_PASSWORD) fail("set HOMELAB_URL and HOMELAB_PASSWORD, or PLACEHOLDERS=1");
+  const demo = !env.SCREENSHOT_HOST;
+  const base = demo ? DEMO_URL : env.SCREENSHOT_HOST.replace(/\/$/, "");
+  const installerUrl = demo ? `${DEMO_URL}/?installer` : env.INSTALLER_URL;
+  if (!demo && !env.HOMELAB_PASSWORD) fail("set HOMELAB_PASSWORD beside HOMELAB_URL");
   for (const theme of themes) {
     // A host's own certificate is often private; this only reads pages.
     const context = await browser.newContext({ viewport: size, ignoreHTTPSErrors: true, colorScheme: theme });
@@ -66,7 +55,7 @@ async function capture(browser) {
     const page = await context.newPage();
     await page.goto(base + "/");
     const password = page.locator('input[type="password"]');
-    await password.first().waitFor({ timeout: 15000 }).catch(() => {});
+    if (!demo) await password.first().waitFor({ timeout: 15000 }).catch(() => {});
     if ((await password.count()) > 1) fail(`${base} has no password yet: set one in the dashboard first`);
     if ((await password.count()) === 1) {
       await password.fill(env.HOMELAB_PASSWORD);
@@ -78,8 +67,8 @@ async function capture(browser) {
       if (name === "stack") {
         await page.goto(base + "/stacks");
         await page.waitForLoadState("networkidle");
-        target = env.STACK
-          ? `/stacks/${env.STACK}`
+        target = env.STACK || demo
+          ? `/stacks/${env.STACK || "photos"}`
           : await page.locator('a[href^="/stacks/"]:not([href="/stacks/add"]):not([href^="/stacks/drafts"])').first().getAttribute("href").catch(() => null);
         if (!target) {
           console.log("stack: no stack on this host, skipped");
@@ -91,11 +80,11 @@ async function capture(browser) {
     }
     await context.close();
 
-    if (env.INSTALLER_URL) {
+    if (installerUrl) {
       const installer = await browser.newContext({ viewport: size, ignoreHTTPSErrors: true, colorScheme: theme });
       await installer.addInitScript((t) => localStorage.setItem("theme", t), theme);
       const page = await installer.newPage();
-      await page.goto(env.INSTALLER_URL);
+      await page.goto(installerUrl);
       await shoot(page, "installer", theme);
       await installer.close();
     }
@@ -103,9 +92,11 @@ async function capture(browser) {
 }
 
 await mkdir(out, { recursive: true });
+const stop = env.SCREENSHOT_HOST ? () => {} : await serveDemo();
 const browser = await chromium.launch();
 try {
-  await (env.PLACEHOLDERS ? placeholders(browser) : capture(browser));
+  await capture(browser);
 } finally {
   await browser.close();
+  stop();
 }

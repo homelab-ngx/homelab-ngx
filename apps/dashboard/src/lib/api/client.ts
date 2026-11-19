@@ -30,7 +30,18 @@ export type SecurityAuditItem = Schema<"SecurityAuditItem">;
 export type AuditChunk = Schema<"AuditChunk">;
 export type Finding = Schema<"Finding">;
 
-export const api = createClient<paths>({ baseUrl: "/api" });
+/**
+ * The demo build (`vite build --mode demo`) answers every call in the browser
+ * from a made-up host (src/demo). Any other build has no such code: the
+ * condition is a constant, so the import is dropped.
+ */
+export const DEMO = import.meta.env.MODE === "demo";
+const demo = DEMO ? import("../../demo/index.ts") : undefined;
+
+export const api = createClient<paths>({
+  baseUrl: "/api",
+  fetch: demo ? async (request) => (await demo).demoFetch(request) : undefined,
+});
 
 /** An RFC 9457 answer from the daemon. */
 export class ProblemError extends Error {
