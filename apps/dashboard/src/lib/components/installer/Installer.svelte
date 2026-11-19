@@ -90,7 +90,8 @@
   const segs = $derived(disk ? diskSegments(disk) : []);
   let selectedKey = $state<string | null>(null);
   const selected = $derived(segs.find((s) => s.key === selectedKey) ?? largestFree(segs) ?? null);
-  const canDelete = $derived(!!selected?.part);
+  // A system's row is two partitions (its root and the verity one): Delete takes both.
+  const canDelete = $derived(!!selected && selected.members.length > 0 && !disk?.in_use);
   const canHere = $derived(selected?.holds === "free" && !!disk?.beside.ok);
 
   // The plan for the disk and mode picked; the host's name and time zone.
@@ -166,7 +167,8 @@
   }
 
   // Erasing asks for the disk's name; deleting a partition for its name.
-  let confirm = $state<{ kind: "erase" | "delete"; name: string } | null>(null);
+  // name is what is typed to confirm; parts are the partitions a delete removes.
+  let confirm = $state<{ kind: "erase" | "delete"; name: string; parts?: string[] } | null>(null);
   let typed = $state("");
 
   async function act(fn: () => Promise<unknown>) {
@@ -197,7 +199,9 @@
     if (c.kind === "erase") void install();
     else
       void act(async () => {
-        await call(api.DELETE("/installer/disks/{disk}/partitions/{part}", { headers, params: { path: { disk: disk.name, part: c.name } }, body: { confirm: c.name } }));
+        for (const part of c.parts ?? [c.name]) {
+          await call(api.DELETE("/installer/disks/{disk}/partitions/{part}", { headers, params: { path: { disk: disk.name, part } }, body: { confirm: part } }));
+        }
         selectedKey = null;
       });
   }
@@ -454,7 +458,7 @@
           {/each}
         </select>
         <span class="flex-1"></span>
-        <button type="button" class="btn" disabled={!canDelete || pending} onclick={() => ((confirm = { kind: "delete", name: selected!.part!.name }), (typed = ""))}>Delete</button>
+        <button type="button" class="btn" disabled={!canDelete || pending} onclick={() => ((confirm = { kind: "delete", name: selected!.members[0]!, parts: selected!.members }), (typed = ""))}>Delete</button>
         <button type="button" class="btn" disabled={!disk.erase.ok || pending} title={disk.erase.reason} onclick={() => choose(true)}>Erase disk</button>
         <button type="button" class="btn btn-primary" disabled={!canHere || pending} onclick={() => choose(false)}>Install here</button>
       </div>
@@ -511,8 +515,12 @@
   <Modal
     open={true}
     onOpenChange={(o) => !o && (confirm = null)}
-    title={confirm.kind === "erase" ? `Erase ${confirm.name}` : `Delete ${confirm.name}`}
-    description={confirm.kind === "erase" ? "Everything on the disk is removed." : "The partition and everything on it are removed."}
+    title={confirm.kind === "erase" ? `Erase ${confirm.name}` : `Delete ${(confirm.parts ?? [confirm.name]).join(" and ")}`}
+    description={confirm.kind === "erase"
+      ? "Everything on the disk is removed."
+      : (confirm.parts?.length ?? 1) > 1
+        ? "Both partitions and everything on them are removed."
+        : "The partition and everything on it are removed."}
   >
     <form id="{id}-confirm" class="grid gap-1" onsubmit={confirmed}>
       <label for="{id}-typed" class="text-muted">Type {confirm.name}</label>

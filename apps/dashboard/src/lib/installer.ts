@@ -24,6 +24,8 @@ export interface Segment {
   size: number;
   /** The partition, when the segment is exactly one. */
   part?: Part;
+  /** Its partitions' names, one each: a system's root and its verity partition are two. None for free space. */
+  members: string[];
   /** In a plan: what the install does to it. */
   change?: "new" | "kept" | "resized";
 }
@@ -79,6 +81,7 @@ function group(items: (Segment & { group?: { id: string; title: string } })[]): 
       had.seg.size += seg.size;
       had.members.push(seg.names);
       had.seg.names = names(had.members);
+      had.seg.members = [...had.seg.members, ...seg.members];
       had.seg.part = undefined;
       if (seg.change === "new" && had.seg.change !== "new") had.seg.change = seg.change;
       continue;
@@ -101,9 +104,10 @@ export function diskSegments(disk: Disk): Segment[] {
     start: p.start,
     size: p.size,
     part: p,
+    members: [p.name],
     group: systemGroup(p.type, p.label) ?? undefined,
   }));
-  const free = disk.free.map((f) => ({ key: `free-${f.start}`, holds: "free" as const, names: "", title: "Free", fs: "", start: f.start, size: f.size }));
+  const free = disk.free.map((f) => ({ key: `free-${f.start}`, holds: "free" as const, names: "", title: "Free", fs: "", start: f.start, size: f.size, members: [] }));
   return group([...parts, ...free]);
 }
 
@@ -123,6 +127,7 @@ export function planSegments(disk: Disk, rows: PlanRow[]): Segment[] {
       start: r.offset,
       size: r.size,
       change: (isNew ? "new" : r.activity === "resize" ? "resized" : "kept") as Segment["change"],
+      members: [r.node.replace(/^\/dev\//, "")],
       group: isNew ? (g ?? undefined) : undefined,
     };
   });
@@ -130,10 +135,10 @@ export function planSegments(disk: Disk, rows: PlanRow[]): Segment[] {
   const gaps: Segment[] = [];
   let at = 1 << 20;
   for (const s of sorted) {
-    if (s.start - at >= 1 << 30) gaps.push({ key: `free-${at}`, holds: "free", names: "", title: "Free", fs: "", start: at, size: s.start - at });
+    if (s.start - at >= 1 << 30) gaps.push({ key: `free-${at}`, holds: "free", names: "", title: "Free", fs: "", start: at, size: s.start - at, members: [] });
     at = Math.max(at, s.start + s.size);
   }
-  if (disk.size - (1 << 20) - at >= 1 << 30) gaps.push({ key: `free-${at}`, holds: "free", names: "", title: "Free", fs: "", start: at, size: disk.size - (1 << 20) - at });
+  if (disk.size - (1 << 20) - at >= 1 << 30) gaps.push({ key: `free-${at}`, holds: "free", names: "", title: "Free", fs: "", start: at, size: disk.size - (1 << 20) - at, members: [] });
   return group([...items, ...gaps]);
 }
 

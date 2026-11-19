@@ -65,6 +65,9 @@ describe("the installer's disk view", () => {
     ]);
     expect(segs[1]?.size).toBe(4 * GB + 64 * MB);
     expect(segs[1]?.part).toBeUndefined();
+    // A system's row can be deleted: it names both of its partitions.
+    expect(segs[1]?.members).toEqual(["nvme0n1p2", "nvme0n1p3"]);
+    expect(segs.find((x) => x.holds === "free")?.members ?? []).toEqual([]);
   });
 
   it("draws the disk after the install from repart's plan, Windows kept", () => {
