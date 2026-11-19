@@ -114,7 +114,12 @@ func TestRebootRunsSystemctl(t *testing.T) {
 
 func TestRecordGenerationDiffsClosures(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
+	// Resolved: the record resolves the link, and macOS's temp folder is
+	// under a symlink (/tmp is /private/tmp).
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	prevSys, sys := filepath.Join(dir, "sys-1"), filepath.Join(dir, "sys-2")
 	for _, d := range []string{prevSys, sys} {
 		if err := os.Mkdir(d, 0o755); err != nil {
