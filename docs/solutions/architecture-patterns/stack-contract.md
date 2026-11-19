@@ -75,7 +75,7 @@ A public stack carries no hostnames, LAN addresses, uids, time zone or user name
 - **Built-in values.** `HOMELAB_DOMAIN` and `HOMELAB_DASHBOARD_URL` are in `/run/secrets/env` (and their files) of a version 8 stack, listed as variables the host fills in. These names, `HOMELAB_API_TOKEN` and `HOMELAB_API_URL` cannot be set or declared.
 - **Time zone.** Already the host's (base module). A podman container gets `TZ = config.time.timeZone`.
 
-Conventions for a public stack repo: `flake.nix`, `homelab-stack.json`, `stack.nix` (a second module file only past about 150 lines) and `package.nix` when it builds its own software; state under `/var/lib/<service>`; images pinned by digest; a README in the order what it runs, each grant and why, the variables, first-run steps, what the backup recommends.
+Conventions for a public stack repo: `flake.nix`, `homelab-stack.json`, `stack.nix` (a second module file only past about 150 lines) and `package.nix` when it builds its own software; state under `/var/lib/<service>`; images pinned by digest; a README with the repo's name as its title, what the stack runs with a link to homelab-ngx, the steps to get started, then the manifest as Markdown between the lines `<!-- manifest:start -->` and `<!-- manifest:end -->`. The `stack-readme` action (`.github/actions/stack-readme`) writes that part from `homelab-stack.json` on each push, so nobody edits it by hand.
 
 ### What the host gives it
 

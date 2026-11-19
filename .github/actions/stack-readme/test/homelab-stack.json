@@ -1,0 +1,38 @@
+{
+  "version": 8,
+  "name": "example",
+  "nixpkgs": "nixos-25.11",
+  "routes": [
+    { "host": "photos", "port": 2283, "max_body": "50GB" },
+    { "host": "photos.example.org", "port": 2283 }
+  ],
+  "gpu": true,
+  "egress": [
+    { "to": "host", "port": 5432, "proto": "tcp" },
+    { "to": "$CAMERAS", "port": 554, "proto": "tcp" }
+  ],
+  "ports": [
+    { "port": 32400, "to": 32400, "proto": "tcp", "from": ["lan", "$CLIENTS", "10.0.0.0/8"] }
+  ],
+  "containers": true,
+  "api": ["read", "control"],
+  "variables": [
+    { "name": "DATA_DIR", "kind": "path", "description": "The library.", "required": true, "mount": "/data", "read_only": false, "owner": "app", "group": "app" },
+    { "name": "MEDIA_DIR", "kind": "path", "description": "Films to read.", "required": false, "default": "/pool/media", "mount": "/media", "read_only": true },
+    { "name": "LOG_LEVEL", "kind": "env", "description": "How much the server logs.", "required": false, "default": "info", "type": "string", "enum": ["info", "debug"] },
+    { "name": "API_KEY", "kind": "secret", "description": "The key for a|b lookups.", "required": true },
+    { "name": "CAMERAS", "kind": "address", "description": "The cameras.", "required": false },
+    { "name": "CLIENTS", "kind": "address", "description": "The players.", "required": false }
+  ],
+  "backup": {
+    "prepare": "dump.service",
+    "folders": [
+      { "label": "Library", "variable": "DATA_DIR", "exclude": [ { "pattern": "/cache/**", "reason": "The server makes it again." } ] },
+      { "label": "Database dump", "path": "/var/backup/postgresql" }
+    ]
+  },
+  "health": {
+    "units": ["app.service", "postgresql.service"],
+    "http": { "port": 2283, "path": "/ping" }
+  }
+}

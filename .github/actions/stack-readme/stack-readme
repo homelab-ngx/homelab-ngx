@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# Writes a stack's manifest into its README: the grants, the variables, the
+# recommended backup folders and the health check of homelab-stack.json, as
+# Markdown between two marker lines of README.md. The rest of the README is
+# left as it is.
+#
+#   stack-readme [--check] [DIR]
+#
+# DIR is the stack's repo (default: the current folder). --check writes
+# nothing and fails when the README differs from what the manifest gives.
+# The README needs both marker lines, each on a line of its own:
+#
+#   <!-- manifest:start -->
+#   <!-- manifest:end -->
+#
+# Needs bash, jq and awk.
+set -euo pipefail
+
+start='<!-- manifest:start -->'
+end='<!-- manifest:end -->'
+project_url=${PROJECT_URL:-https://github.com/homelab-ngx/homelab-ngx}
+
+check='' dir=.
+while [ $# -gt 0 ]; do
+  case $1 in
+    --check) check=1; shift ;;
+    -*) echo "stack-readme: unknown option $1" >&2; exit 2 ;;
+    *) dir=$1; shift ;;
+  esac
+done
+manifest=$dir/homelab-stack.json
+readme=$dir/README.md
+[ -f "$manifest" ] || { echo "stack-readme: no $manifest" >&2; exit 1; }
+[ -f "$readme" ] || { echo "stack-readme: no $readme" >&2; exit 1; }
+for marker in "$start" "$end"; do
+  [ "$(grep -cxF -- "$marker" "$readme")" = 1 ] || {
+    echo "stack-readme: $readme needs the line '$marker' once" >&2; exit 1; }
+done
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+jq -r --arg project "$project_url" '
+  def code: "`\(.)`";
+  def mode: if . then "read-only" else "read-write" end;
+  # An egress destination or a port client, as the dashboard words it.
+  def addr:
+    if startswith("$") then "the addresses you give in \(.[1:] | code)"
+    elif . == "lan" then "the LAN of the host"
+    elif . == "host" then "the host"
+    else code end;
+  # A table cell: one line, no column break.
+  def cell: gsub("\\s*\n\\s*"; " ") | gsub("\\|"; "\\|");
+
+  def grants:
+    [ (.routes // [])[]
+      | "Route: "
+        + (if (.host | contains(".")) then (.host | code) else "`\(.host).<your domain>`" end)
+        + " to port \(.port) in the stack"
+        + (if .max_body then ", with requests up to \(.max_body)" else "" end) + "." ]
+    + [ (.storage // [])[]
+      | "Storage: \(.host_path | code) at \(.mount | code) in the stack, \(.read_only | mode)." ]
+    + [ (.variables // [])[] | select(.kind == "path")
+      | "Storage: the folder in \(.name | code), at \(.mount | code) in the stack, \((.read_only // false) | mode)." ]
+    + (if .gpu then ["GPU: the render devices of the host, `/dev/dri`."] else [] end)
+    + [ (.egress // [])[]
+      | "Network: out to \(.to | addr) on port \(.port)/\(.proto)." ]
+    + [ (.ports // [])[]
+      | "Port: \(.port)/\(.proto) on the host to port \(.to) in the stack, from \([.from[] | addr] | join(", "))." ]
+    + (if .containers then ["Containers: Podman runs in the stack."] else [] end)
+    + [ (.api // [])[]
+      | if . == "read" then "API: the stack reads the state of the host from the daemon."
+        elif . == "control" then "API: the stack starts, stops and restarts stacks and their units."
+        else "API: \(code)." end ];
+
+  def variables:
+    [ (.secrets // [])[] | {name, kind: "secret", description, required: true} ]
+    + (.variables // []);
+
+  def kind:
+    .kind
+    + (if .type then ", \(.type)" else "" end)
+    + (if .enum then ": " + ([.enum[] | code] | join(", ")) else "" end);
+
+  "## Grants",
+  "",
+  (grants as $g
+   | if ($g | length) == 0 then "The stack asks for nothing you approve."
+     else "You approve each of these before the stack starts.", "", ($g[] | "- " + .) end),
+  "",
+  (variables as $v
+   | if ($v | length) == 0 then empty
+     else
+       "## Variables",
+       "",
+       "| Name | Kind | Required | Default | Description |",
+       "| --- | --- | --- | --- | --- |",
+       ($v[]
+        | "| \(.name | code) | \(kind) | \(if .required then "yes" else "no" end) | "
+          + (if .default != null and .default != "" then (.default | code) else "" end)
+          + " | \((.description // "") | cell) |"),
+       ""
+     end),
+  (if ((.backup.folders // []) | length) == 0 then empty
+   else
+     "## Backup",
+     "",
+     "The stack recommends these folders. None is backed up until you add it to a backup.",
+     "",
+     (.backup.folders[]
+      | "- \(.label): "
+        + (if .variable then "the folder in \(.variable | code)" else "\(.path | code) in the stack" end)
+        + ".",
+        ((.exclude // [])[] | "  - Without \(.pattern | code). \(.reason | cell)")),
+     "",
+     (if .backup.prepare then
+        "A backup run starts \(.backup.prepare | code) in the stack and waits for it before it copies.", ""
+      else empty end)
+   end),
+  (if ((.health.units // []) | length) == 0 and .health.http == null then empty
+   else
+     "## Health",
+     "",
+     "An update is kept when all of this holds, and rolled back when it does not.",
+     "",
+     ((.health.units // [])[] | "- \(code) is active."),
+     (if .health.http then "- Port \(.health.http.port) answers at \(.health.http.path | code)." else empty end),
+     ""
+   end),
+  "Manifest version \(.version)"
+  + (if .nixpkgs then ", built with nixpkgs \(.nixpkgs | code)" else "" end)
+  + ". Runs on [homelab-ngx](\($project))."
+' "$manifest" > "$tmp/section"
+
+awk -v start="$start" -v end="$end" -v section="$tmp/section" '
+  $0 == start {
+    print
+    print "<!-- Made from homelab-stack.json. Change the manifest, not these lines. -->"
+    print ""
+    while ((getline line < section) > 0) print line
+    print ""
+    skip = 1
+    next
+  }
+  $0 == end { skip = 0 }
+  !skip { print }
+' "$readme" > "$tmp/README.md"
+
+if cmp -s "$readme" "$tmp/README.md"; then
+  exit 0
+fi
+if [ -n "$check" ]; then
+  echo "stack-readme: $readme does not match $manifest. Run stack-readme to rewrite it." >&2
+  diff -u "$readme" "$tmp/README.md" >&2 || true
+  exit 1
+fi
+cat "$tmp/README.md" > "$readme"
+echo "stack-readme: wrote the manifest into $readme"

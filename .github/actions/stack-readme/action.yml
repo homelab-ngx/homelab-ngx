@@ -1,0 +1,47 @@
+# For a stack's repo: keeps the part of its README that repeats the manifest
+# (grants, variables, backup, health) the same as homelab-stack.json. The
+# README marks the place with two lines, <!-- manifest:start --> and
+# <!-- manifest:end -->; see the stack-readme script next to this file.
+#
+# A stack's workflow, in .github/workflows/readme.yml:
+#
+#   on:
+#     push:
+#       branches: [main]
+#       paths: [homelab-stack.json, README.md]
+#   permissions:
+#     contents: write
+#   jobs:
+#     readme:
+#       runs-on: ubuntu-latest
+#       steps:
+#         - uses: actions/checkout@v4
+#         - uses: homelab-ngx/homelab-ngx/.github/actions/stack-readme@main
+#
+# A push made with the workflow's own token starts no workflow, so the commit
+# this makes does not run it again.
+name: stack readme
+description: Write a stack's manifest into the marked section of its README, and commit the change
+inputs:
+  commit:
+    description: Commit and push the README when it changed. With 'false' the job fails on a difference instead.
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: Write the manifest into the README
+      shell: bash
+      env:
+        COMMIT: ${{ inputs.commit }}
+      run: |
+        if [ "$COMMIT" != true ]; then
+          exec "$GITHUB_ACTION_PATH/stack-readme" --check .
+        fi
+        "$GITHUB_ACTION_PATH/stack-readme" .
+        if git diff --quiet -- README.md; then
+          exit 0
+        fi
+        git config user.name 'github-actions[bot]'
+        git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+        git commit -q -m 'docs: the README repeats the manifest as it is now' -- README.md
+        git push
