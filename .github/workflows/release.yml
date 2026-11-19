@@ -156,9 +156,12 @@ jobs:
           b2=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#backblaze-b2)/bin/backblaze-b2
           $b2 account authorize >/dev/null
           up() { $b2 file upload --no-progress "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
+          # The small text files are text, so a browser shows them instead of
+          # saving them.
+          uptext() { $b2 file upload --no-progress --content-type "text/plain; charset=utf-8" "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
           cd "$RUNNER_TEMP/release/$VERSION"
           for f in homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw; do up "$f" "$VERSION/$f"; done
-          up SHA256SUMS "$VERSION/SHA256SUMS"
+          uptext SHA256SUMS "$VERSION/SHA256SUMS"
           up SHA256SUMS.gpg "$VERSION/SHA256SUMS.gpg"
 
           v=$RUNNER_TEMP/verify && mkdir -p "$v" && cd "$v"
@@ -169,8 +172,8 @@ jobs:
 
           { curl -fsS "$RELEASE_URL/versions?t=$(date +%s)" 2>/dev/null || true; echo "$VERSION"; } | sed '/^$/d' | sort -uV > versions
           echo "$VERSION" > latest
-          up versions versions
-          up latest latest
+          uptext versions versions
+          uptext latest latest
 
       - name: GitHub Release
         if: env.DRY_RUN == ''
