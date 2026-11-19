@@ -42,9 +42,18 @@ func serve(t *testing.T, s *System, path string, out any) (int, string) {
 	return w.Code, w.Body.String()
 }
 
-// The two version tests share commitFile, so neither runs in parallel.
+// The version tests share commitFile and coreLink, so none runs in parallel.
+
+// noCore points coreLink at nothing: a test run on an image host would read
+// that host's own core extension.
+func noCore(t *testing.T) {
+	t.Helper()
+	coreLink = filepath.Join(t.TempDir(), "homelab-core.raw")
+	t.Cleanup(func() { coreLink = "/var/lib/extensions/homelab-core.raw" })
+}
 
 func TestVersion(t *testing.T) {
+	noCore(t)
 	var v Version
 	if serve(t, New(&fakeCfg{}, nil, nil), "/api/version", &v); v.Version != "dev" {
 		t.Fatalf("version = %+v", v)
@@ -77,6 +86,7 @@ func TestVersionFromCoreExtensionInUse(t *testing.T) {
 }
 
 func TestVersionCommitFromDeployFile(t *testing.T) {
+	noCore(t)
 	commitFile = filepath.Join(t.TempDir(), "commit")
 	t.Cleanup(func() { commitFile = "/etc/homelab-daemon/commit" })
 	if err := os.WriteFile(commitFile, []byte("abc1234\n"), 0o644); err != nil {
