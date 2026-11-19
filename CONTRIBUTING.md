@@ -33,33 +33,34 @@ x86_64 Linux and on Apple silicon Macs; the image builds only on Linux.
 - Scope a test run:
   - `make daemon-test PKG=./internal/x RUN=TestY`
   - `make dashboard-test FILE=src/lib/x.test.ts`
-- For a command no target covers, run it in the shell:
-  `nix develop -c go test ./internal/x -run TestY` (from `apps/core`). The
-  shell carries the repo's Go, sqlc, Node and the cgo toolchain `-race`
+- For a command no target covers, use the shell from `apps/core`:
+  `nix develop -c go test ./internal/x -run TestY`.
+- The shell carries the repo's Go, sqlc, Node and the cgo toolchain `-race`
   needs.
-- `make verify-changed` runs the checks the changed files call for, and
-  `make verify` runs all of them. For anything that changes the image or the
-  daemon's start, `make image-check` boots the image in a VM.
-- `scripts/run -- <cmd>` runs a long command with its full output kept in a
-  log under `~/.local/state/homelab/runs/`. It prints a heartbeat and a footer
-  with the exit code.
-- `make image` and `make image-check` are heavy. They refuse to run on a
-  machine that runs homelab-daemon, unless `/var/lib/homelab/build-machine`
-  exists there: a host kept for building is marked that way. `scripts/builder
-  <target>` runs them on another machine over SSH, with its settings in
-  `~/.config/homelab/builder.env`.
+- `make verify-changed` runs the checks the changed files call for.
+  `make verify` runs all of them.
+- `make image-check` boots the image in a VM. Run it for anything that
+  changes the image or the daemon's start.
+- `scripts/run -- <cmd>` runs a long command and keeps its full output in a
+  log under `~/.local/state/homelab/runs/`.
+- `make image` and `make image-check` are heavy. `scripts/builder <target>`
+  runs them on another machine over SSH.
+- They refuse to run on a host that runs homelab-daemon, unless
+  `/var/lib/homelab/build-machine` marks it as kept for building.
+- The builder's settings are in `~/.config/homelab/builder.env`.
 
 ## Changing the code
 
 - **The API is code-first (Huma).** An operation is a handler with its own Go
-  types, added with `httpx.Register` at its scope (operator, read or
-  control) in the feature package's `http.go`. Errors are `*httpx.Problem`
-  (problem+json).
+  types.
+- Add it with `httpx.Register` at its scope (operator, read or control) in
+  the feature package's `http.go`.
+- Errors are `*httpx.Problem` (problem+json).
 - **Schema changes** go in `apps/core/db/{migrations,queries}`. `metrics.db`
   is the one exception: its single table is created by `internal/metrics`.
-- **After changing an operation or the SQL**, run `make gen`. Commit its
-  output with the change: `api/openapi.json`, `schema.gen.ts` and the sqlc
-  `*.gen.go`. `make gen-check` fails on drift.
+- **After changing an operation or the SQL**, run `make gen` and commit its
+  output with the change. `make gen-check` fails on drift.
+- The output is `api/openapi.json`, `schema.gen.ts` and the sqlc `*.gen.go`.
 - **Dashboard copy and type** follow `apps/dashboard/DESIGN.md` (Copy,
   Help, Status, Row Menu, Disclosure):
   - labels and values instead of sentences;
@@ -69,21 +70,22 @@ x86_64 Linux and on Apple silicon Macs; the image builds only on Linux.
   `src/ui-rules.test.ts` fails when a page grows past its word limits or
   uses a font size, mono or a fold outside the system. Cut the text instead
   of raising a limit. The dashboard is Svelte 5 with runes.
-- **A core runs on older images.** Image and core update apart, so a new
-  core meets hosts whose image is older. When the daemon uses something of
-  the image (a program, a unit, a file), it treats its absence as that
-  feature being unavailable and still starts. When it cannot do without,
-  raise `minImage` in `nix/pkgs/core-extension.nix` to the image version
-  that brings it: hosts then apply that core only on such an image. Details:
-  `docs/solutions/integration-issues/mkosi-sysupdate-sysext-image.md`.
 - **Dependency hashes.** After changing `go.mod`/`go.sum` or
   `apps/dashboard/package-lock.json`, run
   `scripts/update-hashes.sh daemon|dashboard` to refresh
   `vendorHash`/`npmDepsHash`.
 - **CLI automation.** Put `--json` before the command, and treat `warnings`
-  as a successful local operation. Pipe secrets with `--value-stdin`; never
-  put secret values in argv. Details:
-  `docs/solutions/conventions/homelab-cli-automation.md`.
+  as a successful local operation.
+- Pipe secrets with `--value-stdin`; never put secret values in argv.
+  Details: `docs/solutions/conventions/homelab-cli-automation.md`.
+
+**A core runs on older images.** Image and core update apart, so a new core
+meets hosts whose image is older. When the daemon uses something of the
+image (a program, a unit, a file), it treats its absence as that feature
+being unavailable and still starts. When it cannot do without, raise
+`minImage` in `nix/pkgs/core-extension.nix` to the image version that brings
+it: hosts then apply that core only on such an image. Details:
+`docs/solutions/integration-issues/mkosi-sysupdate-sysext-image.md`.
 
 ## Writing
 
@@ -106,6 +108,8 @@ plainly:
   a stack.
 - **Say it once.** A paragraph ends when its last fact is stated.
 - **Headings name their subject** in a few words, in sentence case.
+- **A list item is 23 words at most**, in a bulleted or a numbered list.
+  What needs more is a paragraph.
 
 Compare:
 
@@ -164,11 +168,13 @@ So before you tag, the full check must have passed on the commit you tag.
 Run it one of two ways:
 
 - on the build machine: `scripts/builder image-check`, with three versions
-  in its `image/out` (see `image/check.sh`). The third is only installed and
-  broken, so `make image-variant FROM=<second> VERSION=<third>` copies it
-  from the second in seconds;
+  in its `image/out` (see `image/check.sh`);
 - in Actions: **image check** > Run workflow, on main. It updates from the
   newest published release, and publishes nothing.
+
+On the build machine the third version is only installed and broken, so
+`make image-variant FROM=<second> VERSION=<third>` copies it from the second
+in seconds.
 
 The image check workflow also runs on main twice a week. Those runs fill
 the build caches a release reads.

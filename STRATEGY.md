@@ -58,7 +58,7 @@ service update change core.
 - **Stacks disturbed by a core update.** Stack units restarted when only core
   is updated.
 - **Failed updates rolled back unattended.** The share of unhealthy stack,
-  core and image updates that returned to the version before without the
+  core and image updates returned to the version before without the
   operator.
 - **Leftovers after a removal.** References to removed code in the repo;
   target zero; checked by search at review.
