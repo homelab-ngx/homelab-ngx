@@ -18,7 +18,8 @@
 #      and a machine ID of its own, asking for a login; a domain set through
 #      the host settings serves the dashboard over HTTPS
 #   5. a bcachefs pool is formatted and mounted through the daemon, at
-#      /var/mnt/pool; unmounted, its directory takes no writes
+#      /var/mnt/pool; unmounted, its directory takes no writes. A disk with
+#      another file system is offered as a partition and mounted by name
 #   6. a stack (the drafts template) is built by Nix and serves a page from
 #      the pool at its route under the domain
 #   7. host settings: a VPN device, a tunnel route, the firewall, host name
@@ -131,6 +132,7 @@ cp --sparse=always "$out/homelab_$version.raw" "$vm/stick.raw"
 # The disk the installer erases; a build on the host (BUILD=1) needs room in /var.
 qemu-img create -q -f raw "$vm/disk.raw" "$([ "${BUILD:-}" = 1 ] && echo 100G || echo 80G)"
 for d in pool1 pool2; do qemu-img create -q -f raw "$vm/$d.raw" 8G; done
+qemu-img create -q -f raw "$vm/part.raw" 1G
 # windisk FILE [GAP] [ESP]: a stand-in for a Windows disk: an ESP (512 MB
 # unless given; Windows' own setup makes 100 MB) with Windows Boot Manager
 # and a fallback loader of its own, then GAP free (as Windows leaves after
@@ -611,7 +613,7 @@ install vda true installed
 ok "the stick ($stick) ran from itself next to an install of $version and offered that disk; installed onto vda and turned off"
 
 step "4. the installed disk boots $version with its core, its name, machine ID, time zone, SSH key and a domain"
-boot "$vm/disk.raw" "$vm/pool1.raw" "$vm/pool2.raw"
+boot "$vm/disk.raw" "$vm/pool1.raw" "$vm/pool2.raw" "$vm/part.raw"
 booted "$version"
 runs_from vda
 ownid
@@ -683,7 +685,31 @@ else
   api -X POST http://x/api/storage/mount -d "'{\"devices\":[\"/dev/vdb\",\"/dev/vdc\"],\"mountpoint\":\"/pool\"}'" >/dev/null || die "mount refused"
   vssh 'findmnt -no FSTYPE /pool' | grep -q bcachefs || die "/pool is not mounted"
 fi
-ok "pool mounted at $pool ($(vssh 'bcachefs version'))$guarded"
+# A partition: a file system that is not a pool (vdd, formatted here). Only
+# it is offered, not the ESP, the root slots, /var or the pool's disks; it
+# mounts under its label's name, and is remembered for the next boot.
+part=
+if api http://x/api/storage | jq -e 'has("partitions")' >/dev/null; then
+  vssh 'mkfs.ext4 -q -L "Check Data" /dev/vdd'
+  for _ in $(seq 1 10); do
+    st=$(api http://x/api/storage)
+    [ "$(jq -r '[.partitions[].path] | join(" ")' <<<"$st")" = /dev/vdd ] && break
+    sleep 2
+  done
+  [ "$(jq -r '[.partitions[] | "\(.path) \(.fstype) \(.state) \(.mount_name)"] | join(", ")' <<<"$st")" = "/dev/vdd ext4 unmounted check-data" ] ||
+    die "the partitions offered are not just vdd: $(jq -c .partitions <<<"$st")"
+  partuuid=$(jq -r '.partitions[0].uuid' <<<"$st")
+  part=/var/mnt/check-data
+  api -X POST "http://x/api/storage/partitions/$partuuid/mount" -d "'{}'" >/dev/null || die "the partition's mount was refused"
+  vssh "findmnt -no FSTYPE,OPTIONS $part" | grep -q '^ext4 .*nosuid' || die "$part is not mounted: $(vssh "findmnt -no FSTYPE,OPTIONS $part")"
+  code=$(vssh "curl -s -o /dev/null -w '%{http_code}' --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json' -X POST http://x/api/storage/partitions/$partuuid/mount -d '{\"name\":\"pool\"}'")
+  [ "$code" = 409 ] || die "mounting a mounted partition answered $code"
+  api -X POST "http://x/api/storage/partitions/$partuuid/unmount" >/dev/null || die "the partition's unmount was refused"
+  vssh "! touch $part/x 2>/dev/null" || die "the unmounted $part can be written to"
+  api -X POST "http://x/api/storage/partitions/$partuuid/mount" -d "'{}'" >/dev/null || die "the partition's second mount was refused"
+  vssh "echo kept > $part/file"
+  ok "partition vdd mounted at $part, the only one offered; unmounted, its directory takes no writes"
+fi
 
 step "6. a stack from the drafts template"
 vssh "mkdir -p $pool/site /var/lib/stack-src/site && echo '<p>image-check</p>' > $pool/site/index.html"
@@ -730,6 +756,7 @@ step "8. after a reboot"
 reboot_vm
 booted "$version"
 hostcheck
+[ -z "$part" ] || [ "$(vssh "cat $part/file")" = kept ] || die "the partition is not mounted at $part after a reboot"
 [ "$(vssh 'cat /etc/machine-id')" = "$installed" ] || die "the machine ID changed over a reboot"
 ok "everything still in place, the machine ID too (the stack's route ${sitewait}s after the daemon)"
 
@@ -936,7 +963,7 @@ fi
 
 step "13. the free-space install boots alone, beside the other system"
 stop
-drop disk pool1 pool2
+drop disk pool1 pool2 part
 boot "$vm/beside.raw"
 booted "$version"
 runs_from vda

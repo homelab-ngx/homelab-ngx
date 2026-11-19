@@ -22,5 +22,10 @@ find /usr/share/fonts/TTF -name 'JetBrainsMono*' ! -name JetBrainsMonoNerdFontMo
   ! -name JetBrainsMonoNerdFontMono-Bold.ttf -delete
 ls /usr/share/fonts/TTF/JetBrainsMonoNerdFontMono-Regular.ttf /usr/share/fonts/TTF/JetBrainsMonoNerdFontMono-Bold.ttf
 depmod -a "$(ls /usr/lib/modules | head -n1)"
+# The file systems the Storage page mounts a partition with (the daemon's
+# storage.partitionFS): fail the build if the kernel has lost one.
+for fs in ext4 xfs btrfs exfat vfat ntfs3; do
+  modinfo -k "$(ls /usr/lib/modules | head -n1)" "$fs" >/dev/null
+done
 # The pinned pair: fail the build if the module is not there.
 modinfo -k "$(ls /usr/lib/modules | head -n1)" bcachefs >/dev/null

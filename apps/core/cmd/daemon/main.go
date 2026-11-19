@@ -184,6 +184,7 @@ func run(configPath string) error {
 	stacksSvc.OnBackupFoldersAdded(bk.FoldersAdded)
 	stor := storage.New(bcachefs.New(r), cfg, nil)
 	stor.UseStore(st)
+	stor.UsePartitions(st)
 	stor.UseStackFolders(stacksSvc)
 	// metrics.db sits next to homelab.db but outside its snapshots: it is
 	// throwaway telemetry. Without it the live charts still work.

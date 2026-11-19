@@ -1537,6 +1537,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/storage/partitions/{uuid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Change whether a partition is mounted automatically at boot. */
+        patch: operations["updatePartition"];
+        trace?: never;
+    };
+    "/storage/partitions/{uuid}/mount": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mount a partition under /var/mnt and remember it for the next boot.
+         * @description `409 name_taken` when a pool or another partition has the name, `409 partition_state` when it is mounted.
+         */
+        post: operations["mountPartition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/partitions/{uuid}/unmount": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Unmount a partition and stop mounting it at boot. */
+        post: operations["unmountPartition"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/storage/pools/{uuid}": {
         parameters: {
             query?: never;
@@ -3094,6 +3148,38 @@ export interface components {
             /** @enum {string} */
             proto: "tcp" | "udp";
         };
+        Partition: {
+            auto_mount: boolean;
+            /** @description The model of the disk it is on, or that disk's name. */
+            disk: string;
+            fstype: string;
+            label: string;
+            /** @description The name it mounts under when none is given: the one it had before, or its label's. */
+            mount_name: string;
+            mountdir: string;
+            /** @description The device, such as /dev/sdb1. */
+            path: string;
+            read_only: boolean;
+            /** Format: int64 */
+            size: number;
+            /** @enum {string} */
+            state: "mounted" | "unmounted";
+            /** @description While mounted. */
+            usage?: components["schemas"]["PartitionUsage"];
+            /** @description The file system's UUID. */
+            uuid: string;
+        };
+        PartitionMountRequest: {
+            /** @description It mounts at /var/mnt/<name>. Empty is the name it had before, or its label's. */
+            name?: string;
+            read_only?: boolean;
+        };
+        PartitionUsage: {
+            /** Format: int64 */
+            free: number;
+            /** Format: int64 */
+            total: number;
+        };
         PasswordInBody: {
             password: string;
         };
@@ -3739,6 +3825,8 @@ export interface components {
             signed_in: boolean;
         };
         StorageStatus: {
+            /** @description File systems that are not a pool: the ones the daemon mounted, and the ones it can mount. */
+            partitions: components["schemas"]["Partition"][];
             pools: components["schemas"]["Pool"][];
             subvolumes: components["schemas"]["Subvolume"][];
             unassigned: components["schemas"]["Disk"][];
@@ -10700,6 +10788,131 @@ export interface operations {
                 "application/json": components["schemas"]["MountRequest"];
             };
         };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    updatePartition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                uuid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoolPatch"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    mountPartition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                uuid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PartitionMountRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    unmountPartition: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                uuid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description No Content */
             204: {

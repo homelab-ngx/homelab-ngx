@@ -130,6 +130,10 @@ type Service struct {
 	retryInterval   time.Duration
 	onBcachefs      func(path string) bool
 	mkdir           func(path string) error
+	statfs          func(path string) (total, free uint64, err error)
+
+	// parts remembers the mounted partitions; nil: partitions are not offered.
+	parts PartitionStore
 }
 
 // New wires a Service.
@@ -142,6 +146,7 @@ func New(bc *bcachefs.Client, cfg *config.Manager, log *slog.Logger) *Service {
 		health: map[string]DiskHealth{}, sizes: map[string]folderSize{}, trees: map[string]folderTree{},
 		now: time.Now, ttl: statusTTL, onBcachefs: bc.OnBcachefs,
 		mkdir:           func(path string) error { return os.MkdirAll(path, 0o755) },
+		statfs:          statfs,
 		discoverTimeout: 2 * time.Minute, retryInterval: 5 * time.Second,
 	}
 }
@@ -285,6 +290,10 @@ func (s *Service) compute(ctx context.Context) (StorageStatus, error) {
 			pool.MountName = DefaultMountName
 		}
 		out.Pools = append(out.Pools, pool)
+	}
+	if out.Partitions, err = s.listPartitions(ctx); err != nil {
+		s.log.Error("failed to list partitions", "error", err)
+		out.Partitions = []Partition{}
 	}
 	for _, d := range unassigned {
 		out.Unassigned = append(out.Unassigned, toDisk(d))
@@ -519,6 +528,11 @@ func (s *Service) Mount(ctx context.Context, devices []string, name string) erro
 			return fmt.Errorf("%w: %s", ErrNameTaken, name)
 		}
 	}
+	for _, r := range s.storedPartitions(ctx) {
+		if r.Name == name && r.AutoMount {
+			return fmt.Errorf("%w: %s", ErrNameTaken, name)
+		}
+	}
 	s.invalidate()
 	if err := s.open(ctx, mountpoint); err != nil {
 		return err
@@ -614,6 +628,11 @@ func (s *Service) SetAutoMount(ctx context.Context, uuid string, auto bool) erro
 // the disks can still be enumerating when the daemon starts, so a pool that is
 // not discovered yet is retried for up to the discovery timeout (2 minutes).
 func (s *Service) AutoMount(ctx context.Context) {
+	s.autoMountPools(ctx)
+	s.autoMountPartitions(ctx)
+}
+
+func (s *Service) autoMountPools(ctx context.Context) {
 	pending := make(map[string]config.Pool)
 	for _, p := range s.cfg.Current().Pools {
 		if !p.AutoMount {

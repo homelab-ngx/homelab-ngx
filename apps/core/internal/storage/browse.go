@@ -62,6 +62,11 @@ func (s *Service) browseRoots(ctx context.Context) []string {
 		for _, sv := range st.Subvolumes {
 			paths = append(paths, sv.Path)
 		}
+		for _, p := range st.Partitions {
+			if p.State == "mounted" {
+				paths = append(paths, p.Mountdir)
+			}
+		}
 	}
 	if s.folders != nil {
 		fs, err := s.folders.HostFolders(ctx)

@@ -15,6 +15,7 @@
 
   type Pool = Schema<"Pool">;
   type Disk = Schema<"Disk">;
+  type Partition = Schema<"Partition">;
   type StorageStatus = Schema<"StorageStatus">;
 
   const key = ["daemon", "storage"] as const;
@@ -30,6 +31,11 @@
   const pools = $derived(storage.data?.pools ?? []);
   const subvolumes = $derived(storage.data?.subvolumes ?? []);
   const spare = $derived(storage.data?.unassigned ?? []);
+  // A partition is a file system that is not a pool: the mounted ones are listed under the
+  // subvolumes, the ones that can be mounted last, with the spare disks.
+  const partitions = $derived(storage.data?.partitions ?? []);
+  const mountedParts = $derived(partitions.filter((p) => p.state === "mounted"));
+  const spareParts = $derived(partitions.filter((p) => p.state !== "mounted"));
   const allDisks = $derived([...pools.flatMap((p) => p.disks), ...spare]);
   const disks = $derived(disksSummary(allDisks));
 
@@ -78,6 +84,29 @@
       ),
     );
   };
+  /** What is typed and ticked for each partition that can be mounted, by uuid. */
+  const partNames = $state<Record<string, string>>({});
+  const partReadOnly = $state<Record<string, boolean>>({});
+  const mountPartition = (p: Partition) => {
+    mounting = p.uuid;
+    op.mutate(() =>
+      call(
+        api.POST("/storage/partitions/{uuid}/mount", {
+          params: { path: { uuid: p.uuid } },
+          body: { name: partNames[p.uuid]?.trim() || undefined, read_only: partReadOnly[p.uuid] || undefined },
+        }),
+      ),
+    );
+  };
+  const partitionAutoMount = (p: Partition, on: boolean) =>
+    op.mutate(() => call(api.PATCH("/storage/partitions/{uuid}", { params: { path: { uuid: p.uuid } }, body: { auto_mount: on } })));
+  const askUnmountPartition = (p: Partition) =>
+    (confirm = {
+      title: `Unmount ${p.mountdir}?`,
+      body: `Stops only if nothing uses ${p.mountdir}: stop its stacks first.`,
+      label: "Unmount",
+      run: () => call(api.POST("/storage/partitions/{uuid}/unmount", { params: { path: { uuid: p.uuid } } })),
+    });
   const autoMount = (p: Pool, on: boolean) =>
     op.mutate(() => call(api.PATCH("/storage/pools/{uuid}", { params: { path: { uuid: p.uuid } }, body: { auto_mount: on } })));
   const askUnmount = (p: Pool) =>
@@ -331,6 +360,8 @@
       </div>
     {/if}
 
+    {#if pools.length === 1}{@render partitionTable()}{/if}
+
     <h2 class="mt-6 mb-2 font-semibold">
       <Help label="Disks">
         {#if p.background_target}New files land on the cache disks and move to the storage disks later.{/if}
@@ -341,6 +372,68 @@
     {@render diskTable(p.disks, p)}
   </section>
 {/each}
+
+{#if pools.length !== 1}{@render partitionTable()}{/if}
+
+{#snippet partitionTable()}
+  {#if mountedParts.length > 0}
+    <h2 class="mt-6 mb-2 font-semibold">
+      <Help label="Partitions">Data on a partition is on one disk and has no parity. A pool keeps copies on other disks.</Help>
+    </h2>
+    <div class="relative overflow-x-auto rounded-lg border border-line bg-surface">
+      <table class="w-full border-collapse text-left tabular-nums">
+        <thead>
+          <tr class="border-b border-line bg-sunken">
+            <th scope="col" class="label px-3 py-2">Partition</th>
+            <th scope="col" class="label px-3 py-2 text-right">Used</th>
+            <th scope="col" class="label px-3 py-2 whitespace-nowrap max-sm:hidden">Used by</th>
+            <th scope="col" class="px-3 py-2"><span class="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each mountedParts as part (part.uuid)}
+            {@const users = usedBy(part.mountdir, stacks.data ?? [])}
+            <tr class="border-b border-line last:border-0">
+              <td class="px-3 py-2">
+                <span class="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <a class="link [overflow-wrap:anywhere]" href={browseHref(part.mountdir)} title="{part.mountdir} · {part.path} · {part.fstype}">{part.mount_name}</a>
+                  <Pill tone="warn">no parity</Pill>
+                  {#if part.read_only}<Pill tone="idle">read-only</Pill>{/if}
+                </span>
+                {#if users.length > 0}
+                  <span class="mt-1 flex flex-wrap gap-1 sm:hidden">{@render chips(users)}</span>
+                {/if}
+              </td>
+              <td class="px-3 py-2 text-right whitespace-nowrap">
+                {#if part.usage}
+                  {bytes(part.usage.total - part.usage.free)} <span class="text-muted">of {bytes(part.usage.total)}</span>
+                {:else}
+                  {bytes(part.size)}
+                {/if}
+              </td>
+              <td class="px-3 py-2 max-sm:hidden">
+                {#if users.length > 0}
+                  <span class="flex flex-wrap gap-1">{@render chips(users)}</span>
+                {:else}
+                  <span class="text-muted">–</span>
+                {/if}
+              </td>
+              <td class="px-3 py-2 text-right">
+                <RowMenu
+                  name={part.mount_name}
+                  items={[
+                    { label: part.auto_mount ? "Do not mount at start" : "Mount at start", disabled: op.isPending, onSelect: () => partitionAutoMount(part, !part.auto_mount) },
+                    { label: users.length > 0 ? "Unmount… (in use)" : "Unmount…", danger: true, disabled: op.isPending || users.length > 0, onSelect: () => askUnmountPartition(part) },
+                  ]}
+                />
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {/if}
+{/snippet}
 
 {#snippet chips(users: string[])}
   {#each users as u (u)}
@@ -393,11 +486,70 @@
 {#if storage.data}
   <section class="mt-6" aria-labelledby="spare-h">
     <h2 id="spare-h" class="mb-2 font-semibold">
-      <Help label="Spare disks">Disks that are not part of any pool, such as one just plugged in.</Help>
+      <Help label="Spare disks and partitions">
+        Disks that are not part of any pool, such as one just plugged in, and partitions that are not mounted. A partition mounts under
+        /var/mnt, where stacks and backups can use it.
+      </Help>
     </h2>
     {#if spare.length > 0}
       {@render diskTable(spare)}
-    {:else}
+    {/if}
+    {#if spareParts.length > 0}
+      <div class="relative overflow-x-auto rounded-lg border border-line bg-surface {spare.length > 0 ? 'mt-3' : ''}">
+        <table class="w-full border-collapse text-left tabular-nums">
+          <thead>
+            <tr class="border-b border-line bg-sunken">
+              <th scope="col" class="label px-3 py-2">Partition</th>
+              <th scope="col" class="label px-3 py-2 whitespace-nowrap max-sm:hidden">File system</th>
+              <th scope="col" class="label px-3 py-2 text-right">Size</th>
+              <th scope="col" class="label px-3 py-2 max-md:hidden">Disk</th>
+              <th scope="col" class="px-3 py-2"><span class="sr-only">Mount</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each spareParts as part (part.uuid)}
+              <tr class="border-b border-line last:border-0">
+                <td class="px-3 py-2 [overflow-wrap:anywhere]" title={part.path}>{part.label || part.path.replace("/dev/", "")}</td>
+                <td class="px-3 py-2 max-sm:hidden">{part.fstype}</td>
+                <td class="px-3 py-2 text-right whitespace-nowrap">{bytes(part.size)}</td>
+                <td class="px-3 py-2 max-md:hidden">{part.disk}</td>
+                <td class="px-3 py-2">
+                  <form
+                    class="flex flex-wrap items-center justify-end gap-x-3 gap-y-2"
+                    onsubmit={(e) => {
+                      e.preventDefault();
+                      mountPartition(part);
+                    }}
+                  >
+                    <label class="flex min-w-0 items-center gap-2">
+                      <span class="text-muted">/var/mnt/</span>
+                      <input
+                        class="input w-32 min-w-0"
+                        aria-label="Name for {part.label || part.path}"
+                        autocomplete="off"
+                        spellcheck="false"
+                        pattern="[a-z0-9][a-z0-9-]*"
+                        maxlength="31"
+                        placeholder={part.mount_name}
+                        bind:value={partNames[part.uuid]}
+                      />
+                    </label>
+                    <label class="flex items-center gap-1.5 whitespace-nowrap">
+                      <input type="checkbox" bind:checked={partReadOnly[part.uuid]} />
+                      Read-only
+                    </label>
+                    <button type="submit" class="btn btn-primary" disabled={op.isPending}>
+                      {#if mounting === part.uuid && op.isPending}<LoaderCircle class="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />Mounting…{:else}Mount{/if}
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+    {#if spare.length === 0 && spareParts.length === 0}
       <p class="text-muted">None.</p>
     {/if}
   </section>

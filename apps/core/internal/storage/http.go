@@ -25,6 +25,10 @@ func problem(err error) error {
 		return httpx.Conflict("subvolume_not_empty", "%s", err)
 	case errors.Is(err, ErrUnknownPool):
 		return httpx.NotFound("unknown_pool", "%s", err)
+	case errors.Is(err, ErrUnknownPartition):
+		return httpx.NotFound("unknown_partition", "%s", err)
+	case errors.Is(err, ErrPartitionState):
+		return httpx.Conflict("partition_state", "%s", err)
 	case errors.Is(err, ErrOutsideRoots):
 		return httpx.Forbidden("outside_roots", "%s", err)
 	case errors.Is(err, ErrNoSuchFolder):
@@ -44,6 +48,13 @@ type (
 	updatePoolIn struct {
 		Uuid string `path:"uuid"`
 		Body PoolPatch
+	}
+	partitionIn struct {
+		Uuid string `path:"uuid"`
+	}
+	mountPartitionIn struct {
+		Uuid string `path:"uuid"`
+		Body PartitionMountRequest
 	}
 	usageIn        struct{ Body SubvolumeUsageRequest }
 	usageOut       struct{ Body SubvolumeUsage }
@@ -78,6 +89,20 @@ func (h *HTTP) Register(a httpx.APIs) {
 		OperationID: "updatePool", Method: http.MethodPatch, Path: "/storage/pools/{uuid}", Tags: tags,
 		Summary: "Change whether a pool is mounted automatically at boot.", DefaultStatus: http.StatusNoContent,
 	}, h.updatePool)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "mountPartition", Method: http.MethodPost, Path: "/storage/partitions/{uuid}/mount", Tags: tags,
+		Summary:       "Mount a partition under /var/mnt and remember it for the next boot.",
+		Description:   "`409 name_taken` when a pool or another partition has the name, `409 partition_state` when it is mounted.",
+		DefaultStatus: http.StatusNoContent,
+	}, h.mountPartition)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "unmountPartition", Method: http.MethodPost, Path: "/storage/partitions/{uuid}/unmount", Tags: tags,
+		Summary: "Unmount a partition and stop mounting it at boot.", DefaultStatus: http.StatusNoContent,
+	}, h.unmountPartition)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "updatePartition", Method: http.MethodPatch, Path: "/storage/partitions/{uuid}", Tags: tags,
+		Summary: "Change whether a partition is mounted automatically at boot.", DefaultStatus: http.StatusNoContent,
+	}, h.updatePartition)
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "getSubvolumeUsage", Method: http.MethodPost, Path: "/storage/subvolume-usage", Tags: tags,
 		Summary: "Disk usage of subvolumes (slow; computed on demand).",
@@ -164,6 +189,27 @@ func (h *HTTP) createSubvolume(ctx context.Context, in *subvolumeIn) (*struct{},
 
 func (h *HTTP) deleteSubvolume(ctx context.Context, in *delSubvolumeIn) (*struct{}, error) {
 	if err := h.svc.DeleteSubvolume(ctx, in.Path); err != nil {
+		return nil, problem(err)
+	}
+	return nil, nil
+}
+
+func (h *HTTP) mountPartition(ctx context.Context, in *mountPartitionIn) (*struct{}, error) {
+	if err := h.svc.MountPartition(ctx, in.Uuid, in.Body.Name, in.Body.ReadOnly); err != nil {
+		return nil, problem(err)
+	}
+	return nil, nil
+}
+
+func (h *HTTP) unmountPartition(ctx context.Context, in *partitionIn) (*struct{}, error) {
+	if err := h.svc.UnmountPartition(ctx, in.Uuid); err != nil {
+		return nil, problem(err)
+	}
+	return nil, nil
+}
+
+func (h *HTTP) updatePartition(ctx context.Context, in *updatePoolIn) (*struct{}, error) {
+	if err := h.svc.SetPartitionAutoMount(ctx, in.Uuid, in.Body.AutoMount); err != nil {
 		return nil, problem(err)
 	}
 	return nil, nil

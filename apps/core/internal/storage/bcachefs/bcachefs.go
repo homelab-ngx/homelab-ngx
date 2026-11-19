@@ -1048,3 +1048,85 @@ func (c *Client) ClearImmutable(ctx context.Context, path string) error {
 	_, err := c.run(ctx, "chattr", "-i", path)
 	return err
 }
+
+// BlockFS is a block device as lsblk sees it: a disk or one of its
+// partitions, with the file system on it.
+type BlockFS struct {
+	Name        string
+	Path        string
+	Size        uint64
+	Type        string // disk, part, ...
+	FSType      string
+	UUID        string // the file system's
+	Label       string
+	PartType    string // GPT type GUID or MBR type, lowercase
+	Mountpoints []string
+	// Disk is the model of the disk it is on, or that disk's name.
+	Disk string
+}
+
+type lsblkFS struct {
+	Name        string    `json:"name"`
+	Path        string    `json:"path"`
+	Size        any       `json:"size"`
+	Type        string    `json:"type"`
+	FSType      string    `json:"fstype"`
+	UUID        string    `json:"uuid"`
+	Label       string    `json:"label"`
+	PartType    string    `json:"parttype"`
+	Model       string    `json:"model"`
+	Mountpoints []string  `json:"mountpoints"`
+	Children    []lsblkFS `json:"children"`
+}
+
+// BlockFilesystems lists every block device and partition, flat.
+func (c *Client) BlockFilesystems(ctx context.Context) ([]BlockFS, error) {
+	out, err := c.run(ctx, "lsblk", "-J", "-b", "-o", "NAME,PATH,SIZE,TYPE,FSTYPE,UUID,LABEL,PARTTYPE,MODEL,MOUNTPOINTS")
+	if err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Blockdevices []lsblkFS `json:"blockdevices"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		return nil, fmt.Errorf("failed to parse lsblk output: %w", err)
+	}
+	var all []BlockFS
+	var walk func(devs []lsblkFS, disk string)
+	walk = func(devs []lsblkFS, disk string) {
+		for _, d := range devs {
+			on := disk
+			if on == "" {
+				if on = strings.TrimSpace(d.Model); on == "" {
+					on = d.Name
+				}
+			}
+			var size uint64
+			switch v := d.Size.(type) {
+			case float64:
+				size = uint64(v)
+			case string:
+				fmt.Sscanf(v, "%d", &size)
+			}
+			var mounts []string
+			for _, m := range d.Mountpoints {
+				if m != "" {
+					mounts = append(mounts, m)
+				}
+			}
+			all = append(all, BlockFS{
+				Name: d.Name, Path: d.Path, Size: size, Type: d.Type, FSType: d.FSType, UUID: d.UUID,
+				Label: d.Label, PartType: strings.ToLower(d.PartType), Mountpoints: mounts, Disk: on,
+			})
+			walk(d.Children, on)
+		}
+	}
+	walk(parsed.Blockdevices, "")
+	return all, nil
+}
+
+// MountFS mounts the file system with the given UUID at mountpoint.
+func (c *Client) MountFS(ctx context.Context, fstype, uuid, mountpoint, options string) error {
+	_, err := c.run(ctx, "mount", "-t", fstype, "-o", options, "UUID="+uuid, mountpoint)
+	return err
+}

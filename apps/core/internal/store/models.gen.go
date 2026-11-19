@@ -150,6 +150,15 @@ type NotificationProblem struct {
 	Count      int64
 }
 
+type Partition struct {
+	Uuid      string
+	Name      string
+	Fstype    string
+	ReadOnly  bool
+	AutoMount bool
+	UpdatedAt int64
+}
+
 type Pool struct {
 	Uuid       string
 	Mountpoint string

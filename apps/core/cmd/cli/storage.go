@@ -66,6 +66,56 @@ func storageCmd() *cli.Command {
 				}
 				return emit(c, nil, "Deleted subvolume "+p)
 			}},
+			{Name: "partitions", Usage: "List the partitions that are mounted here or can be", Action: func(c *cli.Context) error {
+				st, err := call[storage.StorageStatus](c.Context, http.MethodGet, "/storage", nil)
+				if err != nil {
+					return err
+				}
+				if jsonFlag(c) {
+					return printJSON(st.Partitions)
+				}
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+				fmt.Fprintln(w, "DEVICE\tFILE SYSTEM\tLABEL\tSTATE\tMOUNT\tUUID")
+				for _, p := range st.Partitions {
+					fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", p.Path, p.Fstype, p.Label, p.State, p.Mountdir, p.Uuid)
+				}
+				return w.Flush()
+			}},
+			{
+				Name: "partition-mount", Usage: "Mount a partition", ArgsUsage: "<device|uuid> [name]",
+				Description: "It mounts at " + storage.MountRoot + "/<name>; with no name, under its label.",
+				Flags:       []cli.Flag{&cli.BoolFlag{Name: "read-only", Usage: "mount it read-only"}},
+				Action: func(c *cli.Context) error {
+					if err := requireArgs(c, 1, "homelab storage partition-mount <device|uuid> [name]"); err != nil {
+						return err
+					}
+					p, err := findPartition(c, c.Args().First())
+					if err != nil {
+						return err
+					}
+					req := storage.PartitionMountRequest{Name: c.Args().Get(1), ReadOnly: c.Bool("read-only")}
+					if err := send(c.Context, http.MethodPost, "/storage/partitions/"+url.PathEscape(p.Uuid)+"/mount", req); err != nil {
+						return err
+					}
+					if req.Name == "" {
+						req.Name = p.MountName
+					}
+					return emit(c, nil, "Mounted "+storage.Mountpoint(req.Name))
+				},
+			},
+			{Name: "partition-unmount", Usage: "Unmount a partition", ArgsUsage: "<device|uuid|mountpoint>", Action: func(c *cli.Context) error {
+				if err := requireArgs(c, 1, "homelab storage partition-unmount <device|uuid|mountpoint>"); err != nil {
+					return err
+				}
+				p, err := findPartition(c, c.Args().First())
+				if err != nil {
+					return err
+				}
+				if err := send(c.Context, http.MethodPost, "/storage/partitions/"+url.PathEscape(p.Uuid)+"/unmount", nil); err != nil {
+					return err
+				}
+				return emit(c, nil, "Unmounted "+p.Mountdir)
+			}},
 			{
 				Name:  "status",
 				Usage: "Show status of all storage pools",
@@ -79,6 +129,21 @@ func storageCmd() *cli.Command {
 			},
 		},
 	}
+}
+
+// findPartition is the listed partition with that device path, UUID or
+// mountpoint.
+func findPartition(c *cli.Context, ref string) (storage.Partition, error) {
+	st, err := call[storage.StorageStatus](c.Context, http.MethodGet, "/storage", nil)
+	if err != nil {
+		return storage.Partition{}, err
+	}
+	for _, p := range st.Partitions {
+		if ref == p.Path || ref == p.Uuid || (p.Mountdir != "" && ref == p.Mountdir) {
+			return p, nil
+		}
+	}
+	return storage.Partition{}, fmt.Errorf("no partition %s: see homelab storage partitions", ref)
 }
 
 func printStorageStatus(c *cli.Context, st *storage.StorageStatus) error {

@@ -154,8 +154,12 @@ _Avoid_: config copy, cache
 A bcachefs storage pool recorded by the daemon, including whether it is auto-mounted at boot; owned by the database, not Nix.
 _Avoid_: array, volume
 
+**Partition**:
+A file system that is not a pool, mounted by the daemon under `/var/mnt` by a name and remembered by its UUID: a partition of a disk, or a whole disk formatted without a table. It is on one disk and has no parity.
+_Avoid_: volume, mount, drive
+
 **Browse root**:
-A folder the dashboard's file browser may list: a subvolume, or a host folder bound into a stack. Above a browse root the browser shows only the folders that lead to one; nothing else on the host is listed.
+A folder the dashboard's file browser may list: a subvolume, a mounted partition, or a host folder bound into a stack. Above a browse root the browser shows only the folders that lead to one; nothing else on the host is listed.
 _Avoid_: share, mount
 
 ### Alerting

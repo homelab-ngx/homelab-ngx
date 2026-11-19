@@ -3819,6 +3819,103 @@
         ],
         "type": "object"
       },
+      "Partition": {
+        "additionalProperties": false,
+        "properties": {
+          "auto_mount": {
+            "type": "boolean"
+          },
+          "disk": {
+            "description": "The model of the disk it is on, or that disk's name.",
+            "type": "string"
+          },
+          "fstype": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "mount_name": {
+            "description": "The name it mounts under when none is given: the one it had before, or its label's.",
+            "type": "string"
+          },
+          "mountdir": {
+            "type": "string"
+          },
+          "path": {
+            "description": "The device, such as /dev/sdb1.",
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "mounted",
+              "unmounted"
+            ],
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/PartitionUsage",
+            "description": "While mounted."
+          },
+          "uuid": {
+            "description": "The file system's UUID.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "auto_mount",
+          "disk",
+          "fstype",
+          "label",
+          "mountdir",
+          "mount_name",
+          "path",
+          "read_only",
+          "size",
+          "state",
+          "uuid"
+        ],
+        "type": "object"
+      },
+      "PartitionMountRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "description": "It mounts at /var/mnt/\u003cname\u003e. Empty is the name it had before, or its label's.",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}$",
+            "type": "string"
+          },
+          "read_only": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
+      "PartitionUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "free": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "free",
+          "total"
+        ],
+        "type": "object"
+      },
       "PasswordInBody": {
         "additionalProperties": false,
         "properties": {
@@ -5699,6 +5796,13 @@
       "StorageStatus": {
         "additionalProperties": false,
         "properties": {
+          "partitions": {
+            "description": "File systems that are not a pool: the ones the daemon mounted, and the ones it can mount.",
+            "items": {
+              "$ref": "#/components/schemas/Partition"
+            },
+            "type": "array"
+          },
           "pools": {
             "items": {
               "$ref": "#/components/schemas/Pool"
@@ -5721,7 +5825,8 @@
         "required": [
           "pools",
           "subvolumes",
-          "unassigned"
+          "unassigned",
+          "partitions"
         ],
         "type": "object"
       },
@@ -18452,6 +18557,213 @@
           }
         },
         "summary": "Mount a bcachefs pool and remember it for auto-mount.",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
+    "/storage/partitions/{uuid}": {
+      "patch": {
+        "operationId": "updatePartition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoolPatch"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Change whether a partition is mounted automatically at boot.",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
+    "/storage/partitions/{uuid}/mount": {
+      "post": {
+        "description": "`409 name_taken` when a pool or another partition has the name, `409 partition_state` when it is mounted.",
+        "operationId": "mountPartition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PartitionMountRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Mount a partition under /var/mnt and remember it for the next boot.",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
+    "/storage/partitions/{uuid}/unmount": {
+      "post": {
+        "operationId": "unmountPartition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Unmount a partition and stop mounting it at boot.",
         "tags": [
           "storage"
         ]

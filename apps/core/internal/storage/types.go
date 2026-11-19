@@ -94,6 +94,36 @@ type StorageStatus struct {
 	Pools      []Pool      `json:"pools"`
 	Subvolumes []Subvolume `json:"subvolumes"`
 	Unassigned []Disk      `json:"unassigned"`
+	Partitions []Partition `json:"partitions" doc:"File systems that are not a pool: the ones the daemon mounted, and the ones it can mount."`
+}
+
+// Partition is a file system that is not a bcachefs pool: a partition of a
+// disk, or a whole disk formatted without a table.
+type Partition struct {
+	AutoMount bool            `json:"auto_mount"`
+	Disk      string          `json:"disk" doc:"The model of the disk it is on, or that disk's name."`
+	Fstype    string          `json:"fstype"`
+	Label     string          `json:"label"`
+	Mountdir  string          `json:"mountdir"`
+	MountName string          `json:"mount_name" doc:"The name it mounts under when none is given: the one it had before, or its label's."`
+	Path      string          `json:"path" doc:"The device, such as /dev/sdb1."`
+	ReadOnly  bool            `json:"read_only"`
+	Size      int64           `json:"size"`
+	State     PoolState       `json:"state" enum:"mounted,unmounted"`
+	Usage     *PartitionUsage `json:"usage,omitempty" doc:"While mounted."`
+	Uuid      string          `json:"uuid" doc:"The file system's UUID."`
+}
+
+// PartitionUsage is a mounted partition's room, in bytes.
+type PartitionUsage struct {
+	Free  int64 `json:"free"`
+	Total int64 `json:"total"`
+}
+
+// PartitionMountRequest mounts a partition.
+type PartitionMountRequest struct {
+	Name     string `json:"name,omitempty" pattern:"^[a-z0-9][a-z0-9-]{0,30}$" doc:"It mounts at /var/mnt/<name>. Empty is the name it had before, or its label's."`
+	ReadOnly bool   `json:"read_only,omitempty"`
 }
 
 // MountRequest mounts a pool from its devices.
