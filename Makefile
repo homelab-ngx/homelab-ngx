@@ -22,7 +22,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .ONESHELL:
 .DEFAULT_GOAL := help
-.PHONY: help gen gen-check verify verify-changed daemon-test runner-test dashboard-test dashboard-deps nix-check image image-check
+.PHONY: help gen gen-check verify verify-changed daemon-test runner-test dashboard-test dashboard-deps nix-check image image-check image-variant
 
 PKG ?= ./...
 BASE ?= HEAD
@@ -39,6 +39,7 @@ help:
 	make dashboard-deps    npm ci in apps/dashboard (after package-lock.json changes)
 	make nix-check         nix fmt --fail-on-change, nix flake check --no-build
 	make image             build the image host (mkosi) and the core extension into image/out  [VERSION=]
+	make image-variant     a second version copied from a built one, for image-check's fall back  [FROM= VERSION=]
 	make image-check       boot the built image in a VM: pool, a stack, install onto a second disk
 	make gen               regenerate sqlc, the daemon's OpenAPI document and the dashboard's schema
 	make gen-check         gen, then fail if generated code differs from what is committed
@@ -134,6 +135,7 @@ verify: gen-check
 
 # The image host (#95). Its tools (mkosi, QEMU) live in the image shell.
 VERSION ?=
+FROM ?=
 KEEP ?=
 BUILD ?=
 CPUS ?=
@@ -151,6 +153,9 @@ core_host_guard = @if [ -z "$(ON_HOST)" ] && [ ! -e $(build_machine_marker) ] &&
 image:
 	$(core_host_guard)
 	nix develop .#image -c image/build.sh $(VERSION)
+
+image-variant:
+	nix develop .#image -c image/variant.sh $(FROM) $(VERSION)
 
 image-check:
 	$(core_host_guard)

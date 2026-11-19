@@ -1,10 +1,11 @@
 # The full image check (image/check.sh, all its steps): the newest release
 # from the release server boots, updates to a build of this commit, and a
-# third, broken build falls back by itself. A release (release.yml) boots its
-# own version alone and leaves these steps to this workflow. Run it by hand
-# (Actions > image check > Run workflow) on main before tagging a release,
-# unless the build machine passed the full check on the same commit
-# (CONTRIBUTING.md, Releasing). It also runs twice a week on main.
+# third, broken version (a copy of that build) falls back by itself. A
+# release (release.yml) boots its own version alone and leaves these steps to
+# this workflow. Run it by hand (Actions > image check > Run workflow) on main
+# before tagging a release, unless the build machine passed the full check on
+# the same commit (CONTRIBUTING.md, Releasing). It also runs twice a week on
+# main.
 #
 # It signs SHA256SUMS with the release key and authorizes the B2 key, so a
 # release's credentials are proven too, and publishes nothing.
@@ -46,7 +47,7 @@ jobs:
 
       # As image/build.sh names a build of main: the newest tag and the
       # commit time, so it sorts after the release it updates from. The
-      # broken build sorts after it.
+      # broken version sorts after it.
       - name: Version
         run: |
           base=$(git tag -l --sort=-v:refname | awk '!f && /^v[0-9]+\.[0-9]+\.[0-9]+$/ { sub(/^v/, ""); print; f = 1 }')
@@ -96,8 +97,10 @@ jobs:
       - name: make image
         run: make image VERSION="$VERSION"
 
-      - name: make image (broken by the check)
-        run: make image VERSION="$BROKEN"
+      # The check only installs and breaks this one: a copy of the build
+      # with a root hash of its own (image/variant.sh), not a second build.
+      - name: make image-variant (broken by the check)
+        run: make image-variant FROM="$VERSION" VERSION="$BROKEN"
 
       - name: make image-check
         run: make image-check

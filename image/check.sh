@@ -37,27 +37,31 @@
 #  12. with BUILD=1: the host builds an update from main itself
 #  13. the free-space install boots alone, next to the other system's files
 #  14. an erased disk whose boot loader goes on another disk's ESP boots
-#      with that ESP at /boot and Windows in its boot menu
-#  15. it boots the same with the stick left in: nothing of the stick's is
-#      used, and nobody is logged in on a console
+#      with that ESP at /boot and Windows in its boot menu, the stick left in
+#  15. on that boot nothing of the stick's is used, and nobody is logged in
+#      on a console
 #  16. the stick boots next to it on a machine without a firmware UUID,
 #      installs over it, and restarts from the page into the new system with
 #      the stick still in
 #  17. that system has the same machine ID on its next boot; every install
-#      of the run has its own
-#  18. it boots with its disk behind VMware's paravirtual SCSI controller, a
-#      MegaRAID and USB UAS (the boot loader on a virtio disk, which the
-#      firmware can read): the initrd has the storage drivers the image
-#      names besides mkosi's defaults
+#      of the run has its own. The boot has the disk behind VMware's
+#      paravirtual SCSI controller (the boot loader on a virtio disk, which
+#      the firmware can read)
+#  18. it boots the same behind a MegaRAID and USB UAS: the initrd has the
+#      storage drivers the image names besides mkosi's defaults
 # The firmware's variables last the whole run, as on a real machine, so the
 # boot entries the installs register are used. Where the stick has to start
 # next to an installed disk (steps 3 and 16) the firmware is told to try it
 # first, like a machine set to start from USB.
-# Steps 9-10 need two versions in image/out and step 11 three:
-#   make image VERSION=0.0.1 && make image VERSION=0.0.2 && make image VERSION=0.0.3
-# Run inside the image shell (`make image-check`). Leaves image/out/vm;
-# KEEP=1 leaves the VM running when a step fails. CPUS and MEM (MiB) size the
-# VM: by default a small host's 4 CPUs and 4 GB, 6 GB with BUILD=1.
+# Steps 9-10 need two versions in image/out and step 11 three. The third is
+# only installed and broken, so a copy of the second does (image/variant.sh):
+#   make image VERSION=0.0.1 && make image VERSION=0.0.2 && make image-variant FROM=0.0.2 VERSION=0.0.3
+# Run inside the image shell (`make image-check`). Each VM disk is deleted
+# after the last step that uses it, and a guest's discards free its file's
+# blocks: a hosted runner has little room. A run that passes leaves the logs
+# in image/out/vm; one that fails leaves the disks it had too. KEEP=1 leaves
+# the VM running when a step fails. CPUS and MEM (MiB) size the VM: by
+# default a small host's 4 CPUs and 4 GB, 6 GB with BUILD=1.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
@@ -76,7 +80,24 @@ domain=check.example.com
 
 # step "N. what": a step's heading; scripts/run reads the progress line.
 steps=18
-step() { printf '\nprogress: %d%%\n▸ %s\n' "$(((${1%%.*} - 1) * 100 / steps))" "$*"; }
+step() {
+  roomused
+  printf '\nprogress: %d%%\n▸ %s\n' "$(((${1%%.*} - 1) * 100 / steps))" "$*"
+}
+# roomused: the most the VM's files have taken so far (MB, in $peak), read
+# at every step and before a disk is deleted.
+peak=0
+roomused() {
+  local now
+  now=$(du -sm "$vm" | cut -f1)
+  [ "$now" -le "$peak" ] || peak=$now
+}
+# drop NAME...: delete the disks no later step uses. The VM is off.
+drop() {
+  local d
+  roomused
+  for d in "$@"; do rm -f "$vm/$d.raw"; done
+}
 ok() { printf '  ✓ %s\n' "$*"; }
 die() {
   printf '  ✗ %s\n' "$*" >&2
@@ -143,6 +164,7 @@ fwuuid=9a0c1e2f-3b4d-4e5f-8a9b-0c1d2e3f4a5b
 # firmware has no driver for those, so it cannot start from such a disk.
 # (QEMU's MegaRAID fails writes that force unit access, so that disk says it
 # has no FUA. Its LSI SAS controller shows Linux no disk at all.)
+# A discard in the guest (an install erasing a disk) frees the file's blocks.
 # The firmware starts what its own boot order says, as the installs left it.
 # With --order it tries the disks in the order given instead, like a machine
 # set to start from USB first. Every disk is in that order: OVMF deletes the
@@ -173,9 +195,9 @@ boot() {
     esac
     [ -n "$first" ] || first=$d
     if [ -z "$order" ] && [ "$dev" = virtio-blk-pci ]; then
-      disks+=(-drive "if=virtio,format=raw,file=$d,cache=unsafe")
+      disks+=(-drive "if=virtio,format=raw,file=$d,cache=unsafe,discard=unmap,detect-zeroes=unmap")
     else
-      disks+=(-drive "if=none,id=disk$n,format=raw,file=$d,cache=unsafe" -device "$dev,drive=disk$n${order:+,bootindex=$n}")
+      disks+=(-drive "if=none,id=disk$n,format=raw,file=$d,cache=unsafe,discard=unmap,detect-zeroes=unmap" -device "$dev,drive=disk$n${order:+,bootindex=$n}")
     fi
     n=$((n + 1))
   done
@@ -519,6 +541,7 @@ step "2. install into the free space next to the other system"
 # The large free region after the NTFS partition, not the 2 GB gap before it.
 region=$(jq -r '.disks[] | select(.name == "vdc") | .free | max_by(.size) | .start' <<<"$st")
 install vdc false beside '{"mode":"static","address":"10.0.2.15/24","gateway":"10.0.2.2","dns":["10.0.2.3"]}' "" "$region"
+drop small
 ntfs=$(sfdisk -J "$vm/beside.raw" | jq '.partitiontable.partitions[] | select(.type == "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7") | .start')
 ingap=$(sfdisk -J "$vm/beside.raw" | jq --argjson n "$ntfs" '[.partitiontable.partitions[] | select(.start > 2048 and .start < $n)] | length')
 [ "$ingap" = 0 ] || die "$ingap new partitions went into the gap before the other system's: $(sfdisk -d "$vm/beside.raw")"
@@ -798,6 +821,7 @@ fi
 
 step "13. the free-space install boots alone, beside the other system"
 stop
+drop disk pool1 pool2
 boot "$vm/beside.raw"
 booted "$version"
 runs_from vda
@@ -813,9 +837,12 @@ ok "boots alone with its static address, as the menu's default next to Windows B
 
 step "14. a blank disk whose boot loader goes on another disk's ESP"
 stop
+drop beside
 boot "$vm/stick.raw" "$vm/sys.raw" "$vm/win2.raw"
 install vdb true crossdisk "" vdc1
-boot "$vm/sys.raw" "$vm/win2.raw"
+# The stick stays in, now as a USB stick. The firmware's boot order has the
+# install first, as the installer left it.
+boot "$vm/sys.raw" "$vm/win2.raw" "usb:$vm/stick.raw"
 booted "$version"
 runs_from vda vdb
 ownid
@@ -829,13 +856,8 @@ vssh 'bootctl list' | grep -B1 'id: homelab_' | grep -q '(default)' || die "the 
 [ "$(espfiles /dev/vdb1)" = "WINDOWS-BOOTMGR WINDOWS-FALLBACK " ] || die "the other system's loaders changed: $(espfiles /dev/vdb1)"
 ok "boots from the other disk's ESP, mounted at /boot; Windows in its menu, its loaders untouched"
 
-step "15. that install boots with the stick left in"
-# The firmware's boot order has the install first, as the installer left it.
-stop
-boot "$vm/sys.raw" "$vm/win2.raw" "usb:$vm/stick.raw"
-booted "$version"
+step "15. that boot had the stick left in"
 [ -n "$(stickname)" ] || die "the stick is not among the VM's disks"
-runs_from vda vdb
 for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
 [ "$(api http://x/api/installer | jq -r .active)" = false ] || die "the installed host runs the installer with the stick in"
 [ "$(vssh cat /proc/sys/kernel/hostname)" = crossdisk ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
@@ -849,6 +871,7 @@ step "16. the stick boots next to that install, installs over it and restarts in
 # A machine set to start from USB first, and without a firmware UUID. The
 # other disk and its ESP are away: the new install brings its own.
 stop
+drop win2
 boot --order --no-uuid "usb:$vm/stick.raw" "$vm/sys.raw"
 booted "$version"
 stick=$(stickname)
@@ -886,34 +909,50 @@ ok "the stick ($stick) ran from itself and offered the installed disk; after the
 step "17. the machine ID without a firmware UUID, and one for every install"
 ownid
 stop
-boot --no-uuid "$vm/sys.raw"
-booted "$version"
-[ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "the machine ID changed over a boot: $(vssh 'cat /etc/machine-id'), was $id"
-[ "$(vssh 'cat /var/lib/homelab/machine-id')" = "$id" ] || die "the machine ID on /var changed over a boot"
-ok "the same on the next boot; $(wc -w <<<"$ids") installs, each with its own"
-
-step "18. the system boots with its disk behind other controllers"
-# A version before the drivers were named cannot: its disk would not be found.
+drop stick
+# With the storage drivers in its initrd (a version before the image named
+# them has not), the system also has to start with its disk behind other
+# controllers. The VM's firmware reads none of them, so the boot loader and
+# kernel start from a copy of the system's ESP on a virtio disk; the initrd
+# then has to find the root, /var and /nix behind the controller. This boot
+# is the first of them.
+ctl() {
+  boot --order --no-uuid "$vm/esp.raw" "$1:$vm/sys.raw"
+  booted "$version"
+  runs_from sda vda
+}
+drivers=
 if grep -aq 'kernel/drivers/scsi/vmw_pvscsi\.ko' "$out/homelab_$version.efi"; then
-  # The VM's firmware reads none of these controllers, so the boot loader
-  # and kernel start from a copy of the system's ESP on a virtio disk; the
-  # initrd then has to find the root, /var and /nix behind the controller.
+  drivers=", its disk behind VMware's paravirtual SCSI"
   read -r espstart espsize < <(sfdisk -J "$vm/sys.raw" |
     jq -r '.partitiontable.partitions[] | select(.type == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B") | "\(.start) \(.size)"')
   qemu-img create -q -f raw "$vm/esp.raw" $(((espsize + 4096) * 512))
   printf 'label: gpt\n2048,%s,U\n' "$espsize" | sfdisk -q "$vm/esp.raw"
   dd if="$vm/sys.raw" of="$vm/esp.raw" bs=512 skip="$espstart" seek=2048 count="$espsize" conv=notrunc,sparse status=none
-  for c in pvscsi megasas uas; do
+  ctl pvscsi
+else
+  boot --no-uuid "$vm/sys.raw"
+  booted "$version"
+fi
+[ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "the machine ID changed over a boot: $(vssh 'cat /etc/machine-id'), was $id"
+[ "$(vssh 'cat /var/lib/homelab/machine-id')" = "$id" ] || die "the machine ID on /var changed over a boot"
+vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
+ok "the same on the next boot$drivers; $(wc -w <<<"$ids") installs, each with its own"
+
+step "18. the system boots with its disk behind other controllers"
+if [ -n "$drivers" ]; then
+  for c in megasas uas; do
     stop
-    boot --order --no-uuid "$vm/esp.raw" "$c:$vm/sys.raw"
-    booted "$version"
-    runs_from sda vda
+    ctl "$c"
     [ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "behind $c another system booted"
     vssh 'systemctl --failed --no-legend' | grep . && die "failed units behind $c" || true
   done
-  ok "the same system with its disk behind VMware's paravirtual SCSI, a MegaRAID and USB UAS"
+  ok "the same system with its disk behind a MegaRAID and USB UAS"
 else
   ok "skipped: $version is from before the image named its storage drivers"
 fi
 
-printf '\nimage-check passed: %s%s%s\n' "$version" "${next:+ → $next}" "${broken:+, fell back from $broken}"
+# A run that passed needs none of its disks.
+stop
+drop sys esp
+printf '\nimage-check passed: %s%s%s (the disks of the VM took at most %d MB)\n' "$version" "${next:+ → $next}" "${broken:+, fell back from $broken}" "$peak"

@@ -89,7 +89,9 @@ So before you tag, the full check must have passed on the commit you tag.
 Run it one of two ways:
 
 - on the build machine: `scripts/builder image-check`, with three versions
-  in its `image/out` (see `image/check.sh`);
+  in its `image/out` (see `image/check.sh`). The third is only installed and
+  broken, so `make image-variant FROM=<second> VERSION=<third>` copies it
+  from the second in seconds;
 - in Actions: **image check** > Run workflow, on main. It updates from the
   newest published release, and publishes nothing.
 

@@ -24,14 +24,23 @@ outputs:
 runs:
   using: composite
   steps:
-    # The runner image carries ~30 GB of toolchains this build never uses;
-    # the build and the check need ~28 GB.
+    # The runner image carries toolchains this build never uses: Android's
+    # SDK, the tool cache (CodeQL, Go, Python, Node, Java), Haskell, .NET,
+    # Swift, the browsers, the cloud CLIs and its Docker images. Deleted side
+    # by side; what is not there on a newer runner image is skipped.
     - name: Free disk
       shell: bash
       run: |
-        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-        sudo docker image prune -af >/dev/null 2>&1 || true
-        df -h /
+        df -h / | tail -1
+        for d in /usr/local/lib/android /opt/hostedtoolcache /usr/local/.ghcup /opt/ghc /usr/share/dotnet \
+          /usr/share/swift /usr/local/share/powershell /usr/local/share/boost /usr/local/share/chromium \
+          /opt/google /opt/microsoft /opt/az /usr/lib/google-cloud-sdk /usr/lib/jvm /usr/share/miniconda \
+          /usr/local/julia* /home/linuxbrew; do
+          sudo rm -rf "$d" &
+        done
+        sudo docker system prune -af --volumes >/dev/null 2>&1 &
+        wait
+        df -h / | tail -1
 
     - name: KVM and systemd-nspawn
       shell: bash
