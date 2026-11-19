@@ -685,6 +685,8 @@ else
   api -X POST http://x/api/storage/mount -d "'{\"devices\":[\"/dev/vdb\",\"/dev/vdc\"],\"mountpoint\":\"/pool\"}'" >/dev/null || die "mount refused"
   vssh 'findmnt -no FSTYPE /pool' | grep -q bcachefs || die "/pool is not mounted"
 fi
+ok "pool mounted at $pool ($(vssh 'bcachefs version'))$guarded"
+
 # A partition: a file system that is not a pool (vdd, formatted here). Only
 # it is offered, not the ESP, the root slots, /var or the pool's disks; it
 # mounts under its label's name, and is remembered for the next boot.
