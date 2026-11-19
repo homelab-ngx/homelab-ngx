@@ -105,6 +105,14 @@ Run it one of two ways:
 The image check workflow also runs on main twice a week. Those runs fill
 the build caches a release reads.
 
+When a release run fails, run it again with **Re-run failed jobs**; never
+move the tag or take the next number for a failure of the run itself. The
+`release` job builds, checks and uploads the version, and `announce` lists
+it, writes the GitHub Release and moves the installer link. Once the version
+is uploaded only `announce` runs again, and each of its steps can run twice.
+To announce an uploaded version outside its run, start the workflow by hand
+with the version.
+
 ## Knowledge
 
 `docs/solutions/` explains:
