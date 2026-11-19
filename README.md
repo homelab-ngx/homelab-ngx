@@ -40,16 +40,19 @@ on its own. A dashboard and a CLI manage both.
 
 ## Install
 
-1. Build the image (below), or download a release once there is one.
-2. Write `homelab_VERSION.raw` to a USB stick of 8 GB or more and boot from it.
+1. Download a release's installer, `homelab-ngx_VERSION.img`, once there is
+   one, or build the image (below), which makes
+   `image/out/homelab_VERSION.raw`.
+2. Write that file to a USB stick of 8 GB or more and boot from it.
 3. Open the address the console prints, from another device on the same
    network. Pick a blank disk or a free region, set the host name, time zone,
    SSH keys and network, and install.
-   With a screen and keyboard on the host, the stick also gives you a root
-   shell there, without a password, to look around before installing. The
-   installed host asks for a login.
-4. Remove the stick and reboot. The host answers at `<hostname>.local`. The
-   first visit to the dashboard sets its password, so make it soon after the
+   With a screen and keyboard on the host, or its first serial port, the
+   stick also gives you a root shell there, without a password, to look
+   around before installing. The installed host asks for a login.
+4. Restart from the page; the stick can stay in until the host is up. Or
+   turn the host off there, remove the stick and start it. The host answers
+   at `<hostname>.local`. The first visit to the dashboard sets its password, so make it soon after the
    install. Then set up the rest in the dashboard: the domain, a storage pool,
    notifications, remote access and stacks. A forgotten password is removed
    on the host with `homelab auth reset`.
