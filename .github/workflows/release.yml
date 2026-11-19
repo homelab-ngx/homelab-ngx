@@ -3,6 +3,12 @@
 # The GitHub Release holds only the notes. (#2; the hosted runner was proven by
 # the image spike, run 44339328373.)
 #
+# The check here boots this version alone: the installer, the installs and the
+# installed disk (image/check.sh steps 1-8, 13, 14). The update from the
+# release before and the fall back from a broken image (steps 9-11) are in
+# image-check.yml, run by hand and twice a week; while no host runs the image
+# a release does not wait for them.
+#
 # Layout on RELEASE_URL (https://dl.homelab-ngx.com):
 #   /<version>/homelab-ngx_<version>.img          installer (the whole disk)
 #   /<version>/homelab_<version>.efi              UKI          } an image update
@@ -41,7 +47,7 @@ env:
 jobs:
   release:
     runs-on: ubuntu-latest
-    timeout-minutes: 300
+    timeout-minutes: 120
     permissions:
       contents: write # the GitHub Release
     steps:
@@ -51,20 +57,11 @@ jobs:
 
       - name: Version
         run: |
-          if [ "$GITHUB_REF_TYPE" = tag ]; then
-            v=${GITHUB_REF_NAME#v}
-            [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag $GITHUB_REF_NAME is not vX.Y.Z"; exit 1; }
-            git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
-            echo "DRY_RUN=" >> "$GITHUB_ENV"
-          else
-            v=0.0.$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M)
-            echo "DRY_RUN=1" >> "$GITHUB_ENV"
-          fi
-          # image-check breaks the newest of its three versions on purpose: a
-          # throwaway build above this one, never published.
+          v=${GITHUB_REF_NAME#v}
+          [[ $v =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::tag $GITHUB_REF_NAME is not vX.Y.Z"; exit 1; }
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
           echo "VERSION=$v" >> "$GITHUB_ENV"
-          echo "BROKEN=$v.1" >> "$GITHUB_ENV"
-          echo "release $v (ref $GITHUB_REF_TYPE $GITHUB_REF_NAME)"
+          echo "release $v"
 
       - name: Not published yet
         run: |
@@ -79,55 +76,10 @@ jobs:
           gpg --batch --with-colons --list-secret-keys | awk -F: '/^fpr/{print $10; exit}' | grep -qx "$SIGNING_PRIMARY" ||
             { echo "::error::RELEASE_SIGNING_KEY is not a subkey of $SIGNING_PRIMARY"; exit 1; }
 
-      # The runner image carries ~30 GB of toolchains this build never uses;
-      # the build and the check need ~28 GB.
-      - name: Free disk
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/boost
-          sudo docker image prune -af >/dev/null 2>&1 || true
-          df -h /
-
-      - name: KVM and systemd-nspawn
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
-          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
-          sudo apt-get update -qq && sudo apt-get install -y -qq systemd-container >/dev/null
-
-      - uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            experimental-features = nix-command flakes
-
-      # The version before this one, from the release server: the check boots
-      # it and updates to this release, the path real hosts take. Before the
-      # first release there is none, and a 0.0.0 build stands in.
-      - name: Previous release
-        run: |
-          prev=$(curl -fsS "$RELEASE_URL/latest?t=$(date +%s)" 2>/dev/null || true)
-          if [ -z "$prev" ]; then
-            echo "no release yet: building 0.0.0 as the version before"
-            make image VERSION=0.0.0
-            exit 0
-          fi
-          echo "previous release $prev"
-          d=$RUNNER_TEMP/prev && mkdir -p "$d/core" && cd "$d"
-          curl -fsSO "$RELEASE_URL/$prev/SHA256SUMS" && curl -fsSO "$RELEASE_URL/$prev/SHA256SUMS.gpg"
-          gpg --batch --verify SHA256SUMS.gpg SHA256SUMS
-          awk '{print $2}' SHA256SUMS | while read -r f; do curl -fsS -o "$f" "$RELEASE_URL/$prev/$f"; done
-          sha256sum -c --quiet SHA256SUMS
-          mkdir -p "$GITHUB_WORKSPACE/image/out/core"
-          cp homelab_"$prev".* "$GITHUB_WORKSPACE/image/out/"
-          cp core/homelab-core_"$prev".raw "$GITHUB_WORKSPACE/image/out/core/"
-          # The installer is published as homelab-ngx_<v>.img (0.1.0 and
-          # before: homelab_<v>.raw, copied above); the check boots it as the
-          # build names it.
-          [ ! -e homelab-ngx_"$prev".img ] || cp homelab-ngx_"$prev".img "$GITHUB_WORKSPACE/image/out/homelab_$prev.raw"
+      - uses: ./.github/actions/image-env
 
       - name: make image
         run: make image VERSION="$VERSION"
-
-      - name: make image (throwaway, broken by the check)
-        run: make image VERSION="$BROKEN"
 
       - name: make image-check
         run: make image-check
@@ -148,7 +100,6 @@ jobs:
       # The version's files first, SHA256SUMS(.gpg) after them, then /versions
       # and /latest once the files download and verify through the CDN.
       - name: Publish
-        if: env.DRY_RUN == ''
         env:
           B2_APPLICATION_KEY_ID: ${{ secrets.RELEASE_B2_KEY_ID }}
           B2_APPLICATION_KEY: ${{ secrets.RELEASE_B2_KEY }}
@@ -176,7 +127,6 @@ jobs:
           uptext latest latest
 
       - name: GitHub Release
-        if: env.DRY_RUN == ''
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -192,7 +142,6 @@ jobs:
       # the files are published, so the link never points at a missing one.
       # Last: a failure here leaves the release itself published.
       - name: Installer link
-        if: env.DRY_RUN == ''
         env:
           CF_TOKEN: ${{ secrets.RELEASE_CLOUDFLARE_TOKEN }}
           INSTALLER_REDIRECT: ${{ vars.INSTALLER_REDIRECT }}
@@ -213,14 +162,3 @@ jobs:
             sleep 5
           done
           echo "::error::$RELEASE_URL/installer redirects to '$at', not $target"; exit 1
-
-      - name: Dry run
-        if: env.DRY_RUN != ''
-        env:
-          B2_APPLICATION_KEY_ID: ${{ secrets.RELEASE_B2_KEY_ID }}
-          B2_APPLICATION_KEY: ${{ secrets.RELEASE_B2_KEY }}
-        run: |
-          b2=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#backblaze-b2)/bin/backblaze-b2
-          $b2 account authorize >/dev/null && echo "B2 key authorizes"
-          $b2 bucket get "$RELEASE_B2_BUCKET" >/dev/null && echo "bucket $RELEASE_B2_BUCKET is visible to the key"
-          echo "dry run: $VERSION built, checked and signed; nothing published" | tee -a "$GITHUB_STEP_SUMMARY"

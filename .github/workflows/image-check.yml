@@ -1,0 +1,145 @@
+# The full image check (image/check.sh, all 14 steps): the newest release
+# from the release server boots, updates to a build of this commit, and a
+# third, broken build falls back by itself. A release (release.yml) boots its
+# own version alone and leaves these steps to this workflow. Run it by hand
+# (Actions > image check > Run workflow) after a change to booting, updates or
+# fall back; it also runs twice a week on main.
+#
+# It signs SHA256SUMS with the release key and authorizes the B2 key, so a
+# release's credentials are proven too, and publishes nothing.
+#
+# Its runs on main fill the build caches every release reads
+# (.github/actions/image-env): a cache saved on a tag is seen by that tag
+# alone.
+name: image check
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * 1,4'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-check
+  cancel-in-progress: false
+
+env:
+  # Primary key the signing subkey must belong to (homelab-ngx/infra keys/).
+  SIGNING_PRIMARY: 74BE38EB9E1F070C2AF87E4481D74B7E90B6ADB0
+  RELEASE_URL: ${{ vars.RELEASE_URL }}
+  RELEASE_B2_BUCKET: ${{ vars.RELEASE_B2_BUCKET }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: write # purge the Nix caches the new one replaces
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # As image/build.sh names a build of main: the newest tag and the
+      # commit time, so it sorts after the release it updates from. The
+      # broken build sorts after it.
+      - name: Version
+        run: |
+          base=$(git tag -l --sort=-v:refname | awk '!f && /^v[0-9]+\.[0-9]+\.[0-9]+$/ { sub(/^v/, ""); print; f = 1 }')
+          v=${base:-0.0}.$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M)
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "BROKEN=$v.1" >> "$GITHUB_ENV"
+          echo "check $v (ref $GITHUB_REF_TYPE $GITHUB_REF_NAME)"
+
+      - name: Signing key
+        env:
+          RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
+        run: |
+          printf '%s\n' "$RELEASE_SIGNING_KEY" | gpg --batch --quiet --import
+          gpg --batch --with-colons --list-secret-keys | awk -F: '/^fpr/{print $10; exit}' | grep -qx "$SIGNING_PRIMARY" ||
+            { echo "::error::RELEASE_SIGNING_KEY is not a subkey of $SIGNING_PRIMARY"; exit 1; }
+
+      - uses: ./.github/actions/image-env
+        id: env
+        with:
+          save: ${{ github.ref == 'refs/heads/main' }}
+
+      # The version before this one, from the release server: the check boots
+      # it and updates to this build, the path real hosts take. Before the
+      # first release there is none, and a 0.0.0 build stands in.
+      - name: Previous release
+        run: |
+          prev=$(curl -fsS "$RELEASE_URL/latest?t=$(date +%s)" 2>/dev/null || true)
+          if [ -z "$prev" ]; then
+            echo "no release yet: building 0.0.0 as the version before"
+            make image VERSION=0.0.0
+            exit 0
+          fi
+          echo "previous release $prev"
+          d=$RUNNER_TEMP/prev && mkdir -p "$d/core" && cd "$d"
+          curl -fsSO "$RELEASE_URL/$prev/SHA256SUMS" && curl -fsSO "$RELEASE_URL/$prev/SHA256SUMS.gpg"
+          gpg --batch --verify SHA256SUMS.gpg SHA256SUMS
+          awk '{print $2}' SHA256SUMS | while read -r f; do curl -fsS -o "$f" "$RELEASE_URL/$prev/$f"; done
+          sha256sum -c --quiet SHA256SUMS
+          mkdir -p "$GITHUB_WORKSPACE/image/out/core"
+          cp homelab_"$prev".* "$GITHUB_WORKSPACE/image/out/"
+          cp core/homelab-core_"$prev".raw "$GITHUB_WORKSPACE/image/out/core/"
+          # The installer is published as homelab-ngx_<v>.img (0.1.0 and
+          # before: homelab_<v>.raw, copied above); the check boots it as the
+          # build names it.
+          [ ! -e homelab-ngx_"$prev".img ] || cp homelab-ngx_"$prev".img "$GITHUB_WORKSPACE/image/out/homelab_$prev.raw"
+
+      - name: make image
+        run: make image VERSION="$VERSION"
+
+      - name: make image (broken by the check)
+        run: make image VERSION="$BROKEN"
+
+      - name: make image-check
+        run: make image-check
+
+      - name: Sign
+        run: |
+          rel=$RUNNER_TEMP/release/$VERSION
+          mkdir -p "$rel/core"
+          cp image/out/homelab_"$VERSION".raw "$rel/homelab-ngx_$VERSION.img"
+          cp image/out/homelab_"$VERSION".efi image/out/homelab_"$VERSION".root*.raw "$rel/"
+          cp image/out/core/homelab-core_"$VERSION".raw "$rel/core/"
+          cd "$rel"
+          sha256sum homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw > SHA256SUMS
+          gpg --batch --detach-sign -o SHA256SUMS.gpg SHA256SUMS
+          gpg --batch --verify SHA256SUMS.gpg SHA256SUMS
+          { echo "## $VERSION"; echo '```'; ls -l . core; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: B2 key
+        env:
+          B2_APPLICATION_KEY_ID: ${{ secrets.RELEASE_B2_KEY_ID }}
+          B2_APPLICATION_KEY: ${{ secrets.RELEASE_B2_KEY }}
+        run: |
+          b2=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#backblaze-b2)/bin/backblaze-b2
+          $b2 account authorize >/dev/null && echo "B2 key authorizes"
+          $b2 bucket get "$RELEASE_B2_BUCKET" >/dev/null && echo "bucket $RELEASE_B2_BUCKET is visible to the key"
+          echo "image check: $VERSION built, checked and signed; nothing published" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The Nix store saves itself at the end of a green job (image-env).
+      # The image cache saves even when the check fails: it holds only the
+      # build root and packages, not the build.
+      - name: Pack the image cache
+        id: pack
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.env.outputs.image-cache-hit != 'true' }}
+        run: |
+          sudo test -e /var/cache/homelab-image/mkosi || { echo "no image cache to save"; exit 0; }
+          sudo tar --zstd --numeric-owner -cpf "$RUNNER_TEMP/homelab-image.tar.zst" -C /var/cache homelab-image
+          sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/homelab-image.tar.zst"
+          ls -lh "$RUNNER_TEMP/homelab-image.tar.zst"
+          echo "packed=1" >> "$GITHUB_OUTPUT"
+
+      - name: Save the image cache
+        if: ${{ !cancelled() && steps.pack.outputs.packed == '1' }}
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ runner.temp }}/homelab-image.tar.zst
+          key: ${{ steps.env.outputs.image-cache-key }}
