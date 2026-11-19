@@ -22,7 +22,7 @@ SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c
 .ONESHELL:
 .DEFAULT_GOAL := help
-.PHONY: help gen gen-check verify verify-changed daemon-test runner-test dashboard-test dashboard-deps nix-check image image-check image-variant
+.PHONY: help gen gen-check verify verify-changed daemon-test runner-test dashboard-test dashboard-deps nix-check image image-check image-variant screenshots
 
 PKG ?= ./...
 BASE ?= HEAD
@@ -37,6 +37,7 @@ help:
 	make runner-test       the backup runner (apps/backup-runner): gofmt, vet, go test -race, static build  [RUN=TestY]
 	make dashboard-test    svelte-check, vitest  [FILE=src/lib/x.test.ts, relative to apps/dashboard]
 	make dashboard-deps    npm ci in apps/dashboard (after package-lock.json changes)
+	make screenshots       the README's screenshots into docs/images, from a running host  [HOMELAB_URL= HOMELAB_PASSWORD= STACK= INSTALLER_URL= | PLACEHOLDERS=1]
 	make nix-check         nix fmt --fail-on-change, nix flake check --no-build
 	make image             build the image host (mkosi) and the core extension into image/out  [VERSION=]
 	make image-variant     a second version copied from a built one, for image-check's fall back  [FROM= VERSION=]
@@ -97,6 +98,13 @@ dashboard-test:
 dashboard-deps:
 	cd apps/dashboard
 	npm ci
+
+# The dashboard dev shell has the browser. The variables are read from the
+# environment (apps/dashboard/scripts/screenshots.mjs), so the password is in
+# no command line.
+export HOMELAB_PASSWORD STACK INSTALLER_URL PLACEHOLDERS
+screenshots:
+	nix develop .#dashboard -c node $(CURDIR)/apps/dashboard/scripts/screenshots.mjs
 
 nix-check:
 	nix fmt -- --fail-on-change

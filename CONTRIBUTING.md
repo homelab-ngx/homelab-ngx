@@ -145,6 +145,14 @@ area. The areas are `installer`, `image`, `updates`, `daemon`, `dashboard`,
 user never meets: `ci`, `image check`, `docs` and `CONTRIBUTING`. The notes
 fold that second group under "Upkeep".
 
+### Screenshots
+
+The README's screenshots are in `docs/images`, each page in a light and a
+dark file. `make screenshots HOMELAB_URL=... HOMELAB_PASSWORD=...` takes them
+from a running host (`apps/dashboard/scripts/screenshots.mjs` has the other
+variables). A screenshot shows the host's names and addresses, and the commit
+checks read text only, so look at each file before you commit it.
+
 ## Releasing
 
 A tag `vX.Y.Z` on main publishes a release (`.github/workflows/release.yml`).
