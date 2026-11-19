@@ -1,0 +1,11 @@
+[Unit]
+Description=Folder of the Nix store on /var
+# Started by nix.mount (system-generators/homelab-nix): a bind mount needs
+# its source, and a generator cannot make it (it runs read-only).
+DefaultDependencies=no
+RequiresMountsFor=/var
+Before=nix.mount
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/mkdir -p /var/nix

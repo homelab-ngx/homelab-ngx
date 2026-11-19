@@ -1,0 +1,54 @@
+#!/bin/sh
+# Mounts the Nix store at /nix. It lives on /var (/var/nix), so the store
+# and the host's data share the disk's room. A host installed before that
+# has a partition named nix on its disk, and keeps its store there.
+#
+# The partition is looked for on the disk /var is mounted from, by its
+# kernel name: /var is mounted in the initrd, and a /dev/disk link could
+# point at another disk with the same label (the installer medium).
+sys=${HOMELAB_SYS:-/sys}
+dir=$1
+
+part=
+src=${HOMELAB_VAR_SOURCE-$(findmnt -no SOURCE /var 2>/dev/null | tail -n1)}
+dev=${src##*/}
+if [ -n "$dev" ] && [ -e "$sys/class/block/$dev/partition" ]; then
+  disk=$(readlink -f "$sys/class/block/$dev/..")
+  for uevent in "$disk"/*/uevent; do
+    [ -r "$uevent" ] || continue
+    if grep -qx 'PARTNAME=nix' "$uevent"; then
+      part=${uevent%/uevent}
+      part=${part##*/}
+      break
+    fi
+  done
+fi
+
+if [ -n "$part" ]; then
+  fsck=$(systemd-escape --template=systemd-fsck@.service --path "/dev/$part")
+  cat >"$dir/nix.mount" <<UNIT
+[Unit]
+Description=Nix store (its own partition)
+Wants=$fsck
+After=$fsck
+[Mount]
+What=/dev/$part
+Where=/nix
+Type=ext4
+UNIT
+else
+  cat >"$dir/nix.mount" <<UNIT
+[Unit]
+Description=Nix store (on /var)
+RequiresMountsFor=/var
+Requires=homelab-nix-dir.service
+After=homelab-nix-dir.service
+[Mount]
+What=/var/nix
+Where=/nix
+Type=none
+Options=bind
+UNIT
+fi
+mkdir -p "$dir/local-fs.target.wants"
+ln -sf ../nix.mount "$dir/local-fs.target.wants/nix.mount"

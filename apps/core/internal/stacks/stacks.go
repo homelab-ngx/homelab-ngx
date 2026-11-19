@@ -79,6 +79,13 @@ type Service struct {
 	channels   []string
 	channelsAt time.Time
 
+	// statfs reads a file system's size and free space; a seam for tests.
+	statfs func(path string) (total, free uint64, err error)
+	// storeRec is what is known of the Nix store's size and its last
+	// collection (nixstore.go); guarded by storeMu.
+	storeMu  sync.Mutex
+	storeRec *storeRecord
+
 	// backupAdded hears of recommended backup folders a healthy install or
 	// update brought (OnBackupFoldersAdded); guarded by mu.
 	backupAdded func(ctx context.Context, stack string, keys []string)
@@ -93,7 +100,7 @@ func New(st *store.Store, src Source, host Host, notifier Notifier, log *slog.Lo
 		st: st, src: src, host: host, r: host.Runner, notifier: notifier, log: log, now: time.Now,
 		probe: httpProbe, healthTimeout: 5 * time.Minute, healthEvery: 3 * time.Second, monitorEvery: time.Minute,
 		ops: map[string]*operation{}, ctx: context.Background(),
-		statDir: isDir, timeZone: HostTimeZone, statOwner: statOwner,
+		statDir: isDir, timeZone: HostTimeZone, statOwner: statOwner, statfs: diskRoom,
 	}
 	s.resolveNixpkgs = func(ctx context.Context, spec string) (string, error) { return ResolveNixpkgs(ctx, s.r, spec) }
 	s.listChannels = func(ctx context.Context) ([]string, error) { return ListChannels(ctx, s.r) }
@@ -358,6 +365,10 @@ func (s *Service) Remove(ctx context.Context, name string) error {
 		_, err := q.DeleteStack(ctx, name)
 		return err
 	})
+	if err == nil {
+		// Its profile is gone: its systems are garbage now.
+		s.collectSoon()
+	}
 	if err != nil {
 		return err
 	}

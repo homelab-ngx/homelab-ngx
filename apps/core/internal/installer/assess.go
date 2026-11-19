@@ -9,9 +9,10 @@ const (
 	gib = uint64(1) << 30
 	mib = uint64(1) << 20
 	// MinBytes is the space an install needs: the minimums of the image's
-	// partition definitions (usr/lib/repart.sysinstall.d) add up to 58.4 GiB
-	// (ESP 0.3, two roots with their verity 8.1, /nix 16, /var 34), rounded
-	// up here. A disk sold as 64 GB has 59.6 GiB, so the page says 64 GB.
+	// partition definitions (usr/lib/repart.sysinstall.d) add up to 57.4 GiB
+	// (ESP 0.3, two roots with their verity 8.1, /var 49, the Nix store on
+	// it), with room to spare here. A disk sold as 64 GB has 59.6 GiB, so
+	// the page says 64 GB.
 	MinBytes = 59 * gib
 	// minESP is the smallest existing ESP an install shares: room for two
 	// kernels (A/B), as the ESP definition's SizeMinBytes says.

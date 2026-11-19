@@ -68,6 +68,9 @@ ORDER BY id DESC LIMIT 1;
 -- name: MarkStackGenerationFailed :exec
 UPDATE stack_generations SET failed = 1 WHERE stack = ? AND id = ?;
 
+-- name: DeleteStackGeneration :exec
+DELETE FROM stack_generations WHERE stack = ? AND id = ?;
+
 -- name: DeleteStackGenerations :exec
 DELETE FROM stack_generations WHERE stack = ?;
 

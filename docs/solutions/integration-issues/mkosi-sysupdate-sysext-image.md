@@ -86,7 +86,8 @@ A reload is not enough; restart it.
 ## One disk for the root, /var and /nix
 
 A UKI finds its root by the verity root hash, whose halves are the root and
-verity partitions' UUIDs; `/var` and `/nix` are mounted by partition label.
+verity partitions' UUIDs; `/var` is mounted by partition label, and `/nix`
+is a folder of it (see "The Nix store is on /var").
 The installer medium and a disk installed from it have the same labels and,
 at the same version, the same root and verity UUIDs, so with both attached
 every `/dev/disk/by-partuuid` and `by-partlabel` link has two claimants.
@@ -118,13 +119,41 @@ has the root, and never the installer medium when another disk has it.
   then for the root's link to point at the loader's disk, or, when that disk
   has no root (the boot loader on another disk's ESP), at a disk that is not
   the medium. It gives up after some seconds and never fails the boot.
-- **`/nix` is mounted in the initrd too** (`x-initrd.mount`), like `/var`.
-  udev's link database is emptied at switch-root, and a link can point at
-  the other disk for a moment while the main system's udev finds the disks
-  again.
+- **`/var` is mounted in the initrd** (`x-initrd.mount`). udev's link
+  database is emptied at switch-root, and a link can point at the other disk
+  for a moment while the main system's udev finds the disks again. What is
+  mounted from `/var`'s disk later (`/nix`) is found from the mounted `/var`,
+  not by a link.
 - **The installer runs repart with `--seed=random`.** The default seed is
-  the machine ID, so two disks installed on one machine got the same ESP,
-  `/var` and `/nix` partition UUIDs.
+  the machine ID, so two disks installed on one machine got the same ESP
+  and `/var` partition UUIDs.
+
+## The Nix store is on /var
+
+An install first gave the store a partition of its own, 16 to 32 GB, in
+front of `/var`. `/var` could not give it room, every stack pins its own
+nixpkgs, and nothing removed old systems, so a host with a few stacks filled
+it.
+
+- **New installs have no `nix` partition.** The store is `/var/nix`,
+  bind-mounted at `/nix` by a generator (`system-generators/homelab-nix`).
+  A host installed before keeps its partition: the generator looks for a
+  partition named `nix` on the disk `/var` is mounted from, in `/sys` and by
+  kernel name, and mounts that instead. A generator runs with a read-only
+  file system, so a unit (`homelab-nix-dir.service`) makes the folder.
+- **A stack keeps the generation it runs and two healthy ones before it.**
+  The rest leave its profile when an update, rollback or start ends; a
+  generation that failed its health check goes at once.
+- **The store's garbage is collected** two minutes after a stack was updated,
+  rolled back or removed, and when less than 8 GB are free (looked at once a
+  day; nix collects by itself during a build that leaves less than 4 GB,
+  `min-free` in `/etc/nix/nix.conf`).
+- **A collection and a build never overlap.** A build's result is in the
+  store before the stack's profile names it (`nix build --no-link`), and a
+  collection in between would delete it. Builds hold a gate together; a
+  collection waits for them and they wait for it.
+- **A collection also removes fetched sources**, nixpkgs among them: the
+  next build of a stack downloads its nixpkgs again.
 
 What is left: two installs of the same version on fixed disks, started by a
 boot loader on a third disk. Neither is the loader's disk or a medium, so
@@ -282,7 +311,7 @@ on 2026-11-18:
   definition with a 1 GB minimum makes repart grow a smaller existing ESP,
   which fails when another partition follows it ("can't fit"); the ESP
   definition takes 300 MB to 1 GB. A `linux-generic` definition would adopt
-  any Linux data partition on the disk, so `/nix` has its own type GUID, and
+  any Linux data partition on the disk, so `/nix` had its own type GUID, and
   the page refuses free space on a disk that already has root, verity or
   `/var`-typed partitions.
 - **The stick and the installed disk share partition UUIDs**: the root and

@@ -2,7 +2,7 @@
  * Query keys and fetchers shared by the pages. A mutation invalidates
  * `keys.all`, so every view of stacks and services reads again.
  */
-import { api, call, type AssistantLimits, type AssistantSettings, type Draft, type DraftSummary, type ServiceInfo, type Stack, type StackUpdate } from "./client";
+import { api, call, type AssistantLimits, type AssistantSettings, type Draft, type DraftSummary, type Schema, type ServiceInfo, type Stack, type StackUpdate } from "./client";
 
 export const keys = {
   all: ["daemon"] as const,
@@ -11,6 +11,7 @@ export const keys = {
   updates: (stack: string) => ["daemon", "stack-updates", stack] as const,
   update: (id: number) => ["daemon", "stack-update", id] as const,
   channels: ["daemon", "nixpkgs-channels"] as const,
+  nixStore: ["daemon", "nix-store"] as const,
   drafts: ["daemon", "drafts"] as const,
   assistant: ["daemon", "settings", "assistant"] as const,
   manifestSchema: ["daemon", "stacks", "manifest-schema"] as const,
@@ -24,6 +25,7 @@ export const fetchServices = () => call<ServiceInfo[]>(api.GET("/services"));
 export const fetchUpdates = (stack = "", limit = 50) =>
   call<StackUpdate[]>(api.GET("/stack-updates", { params: { query: { stack: stack || undefined, limit } } }));
 export const fetchChannels = () => call<{ channels: string[] }>(api.GET("/stacks-nixpkgs")).then((r) => r.channels);
+export const fetchNixStore = () => call<Schema<"NixStore">>(api.GET("/stacks-store"));
 export const fetchAssistant = () => call<AssistantSettings>(api.GET("/settings/assistant"));
 export const fetchAssistantLimits = () => call<AssistantLimits>(api.GET("/settings/assistant/limits"));
 export const fetchDrafts = () => call<DraftSummary[]>(api.GET("/drafts"));

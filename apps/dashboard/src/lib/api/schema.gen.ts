@@ -1290,6 +1290,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks-store": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The Nix store the stacks are built into: its size, the room on its disk and its last garbage collection. */
+        get: operations["getNixStore"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks-update": {
         parameters: {
             query?: never;
@@ -2957,6 +2974,42 @@ export interface components {
             ipv4?: components["schemas"]["IPv4"];
             /** @description The LAN's IPv4 subnets, such as 192.168.1.0/24: the clients a stack's port grant from lan lets through. */
             lan: string[];
+        };
+        NixStore: {
+            /**
+             * Format: date-time
+             * @description When garbage was last collected.
+             */
+            collected_at?: string;
+            /** @description A collection is running or about to. */
+            collecting: boolean;
+            /**
+             * Format: int64
+             * @description Free on the file system the store is on.
+             */
+            free_bytes: number;
+            /**
+             * Format: int64
+             * @description What that collection freed.
+             */
+            freed_bytes: number;
+            /**
+             * Format: date-time
+             * @description When used_bytes was measured.
+             */
+            measured_at?: string;
+            /** @description The store has a partition of its own (a host installed before the store moved to /var); otherwise it shares the host's data partition. */
+            own_partition: boolean;
+            /**
+             * Format: int64
+             * @description Size of the file system the store is on.
+             */
+            total_bytes: number;
+            /**
+             * Format: int64
+             * @description Size of the store; -1 until it is measured.
+             */
+            used_bytes: number;
         };
         NotificationDelivery: {
             /** Format: date-time */
@@ -9927,6 +9980,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StackNixpkgsChannels"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getNixStore: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NixStore"];
                 };
             };
             /** @description Error */

@@ -94,6 +94,9 @@ type FileBuild struct {
 // Run copies the files into the store, reads their manifest, writes the
 // daemon's wrapper flake and builds it. It returns the system's store path.
 func (b FileBuild) Run(ctx context.Context) (string, error) {
+	// No collection of the store's garbage while the copy of the files and
+	// the build are all that name their paths.
+	defer nixGate.hold()()
 	f, err := prefetch(ctx, b.Runner, b.Ref)
 	if err != nil {
 		return "", fmt.Errorf("copying the files: %w", err)

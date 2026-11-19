@@ -8,6 +8,7 @@
   import Modal from "#lib/components/Modal.svelte";
   import Pill from "#lib/components/Pill.svelte";
   import RowMenu from "#lib/components/RowMenu.svelte";
+  import SystemDisk from "#lib/components/SystemDisk.svelte";
   import { ago, bytes } from "#lib/format.ts";
   import { stackTitles } from "#lib/stacks.ts";
   import { browseHref, capacity, diskState, disksSummary, foldersOf, fullness, measuredAt, role, segments, usedBy } from "#lib/storage.ts";
@@ -370,6 +371,8 @@
     {/if}
   </section>
 {/if}
+
+<SystemDisk />
 
 {#if newSubvolume}
   {@const p = newSubvolume}

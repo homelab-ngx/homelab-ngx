@@ -73,6 +73,8 @@ type updateBody struct{ Body StackUpdate }
 
 type lockBody struct{ Body StackLock }
 
+type nixStoreBody struct{ Body NixStore }
+
 type restoreIn struct{ Body StackLock }
 
 type restoreBody struct{ Body StackRestoreResult }
@@ -139,6 +141,11 @@ func (h *HTTP) Register(a httpx.APIs) {
 				return nil, err
 			}
 			return &channelsBody{Body: StackNixpkgsChannels{Channels: c}}, nil
+		})
+	httpx.Register(a, httpx.ScopeRead, op("getNixStore", http.MethodGet, "/stacks-store",
+		"The Nix store the stacks are built into: its size, the room on its disk and its last garbage collection.", 0),
+		func(ctx context.Context, _ *struct{}) (*nixStoreBody, error) {
+			return &nixStoreBody{Body: h.svc.NixStore(ctx)}, nil
 		})
 	httpx.Register(a, httpx.ScopeRead, op("getManifestSchema", http.MethodGet, "/stacks-manifest-schema",
 		"The JSON Schema of homelab-stack.json, version 8, for editors. Check and an install stay the authority.", 0),

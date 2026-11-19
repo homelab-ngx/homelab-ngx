@@ -206,3 +206,30 @@ export function browseRows(entries: Entry[], figures?: FolderFigures | null, sor
     return (sort.desc ? -order : order) || a.name.localeCompare(b.name);
   });
 }
+
+/** The host's own disk on the Storage page: how full it is, and the Nix store's share of what is used. */
+export interface SystemDisk {
+  /** The store has a partition of its own; the figures are that partition's. */
+  own: boolean;
+  total: number;
+  used: number;
+  free: number;
+  percent: number;
+  parts: { label: string; bytes: number; percent: number; color: string }[];
+}
+
+export function systemDisk(s: Schema<"NixStore">): SystemDisk | null {
+  if (s.total_bytes <= 0) return null;
+  const total = s.total_bytes;
+  const used = Math.max(0, total - s.free_bytes);
+  const of = (n: number) => (n / total) * 100;
+  const store = s.used_bytes < 0 ? null : Math.min(s.used_bytes, used);
+  const parts =
+    s.own_partition || store === null
+      ? [{ label: s.own_partition ? "Nix store" : "Used", bytes: used, percent: of(used), color: "var(--series-1)" }]
+      : [
+          { label: "Nix store", bytes: store, percent: of(store), color: "var(--series-1)" },
+          { label: "Other", bytes: used - store, percent: of(used - store), color: "var(--muted)" },
+        ];
+  return { own: s.own_partition, total, used, free: s.free_bytes, percent: of(used), parts };
+}

@@ -294,6 +294,7 @@ func run(configPath string) error {
 			return nil
 		})
 		g.Go(func() error { stacksSvc.RunChecks(gctx); return nil })
+		g.Go(func() error { stacksSvc.WatchStore(gctx); return nil })
 		// Disk health and folder sizes; folders are only listed once mounted.
 		g.Go(func() error { stor.Run(gctx); return nil })
 		// Backups read the pools, so they wait for the mount.

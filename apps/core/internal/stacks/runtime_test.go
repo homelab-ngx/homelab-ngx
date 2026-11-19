@@ -137,9 +137,26 @@ func newFakeHost() *fakeHost {
 			h.current = len(h.gens)
 		case "--switch-generation":
 			fmt.Sscan(c.Args[3], &h.current)
+		case "--delete-generations":
+			// Like nix: a deleted generation's number is free again only
+			// when it was the newest.
+			for _, a := range c.Args[3:] {
+				var id int
+				fmt.Sscan(a, &id)
+				if id == h.current || id < 1 || id > len(h.gens) {
+					return fail(1, "error: cannot delete generation "+a)
+				}
+				h.gens[id-1] = ""
+			}
+			for n := len(h.gens); n > 0 && h.gens[n-1] == ""; n = len(h.gens) {
+				h.gens = h.gens[:n-1]
+			}
 		case "--list-generations":
 			var b strings.Builder
 			for i := range h.gens {
+				if h.gens[i] == "" {
+					continue
+				}
 				fmt.Fprintf(&b, "  %d   2026-11-15 22:00:00   ", i+1)
 				if i+1 == h.current {
 					b.WriteString("(current)")
@@ -428,8 +445,9 @@ func TestUpdateRollsBackAnUnhealthyGeneration(t *testing.T) {
 	if e := s.Operation.Error; !strings.Contains(e, "immich-server.service is failed") || !strings.Contains(e, "rolled back to generation 1") {
 		t.Errorf("operation error = %q", e)
 	}
-	if len(s.Generations) != 2 || !s.Generations[0].Failed || s.Generations[1].Failed {
-		t.Errorf("generations = %+v", s.Generations)
+	// The failed generation is gone from the stack and its profile.
+	if len(s.Generations) != 1 || s.Generations[0].Id != 1 || len(h.gens) != 1 {
+		t.Errorf("generations = %+v, profile = %v", s.Generations, h.gens)
 	}
 	if len(h.sent) != 1 || h.sent[0].Title != "Stack immich: update rolled back" || h.sent[0].Severity != notifications.Alert {
 		t.Errorf("notifications = %+v", h.sent)
@@ -439,8 +457,8 @@ func TestUpdateRollsBackAnUnhealthyGeneration(t *testing.T) {
 		t.Errorf("route file after the rollback:\n%s", route)
 	}
 
-	// The failed generation is not a rollback target, and the same commit
-	// can be tried again once it is fixed.
+	// There is nothing to go back to, and the same commit can be tried
+	// again once it is fixed.
 	_, err := svc.Rollback(context.Background(), "immich", 0)
 	wantCode(t, err, 409, "no_previous_generation")
 	h.unhealthy = map[string]bool{}
@@ -899,7 +917,8 @@ func TestDaemonRestartRollsBackAnUpdateThatWasNeverHealthy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.Generation != 1 || h.current != 1 || !s.Running || !s.Generations[0].Failed {
+	// The generation that failed is gone with the rollback.
+	if s.Generation != 1 || h.current != 1 || !s.Running || len(s.Generations) != 1 {
 		t.Errorf("generation=%d profile=%d running=%v generations=%+v", s.Generation, h.current, s.Running, s.Generations)
 	}
 	if s.Operation == nil || s.Operation.Kind != "update" || !strings.Contains(s.Operation.Error, "rolled back to generation 1") {

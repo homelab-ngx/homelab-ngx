@@ -3480,6 +3480,58 @@
         ],
         "type": "object"
       },
+      "NixStore": {
+        "additionalProperties": false,
+        "properties": {
+          "collected_at": {
+            "description": "When garbage was last collected.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "collecting": {
+            "description": "A collection is running or about to.",
+            "type": "boolean"
+          },
+          "free_bytes": {
+            "description": "Free on the file system the store is on.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "freed_bytes": {
+            "description": "What that collection freed.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "measured_at": {
+            "description": "When used_bytes was measured.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "own_partition": {
+            "description": "The store has a partition of its own (a host installed before the store moved to /var); otherwise it shares the host's data partition.",
+            "type": "boolean"
+          },
+          "total_bytes": {
+            "description": "Size of the file system the store is on.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "used_bytes": {
+            "description": "Size of the store; -1 until it is measured.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "used_bytes",
+          "free_bytes",
+          "total_bytes",
+          "own_partition",
+          "freed_bytes",
+          "collecting"
+        ],
+        "type": "object"
+      },
       "NotificationDelivery": {
         "additionalProperties": false,
         "properties": {
@@ -17177,6 +17229,65 @@
           }
         },
         "summary": "The nixpkgs channels offered for a version 7 stack: nixos-unstable and the newest NixOS releases.",
+        "tags": [
+          "stacks"
+        ]
+      }
+    },
+    "/stacks-store": {
+      "get": {
+        "operationId": "getNixStore",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NixStore"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The Nix store the stacks are built into: its size, the room on its disk and its last garbage collection.",
         "tags": [
           "stacks"
         ]

@@ -5,7 +5,7 @@ echo 'SYSEXT_LEVEL=1' >> /usr/lib/os-release
 # The product's name; ID and IMAGE_ID stay as they are.
 sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Homelab-ngx"/' /usr/lib/os-release
 # Mount points: the root file system is read-only, so they exist in the
-# image. /nix is the Nix store's partition; /pool and /cache are where a host
+# image. /nix is where the Nix store is mounted (system-generators/homelab-nix); /pool and /cache are where a host
 # mounts its storage pool and its cache disk when it has them.
 mkdir -p /nix /pool /cache
 # The initrd binds the machine ID from /var over /etc/machine-id

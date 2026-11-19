@@ -79,6 +79,9 @@ func (s *Service) finish(name string, o *operation, err error) {
 	bg := s.ctx
 	s.mu.Unlock()
 	s.endAttempt(bg, o, err)
+	if o.kind == opStart || o.kind == opUpdate || o.kind == opRollback {
+		s.tidy(bg, name, o.kind)
+	}
 	s.mu.Lock()
 	o.finished = s.now()
 	if err != nil {
@@ -365,6 +368,9 @@ func (s *Service) buildApproved(ctx context.Context, o *operation, r store.Stack
 		return store.StackGeneration{}, httpx.Conflict("manifest_too_old",
 			"stack %q is approved at manifest version %d; stacks are built from version %d on, so fetch and approve a newer commit", r.Name, m.Version, MinBuildVersion)
 	}
+	// Until the profile names the build, only this keeps a collection of
+	// the store's garbage away from it.
+	defer nixGate.hold()()
 	nixpkgsRev, err := s.nixpkgsFor(ctx, r, m)
 	if err != nil {
 		s.setResult(o, resultBuildFailed)
@@ -834,8 +840,9 @@ func (s *Service) rollback(ctx context.Context, o *operation, name string, to in
 }
 
 // forget removes what the runtime keeps for a stack outside the database:
-// its routes, its rules and its profile, which frees its generations for
-// garbage collection. The state directory stays: it holds the stack's data.
+// its routes, its rules and its profile, which leaves its generations to
+// the next collection of the store (nixstore.go). The state directory
+// stays: it holds the stack's data.
 func (s *Service) forget(ctx context.Context, name string) error {
 	return errors.Join(s.removeRoutes(ctx, name), s.removeRules(ctx, name), os.RemoveAll(s.profileDir(name)))
 }

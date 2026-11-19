@@ -52,6 +52,20 @@ func (q *Queries) DeleteStack(ctx context.Context, name string) (int64, error) {
 	return result.RowsAffected()
 }
 
+const deleteStackGeneration = `-- name: DeleteStackGeneration :exec
+DELETE FROM stack_generations WHERE stack = ? AND id = ?
+`
+
+type DeleteStackGenerationParams struct {
+	Stack string
+	ID    int64
+}
+
+func (q *Queries) DeleteStackGeneration(ctx context.Context, arg DeleteStackGenerationParams) error {
+	_, err := q.db.ExecContext(ctx, deleteStackGeneration, arg.Stack, arg.ID)
+	return err
+}
+
 const deleteStackGenerations = `-- name: DeleteStackGenerations :exec
 DELETE FROM stack_generations WHERE stack = ?
 `

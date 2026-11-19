@@ -49,6 +49,8 @@
 #      the firmware can read)
 #  18. it boots the same behind a MegaRAID and USB UAS: the initrd has the
 #      storage drivers the image names besides mkosi's defaults
+#  19. given a partition named nix, as a host installed before the store
+#      moved to /var has, it mounts that partition at /nix
 # The firmware's variables last the whole run, as on a real machine, so the
 # boot entries the installs register are used. Where the stick has to start
 # next to an installed disk (steps 3 and 16) the firmware is told to try it
@@ -79,7 +81,7 @@ core=$out/core/homelab-core_$version.raw
 domain=check.example.com
 
 # step "N. what": a step's heading; scripts/run reads the progress line.
-steps=18
+steps=19
 step() {
   roomused
   printf '\nprogress: %d%%\n▸ %s\n' "$(((${1%%.*} - 1) * 100 / steps))" "$*"
@@ -276,7 +278,7 @@ installer() {
 # disk, sda as a USB stick), found by its disk UUID.
 stickname() { vssh 'lsblk -dno NAME,PTUUID' | awk -v u="$medium" 'tolower($2) == u { print $1 }'; }
 # runs_from DISK [LOADER]: the running system is all DISK's: its /var, its
-# /nix and both halves of its verity root (data and hash), started by the
+# /nix (a folder of /var) and both halves of its verity root (data and hash), started by the
 # boot loader on LOADER (DISK unless given). Disks by kernel name. The
 # initrd's two services never fail a boot; what they could not do is in the
 # kernel log, and nothing may be.
@@ -293,7 +295,7 @@ loader=$(lsblk -lno PKNAME,PARTUUID | awk -v u="$uuid" '$2 == u { print $1 }' | 
 dm=$(basename "$(readlink -f /dev/mapper/root)")
 root=$(for s in /sys/block/"$dm"/slaves/*; do disk "/dev/${s##*/}"; done | tr '\n' ' ')
 var=$(disk "$(findmnt -no SOURCE -M /var | tail -1)")
-nix=$(disk "$(findmnt -no SOURCE -M /nix | tail -1)")
+nix=$(disk "$(findmnt -no SOURCE -M /nix | tail -1 | sed 's/\[.*//')")
 echo "loader=${loader% } var=$var nix=$nix root=${root% }"
 EOS
   ) || die "could not tell which disk the system runs from"
@@ -469,7 +471,8 @@ espfiles() {
   vssh "d=\$(findmnt -no TARGET $1 | head -1); if [ -z \"\$d\" ]; then mkdir -p /run/esp && mount -o ro $1 /run/esp && d=/run/esp; fi
     cat \$d/EFI/Microsoft/Boot/bootmgfw.efi \$d/EFI/BOOT/BOOTX64.EFI | tr '\\n' ' '; [ \$d != /run/esp ] || umount /run/esp"
 }
-# partuuids FILE: the UUIDs of a disk file's /var and /nix partitions.
+# partuuids FILE: the UUIDs of a disk file's /var partition (and /nix, on a
+# version that gave the store its own).
 partuuids() { sfdisk -J "$1" | jq -r '[.partitiontable.partitions[] | select(.name == "var" or .name == "nix") | .uuid] | sort | join(" ")'; }
 
 step "1. the installer medium boots $version into installer mode"
@@ -550,7 +553,7 @@ ok "installed into vdc's selected free region (not the gap before the other syst
 
 step "3. the USB stick boots as the installer next to that install; erase a disk and install"
 # The first install stays attached: its root and verity partitions have the
-# stick's UUIDs, its /var and /nix the stick's labels, and as virtio disks
+# stick's UUIDs, its /var the stick's label, and as virtio disks
 # the kernel finds them before the stick. The firmware would start that
 # install (its boot entry is first), so it is told to start the stick.
 boot --order "usb:$vm/stick.raw" "$vm/disk.raw" "$vm/beside.raw"
@@ -571,7 +574,7 @@ install vda true installed
 # Every install has partition UUIDs of its own, and none the medium's disk UUID.
 [ "$(sfdisk --disk-id "$vm/disk.raw" | tr A-F a-f)" != "$medium" ] || die "the installed disk has the medium's disk UUID"
 [ -n "$(partuuids "$vm/disk.raw")" ] && [ "$(partuuids "$vm/disk.raw")" != "$(partuuids "$vm/beside.raw")" ] ||
-  die "two installs share their /var and /nix partition UUIDs: $(partuuids "$vm/disk.raw")"
+  die "two installs share their /var partition UUID: $(partuuids "$vm/disk.raw")"
 ok "the stick ($stick) ran from itself next to an install of $version and offered that disk; installed onto vda and turned off"
 
 step "4. the installed disk boots $version with its core, its name, machine ID, time zone, SSH key and a domain"
@@ -581,7 +584,16 @@ runs_from vda
 ownid
 installed=$id
 vssh 'test "$(findmnt -no SIZE /var | tr -d G | cut -d. -f1)" -gt 30' || die "/var does not fill the disk"
-vssh 'test "$(findmnt -no SIZE /nix | tr -d G | cut -d. -f1)" -gt 10' || die "/nix is not mounted at its full size: $(vssh 'findmnt -no SOURCE,SIZE /nix')"
+# The Nix store is on /var: no partition of its own takes room from it (a
+# release from before that, installed first in a release's check, has one).
+onvar=
+if vssh 'test -e /usr/lib/systemd/system-generators/homelab-nix'; then
+  onvar=1
+  vssh 'findmnt -no SOURCE -M /nix' | grep -q '\[/nix\]$' || die "/nix is not /var's folder: $(vssh 'findmnt -no SOURCE -M /nix')"
+  sfdisk -d "$vm/disk.raw" | grep -q 'name="nix"' && die "the install made a nix partition" || true
+else
+  vssh 'mountpoint -q /nix' || die "/nix is not mounted"
+fi
 vssh 'systemd-sysext status --no-legend' | grep -q homelab-core || die "the core extension is not merged"
 for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
 api http://x/api/version >/dev/null || die "the daemon does not answer"
@@ -642,6 +654,10 @@ done
 https site / | grep -q image-check || die "the stack's route is not served at site.$domain"
 refused=""
 hassignin && stackrefused site && refused="; the dashboard refuses it"
+if [ -n "$onvar" ]; then
+  st=$(api http://x/api/stacks-store)
+  jq -e '.total_bytes > 0 and .free_bytes > 0 and (.own_partition | not)' <<<"$st" >/dev/null || die "the Nix store's disk is not reported: $st"
+fi
 ok "stack site built, serving the page from the pool at https://site.$domain$refused"
 
 step "7. host settings: VPN, tunnel, firewall, name and time zone"
@@ -914,7 +930,7 @@ drop stick
 # them has not), the system also has to start with its disk behind other
 # controllers. The VM's firmware reads none of them, so the boot loader and
 # kernel start from a copy of the system's ESP on a virtio disk; the initrd
-# then has to find the root, /var and /nix behind the controller. This boot
+# then has to find the root and /var behind the controller. This boot
 # is the first of them.
 ctl() {
   boot --order --no-uuid "$vm/esp.raw" "$1:$vm/sys.raw"
@@ -950,6 +966,32 @@ if [ -n "$drivers" ]; then
   ok "the same system with its disk behind a MegaRAID and USB UAS"
 else
   ok "skipped: $version is from before the image named its storage drivers"
+fi
+
+step "19. a disk with a nix partition keeps its store there"
+# A host installed before the store moved to /var has a partition named nix
+# and its store on it. The disk gets one at its end, formatted from the
+# system itself (that boot has no /nix, and says so without restarting).
+stop
+if [ -n "$onvar" ]; then
+  qemu-img resize -q -f raw "$vm/sys.raw" +1G
+  sfdisk -q --relocate gpt-bak-std "$vm/sys.raw"
+  echo 'type=073D2B22-9F7E-4817-8D45-890277F7DD55, name=nix' | sfdisk -q --append "$vm/sys.raw"
+  boot --no-uuid "$vm/sys.raw"
+  nixpart=$(vssh 'lsblk -lno NAME,PARTLABEL /dev/vda' | awk '$2 == "nix" { print $1 }')
+  [ -n "$nixpart" ] || die "the nix partition is not on the disk: $(vssh 'lsblk -lno NAME,PARTLABEL /dev/vda' | tr '\n' ';')"
+  vssh "mkfs.ext4 -q /dev/$nixpart" || die "could not format /dev/$nixpart"
+  stop
+  boot --no-uuid "$vm/sys.raw"
+  booted "$version"
+  [ "$(vssh 'findmnt -no SOURCE -M /nix')" = "/dev/$nixpart" ] || die "/nix is not the nix partition: $(vssh 'findmnt -no SOURCE -M /nix')"
+  [ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "another system booted"
+  daemon || die "the daemon does not answer"
+  [ "$(api http://x/api/stacks-store | jq -r .own_partition)" = true ] || die "the daemon does not see the store's own partition: $(api http://x/api/stacks-store)"
+  vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
+  ok "/nix is the disk's nix partition ($nixpart)"
+else
+  ok "skipped: $version has the store on a partition of its own already"
 fi
 
 # A run that passed needs none of its disks.

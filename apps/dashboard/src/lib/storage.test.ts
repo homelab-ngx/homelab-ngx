@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Schema, Stack } from "./api/client.ts";
-import { browseDefault, browseHref, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, foldersOf, measuredAt, role, segments, usedBy } from "./storage.ts";
+import { browseDefault, browseHref, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, foldersOf, measuredAt, role, segments, systemDisk, usedBy } from "./storage.ts";
 
 type Pool = Schema<"Pool">;
 type Disk = Schema<"Disk">;
@@ -163,5 +163,27 @@ describe("the file browser", () => {
     const entries = [entry("music", "dir"), entry("films", "dir"), entry("a.txt", "file", 5)];
     expect(browseRows(entries, { available: false, folders: {} }).map((r) => r.name)).toEqual(["films", "music", "a.txt"]);
     expect(browseRows(entries).map((r) => r.name)).toEqual(["films", "music", "a.txt"]);
+  });
+});
+
+describe("the system disk", () => {
+  const GB = 1e9;
+  const store = (over: Partial<Parameters<typeof systemDisk>[0]> = {}) => ({
+    used_bytes: 12 * GB, free_bytes: 60 * GB, total_bytes: 100 * GB, own_partition: false, freed_bytes: 0, collecting: false, ...over,
+  });
+
+  it("shows the Nix store's share of what is used", () => {
+    const d = systemDisk(store())!;
+    expect([d.used, d.free, d.percent]).toEqual([40 * GB, 60 * GB, 40]);
+    expect(d.parts.map((p) => [p.label, p.bytes])).toEqual([["Nix store", 12 * GB], ["Other", 28 * GB]]);
+  });
+
+  it("is one part until the store is measured, and on a partition of the store's own", () => {
+    expect(systemDisk(store({ used_bytes: -1 }))!.parts.map((p) => p.label)).toEqual(["Used"]);
+    expect(systemDisk(store({ own_partition: true }))!.parts.map((p) => p.label)).toEqual(["Nix store"]);
+  });
+
+  it("is nothing when the disk could not be read", () => {
+    expect(systemDisk(store({ total_bytes: 0 }))).toBeNull();
   });
 });
