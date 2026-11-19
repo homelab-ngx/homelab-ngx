@@ -5,6 +5,10 @@
 # the font may not have them. The icons are literal UTF-8: bash expands
 # $'\U...' only in a UTF-8 locale, which profile.d sets after this file.
 
+# History from every SSH session, appended rather than overwritten.
+HISTSIZE=10000 HISTFILESIZE=20000
+shopt -s histappend
+
 _hl_icons=
 [[ $TERM == kmscon || $HOMELAB_ICONS == 1 ]] && _hl_icons=1
 
