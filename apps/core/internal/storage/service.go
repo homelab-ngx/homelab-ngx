@@ -525,6 +525,8 @@ func (s *Service) Mount(ctx context.Context, devices []string, name string) erro
 		return err
 	}
 	s.rememberMount(ctx, mountpoint)
+	// A status read while the mount ran has cached the pool as unmounted.
+	s.invalidate()
 	return nil
 }
 
@@ -580,6 +582,8 @@ func (s *Service) Unmount(ctx context.Context, mountpoint string) error {
 		return err
 	}
 	s.guard(ctx, mountpoint)
+	// As after a mount: a read during the unmount cached the pool as mounted.
+	defer s.invalidate()
 	for _, p := range snap.Pools {
 		if p.Mountpoint == mountpoint {
 			if _, err := s.cfg.SetPoolAutoMount(ctx, p.UUID, mountpoint, false); err != nil {

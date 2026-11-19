@@ -447,6 +447,32 @@ func TestAutoMountSkipsPoolOutsideRoot(t *testing.T) {
 	}
 }
 
+// The page polls the status: a read that lands while the mount runs must not
+// be what the next read gets.
+func TestStatusAfterMountIsFresh(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	var mounted atomic.Bool
+	h.fake.On("lsblk").Do(func(cmdrunner.Cmd) (cmdrunner.Result, error) {
+		return cmdrunner.Result{Stdout: lsblk(mounted.Load())}, nil
+	})
+	h.fake.On("bcachefs", "subvolume", "list", "/var/mnt/pool").Reply("")
+	h.fake.On("mount").Do(func(cmdrunner.Cmd) (cmdrunner.Result, error) {
+		if st, err := h.svc.Status(ctx); err != nil || st.Pools[0].State != Unmounted {
+			t.Errorf("status during the mount: %+v %v", st, err)
+		}
+		mounted.Store(true)
+		return cmdrunner.Result{}, nil
+	})
+	if err := h.svc.Mount(ctx, []string{"/dev/sdb"}, "pool"); err != nil {
+		t.Fatal(err)
+	}
+	if st, err := h.svc.Status(ctx); err != nil || st.Pools[0].State != "mounted" {
+		t.Fatalf("status after the mount is the one cached during it: %+v %v", st, err)
+	}
+}
+
 func TestMountFailureLeavesConfigAlone(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)

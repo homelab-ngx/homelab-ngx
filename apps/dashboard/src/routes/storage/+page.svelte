@@ -66,7 +66,10 @@
 
   /** The name typed for each unmounted pool, by uuid; none typed is the pool's own (mount_name). */
   const mountNames = $state<Record<string, string>>({});
-  const mount = (p: Pool) =>
+  /** The pool whose Mount is running: its button says so. */
+  let mounting = $state("");
+  const mount = (p: Pool) => {
+    mounting = p.uuid;
     op.mutate(() =>
       call(
         api.POST("/storage/mount", {
@@ -74,6 +77,7 @@
         }),
       ),
     );
+  };
   const autoMount = (p: Pool, on: boolean) =>
     op.mutate(() => call(api.PATCH("/storage/pools/{uuid}", { params: { path: { uuid: p.uuid } }, body: { auto_mount: on } })));
   const askUnmount = (p: Pool) =>
@@ -211,7 +215,9 @@
               bind:value={mountNames[p.uuid]}
             />
           </label>
-          <button type="submit" class="btn btn-primary" disabled={op.isPending}>Mount</button>
+          <button type="submit" class="btn btn-primary" disabled={op.isPending}>
+            {#if mounting === p.uuid && op.isPending}<LoaderCircle class="size-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />Mounting…{:else}Mount{/if}
+          </button>
         </form>
       {:else if cap}
         <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 tabular-nums">
