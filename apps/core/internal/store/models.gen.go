@@ -159,11 +159,6 @@ type Pool struct {
 	UpdatedAt  int64
 }
 
-type SecretRotation struct {
-	Name      string
-	RotatedAt int64
-}
-
 type SecurityAudit struct {
 	ID         int64
 	StartedAt  int64

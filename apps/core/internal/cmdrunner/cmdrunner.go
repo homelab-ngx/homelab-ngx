@@ -59,8 +59,6 @@ type Builder struct {
 	stdin          io.Reader
 	lineHandler    func(stream, line string)
 	outputMode     OutputMode
-	secretEnvKeys  map[string]struct{}
-	resolver       SecretResolver // set by OS; nil means no secrets
 	expectExit     []int
 	callerCanceled bool // set by logAndError; logs the failure at DEBUG
 }
@@ -112,7 +110,7 @@ func (e *Error) Unwrap() error {
 }
 
 var canonicalModules = map[string]struct{}{
-	"bug": {}, "api": {}, "secrets": {}, "monitor": {}, "middleware": {},
+	"bug": {}, "api": {}, "monitor": {}, "middleware": {},
 	"storage": {}, "updates": {}, "cmdrunner": {},
 	"systemd": {}, "services": {}, "backups": {}, "notifications": {},
 	"sysupdates": {}, "system": {}, "doctor": {}, "stacks": {}, "drafts": {}, "audit": {},
@@ -213,64 +211,6 @@ func (b *Builder) WithCwd(dir string) *Builder {
 
 func (b *Builder) WithEnv(kvs ...string) *Builder {
 	b.env = append(b.env, kvs...)
-	return b
-}
-
-type SecretResolver func(name string) string
-
-// WithSecret injects named secrets as KEY=value env vars. Missing or
-// empty secrets are silently skipped with a warning (no panic). Use
-// RequireSecret when the secret must be present.
-func (b *Builder) WithSecret(names ...string) *Builder {
-	resolve := b.resolver
-	if resolve == nil {
-		return b
-	}
-	if b.secretEnvKeys == nil {
-		b.secretEnvKeys = map[string]struct{}{}
-	}
-	for _, name := range names {
-		kv := resolve(name)
-		if kv == "" {
-			cmdrunnerLog.Warn("secret not found in registry",
-				"name", name, "caller_module", b.callerModule)
-			continue
-		}
-		if i := strings.IndexByte(kv, '='); i > 0 {
-			b.secretEnvKeys[kv[:i]] = struct{}{}
-		}
-		b.env = append(b.env, kv)
-	}
-	return b
-}
-
-// RequireSecret injects a named secret as a KEY=value env var, panicking
-// if the secret is missing, empty, or the resolver returns nothing.
-func (b *Builder) RequireSecret(names ...string) *Builder {
-	resolve := b.resolver
-	if resolve == nil {
-		panic(fmt.Sprintf(
-			"cmdrunner: secret resolver not set; module %q called RequireSecret before init",
-			b.callerModule,
-		))
-	}
-	if b.secretEnvKeys == nil {
-		b.secretEnvKeys = map[string]struct{}{}
-	}
-	for _, name := range names {
-		kv := resolve(name)
-		if kv == "" {
-			panic(fmt.Sprintf(
-				"cmdrunner: required secret %q requested by module %q is not in the registry; "+
-					"declare it in modules/secrets.nix and rebuild",
-				name, b.callerModule,
-			))
-		}
-		if i := strings.IndexByte(kv, '='); i > 0 {
-			b.secretEnvKeys[kv[:i]] = struct{}{}
-		}
-		b.env = append(b.env, kv)
-	}
 	return b
 }
 
@@ -523,18 +463,6 @@ func (b *Builder) logResult(res Result, start time.Time, err error) {
 	cmdSummary := b.summary()
 
 	args := res.Args
-	if len(b.secretEnvKeys) > 0 {
-		args = make([]string, len(res.Args))
-		for i, a := range res.Args {
-			if eq := strings.IndexByte(a, '='); eq > 0 {
-				if _, redact := b.secretEnvKeys[a[:eq]]; redact {
-					args[i] = a[:eq] + "=<redacted>"
-					continue
-				}
-			}
-			args[i] = a
-		}
-	}
 
 	if err != nil {
 		if b.callerCanceled {

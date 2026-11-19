@@ -25,7 +25,7 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.RegisterSSE(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "ask", Method: http.MethodPost, Path: "/ask", Tags: []string{"assistant"},
 		Summary: "Ask the assistant about one thing the dashboard shows: log lines, a failed service, a backup run, " +
-			"a stack update, a core deploy or a notification. The daemon reads the material itself. The answer " +
+			"a stack update, a host update or a notification. The daemon reads the material itself. The answer " +
 			"streams as text events, then one answer event; a failure is an error event.",
 	}, map[string]any{"text": llm.AssistText{}, "thinking": llm.AssistThinking{}, "answer": AskAnswer{}, "error": llm.AssistError{}},
 		func(ctx context.Context, in *askIn, send sse.Sender) {

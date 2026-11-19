@@ -1,5 +1,5 @@
 // Package ask answers the dashboard's "Ask" on one thing it shows: some log
-// lines, a backup run, a stack update, a core deploy or a notification. The
+// lines, a backup run, a stack update, a host update or a notification. The
 // dashboard names the thing; the daemon reads what it holds about it, caps
 // it, and asks the configured language model once, with no tools and no
 // history. The model never sees a variable value or a secret file, only what
@@ -127,7 +127,7 @@ var defaults = map[Kind]string{
 	KindService:      "This service failed. Why, and what should I do?",
 	KindBackupRun:    "Why did this backup run fail, and what should I do?",
 	KindStackUpdate:  "Why did this stack update not end healthy, and what should I do?",
-	KindCoreDeploy:   "Why did this deploy of the host fail or roll back, and what should I do?",
+	KindCoreDeploy:   "Why did this update of the host fail or roll back, and what should I do?",
 	KindNotification: "What does this notification mean, and what should I do about it?",
 }
 
@@ -369,11 +369,11 @@ func (s *Service) coreDeploy(ctx context.Context, ref string) (string, error) {
 	list := s.src.Deploys.Deploys(ctx)
 	i := slices.IndexFunc(list, func(d sysupdates.CoreDeploy) bool { return d.Id == n })
 	if i < 0 {
-		return "", httpx.NotFound("unknown_deploy", "no core deploy %d", n)
+		return "", httpx.NotFound("unknown_deploy", "no host update %d", n)
 	}
 	d := list[i]
 	var b strings.Builder
-	fmt.Fprintf(&b, "Core %s started %s", d.Kind, stamp(d.StartedAt))
+	fmt.Fprintf(&b, "Host update (%s) started %s", d.Kind, stamp(d.StartedAt))
 	if d.Rev != "" {
 		fmt.Fprintf(&b, ", of commit %s", short(d.Rev))
 	}
@@ -382,7 +382,7 @@ func (s *Service) coreDeploy(ctx context.Context, ref string) (string, error) {
 		fmt.Fprintf(&b, "Reason: %s\n", d.Reason)
 	}
 	if len(d.FailedUnits) > 0 {
-		fmt.Fprintf(&b, "Units that failed during the switch: %s\n", strings.Join(d.FailedUnits, ", "))
+		fmt.Fprintf(&b, "Units that failed during the update: %s\n", strings.Join(d.FailedUnits, ", "))
 	}
 	if strings.TrimSpace(d.Log) != "" {
 		b.WriteString("\nThe end of the build and switch output:\n")

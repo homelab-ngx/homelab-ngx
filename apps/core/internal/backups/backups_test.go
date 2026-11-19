@@ -515,9 +515,6 @@ func TestLaunchCarriesNoSecret(t *testing.T) {
 				t.Errorf("%s carries the secret %q", c.Name, s)
 			}
 		}
-		if len(c.Secrets)+len(c.RequiredSecrets) != 0 {
-			t.Errorf("%s asks for registry secrets", c.Name)
-		}
 	}
 	h.mu.Lock()
 	args := strings.Join(h.launches[0].Args, " ")

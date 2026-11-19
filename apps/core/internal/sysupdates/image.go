@@ -1,12 +1,11 @@
 package sysupdates
 
-// The image host's updates (#97). The host image (root and UKI, A/B with
-// boot counting) and the homelab-core system extension are both updated by
+// The host's updates. The host image (root and UKI, A/B with boot counting)
+// and the homelab-core system extension are both updated by
 // systemd-sysupdate from the host's own update folder. A release is
 // downloaded into it (KindDownload, fetch.go), or the host builds main
-// itself (KindBuild runs image/build.sh). The operations run in the same
-// transient unit and record as a NixOS deploy, since a core update restarts
-// the daemon.
+// itself (KindBuild runs image/build.sh). The operations run in a transient
+// unit (deploy.go), since a core update restarts the daemon.
 //
 // The update folder is root's and local, so sysupdate reads it with
 // --verify=no: a download checks the release's signed SHA256SUMS before it
@@ -29,7 +28,7 @@ import (
 	"homelab-ngx.com/core/internal/cmdrunner"
 )
 
-// The image host's kinds of core operation.
+// The kinds of update operation.
 const (
 	KindBuild       = "build"
 	KindCoreUpdate  = "core-update"
@@ -55,8 +54,7 @@ var (
 
 // Errors of the image operations.
 var (
-	ErrNotImageHost = errors.New("this host is not an image host; it is deployed from its NixOS configuration")
-	ErrImageHost    = errors.New("this is an image host: it updates with systemd-sysupdate, not nixos-rebuild")
+	ErrNotImageHost = errors.New("this host does not run the homelab image, so it has no updates")
 	ErrBadReboot    = errors.New(`reboot: "" (later), "now" or a time today such as 03:30`)
 )
 
@@ -100,7 +98,7 @@ type ImageStatus struct {
 	Release       ReleaseCheck  `json:"release" doc:"The last look at the release server."`
 }
 
-// SetImage marks the host an image host: deploys go through sysupdate.
+// SetImage says the host runs the homelab image.
 func (m *Module) SetImage(on bool) { m.image = on }
 
 // IsImage reports whether the host is an image host.
@@ -265,7 +263,7 @@ func (m *Module) StartImage(ctx context.Context, kind, reboot string) (CoreDeplo
 
 // ── the work, in the transient unit ──────────────────────────────────────
 
-func (x *deployRun) imageWork(ctx context.Context) (result, reason string) {
+func (x *deployRun) work(ctx context.Context) (result, reason string) {
 	switch x.o.Kind {
 	case KindBuild:
 		return x.build(ctx)
@@ -470,7 +468,7 @@ func (x *deployRun) coreUpdate(ctx context.Context) (string, string) {
 		x.logf("the restart reported: %v", err)
 	}
 	x.phase("Health check")
-	why := x.waitHealthy(ctx, "")
+	why := x.waitHealthy(ctx)
 	if why == "" {
 		return DeployHealthy, ""
 	}
@@ -483,7 +481,7 @@ func (x *deployRun) coreUpdate(ctx context.Context) (string, string) {
 	}
 	_, _ = x.cmd(ctx, time.Minute, nil, "systemd-sysext", "refresh")
 	_, _ = x.cmd(ctx, 2*time.Minute, nil, "systemctl", "restart", "homelab-daemon.service", "caddy.service")
-	if again := x.waitHealthy(ctx, ""); again != "" {
+	if again := x.waitHealthy(ctx); again != "" {
 		return DeployFailed, why + "; core " + prev + " did not come back either: " + again
 	}
 	return DeployRolledBack, why

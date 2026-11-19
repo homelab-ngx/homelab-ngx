@@ -238,7 +238,7 @@ func TestAStagedReleaseIsNotifiedOnce(t *testing.T) {
 	root := imageHost(t, "0.0.1")
 	newTestRelease(t, testKey(t), "0.1.0")
 	n := &countingNotifier{}
-	m := &Module{file: filepath.Join(root, "state", "x.json"), image: true, now: time.Now, notify: n}
+	m := &Module{dir: filepath.Join(root, "state"), image: true, now: time.Now, notify: n}
 	_ = os.MkdirAll(filepath.Join(root, "state"), 0o755)
 	ctx := context.Background()
 
@@ -255,7 +255,7 @@ func TestAStagedReleaseIsNotifiedOnce(t *testing.T) {
 	m.notifyImageRelease(ctx)
 	m.notifyImageRelease(ctx)
 	// A new daemon (after a core update) remembers it told.
-	m2 := &Module{file: m.file, image: true, now: time.Now, notify: n}
+	m2 := &Module{dir: m.dir, image: true, now: time.Now, notify: n}
 	m2.notifyImageRelease(ctx)
 	if len(n.calls) != 1 || len(n.calls[0]) != 1 || n.calls[0][0].Key != "image-release:0.1.0" {
 		t.Fatalf("calls = %+v", n.calls)

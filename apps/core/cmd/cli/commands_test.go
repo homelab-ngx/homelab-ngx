@@ -23,10 +23,9 @@ func TestOperationalCommandsAreExposed(t *testing.T) {
 		{servicesCmd(), []string{"status", "start", "stop", "restart", "logs"}},
 		{backupCmd(), []string{"status", "show", "run", "enable", "disable", "logs", "runs", "run-show", "coverage", "dest"}},
 		{destCmd(), []string{"list", "add", "set", "rm", "test", "confirm", "reveal"}},
-		{secretCmd(), []string{"show", "delete"}},
 		{storageCmd(), []string{"mount", "unmount", "usage", "subvolume-create", "subvolume-delete"}},
 		{hostCmd(), []string{"core-services", "version"}},
-		{systemCmd(), []string{"status", "reboot"}},
+		{systemCmd(), []string{"reboot"}},
 	}
 	for _, tt := range tests {
 		got := commandNames(tt.group.Subcommands)

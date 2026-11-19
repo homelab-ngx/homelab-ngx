@@ -1184,7 +1184,7 @@
         "additionalProperties": false,
         "properties": {
           "failed_units": {
-            "description": "Units that failed during the switch. They do not undo the deploy.",
+            "description": "Units that failed during the operation. They do not undo it.",
             "items": {
               "type": "string"
             },
@@ -1203,10 +1203,7 @@
             "type": "integer"
           },
           "kind": {
-            "description": "deploy and rollback on a NixOS host; build, download, core-update, image-update and install on an image host.",
             "enum": [
-              "deploy",
-              "rollback",
               "build",
               "download",
               "core-update",
@@ -1216,7 +1213,7 @@
             "type": "string"
           },
           "log": {
-            "description": "The end of the build and switch output.",
+            "description": "The end of the operation's output.",
             "type": "string"
           },
           "phase": {
@@ -1239,7 +1236,7 @@
             "type": "string"
           },
           "rev": {
-            "description": "The commit of main being deployed or built; empty until it is fetched, and for a rollback.",
+            "description": "The commit of main a build is of; empty until it is fetched, and for every other kind.",
             "type": "string"
           },
           "started_at": {
@@ -1247,7 +1244,7 @@
             "type": "string"
           },
           "version": {
-            "description": "Image host: the image or core version built or installed.",
+            "description": "The image or core version built, downloaded or installed.",
             "type": "string"
           }
         },
@@ -1294,37 +1291,6 @@
           "active",
           "installed",
           "available"
-        ],
-        "type": "object"
-      },
-      "CoreStatus": {
-        "additionalProperties": false,
-        "properties": {
-          "configured": {
-            "description": "The host names the repository core is deployed from.",
-            "type": "boolean"
-          },
-          "deploying": {
-            "type": "boolean"
-          },
-          "main_rev": {
-            "description": "The newest commit of main the daemon has seen; empty = not checked yet.",
-            "type": "string"
-          },
-          "running_rev": {
-            "description": "The commit the running system was built from.",
-            "type": "string"
-          },
-          "update_available": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "configured",
-          "deploying",
-          "main_rev",
-          "running_rev",
-          "update_available"
         ],
         "type": "object"
       },
@@ -3514,32 +3480,6 @@
         ],
         "type": "object"
       },
-      "NixOSRelease": {
-        "additionalProperties": false,
-        "properties": {
-          "current": {
-            "description": "e.g. 26.11; empty = unknown.",
-            "type": "string"
-          },
-          "follows": {
-            "description": "Branch the base follows; null = pinned to a revision.",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "pinned": {
-            "description": "Pinned to a pre-release revision; current is then read from the running NixOS version.",
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "current",
-          "follows",
-          "pinned"
-        ],
-        "type": "object"
-      },
       "NotificationDelivery": {
         "additionalProperties": false,
         "properties": {
@@ -4134,27 +4074,6 @@
         ],
         "type": "object"
       },
-      "ReleaseUpgrade": {
-        "additionalProperties": false,
-        "properties": {
-          "notes_url": {
-            "type": "string"
-          },
-          "pre_release": {
-            "description": "The branch exists but the release date has not passed.",
-            "type": "boolean"
-          },
-          "release": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "notes_url",
-          "pre_release",
-          "release"
-        ],
-        "type": "object"
-      },
       "ResticInput": {
         "additionalProperties": false,
         "properties": {
@@ -4311,120 +4230,6 @@
         },
         "required": [
           "keys"
-        ],
-        "type": "object"
-      },
-      "SecretMutation": {
-        "additionalProperties": false,
-        "properties": {
-          "branch": {
-            "type": "string"
-          },
-          "commit": {
-            "type": "string"
-          },
-          "deploy_pending": {
-            "type": "boolean"
-          },
-          "push_pending": {
-            "description": "Committed locally but the push failed.",
-            "type": "boolean"
-          },
-          "warnings": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "branch",
-          "commit",
-          "deploy_pending",
-          "push_pending",
-          "warnings"
-        ],
-        "type": "object"
-      },
-      "SecretSet": {
-        "additionalProperties": false,
-        "properties": {
-          "description": {
-            "description": "Accepted and ignored.",
-            "type": "string"
-          },
-          "value": {
-            "minLength": 1,
-            "type": "string"
-          }
-        },
-        "required": [
-          "value"
-        ],
-        "type": "object"
-      },
-      "SecretStatus": {
-        "additionalProperties": false,
-        "properties": {
-          "description": {
-            "type": "string"
-          },
-          "modified_at": {
-            "description": "Null if unknown.",
-            "format": "date-time",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "name": {
-            "description": "service/KEY.",
-            "type": "string"
-          },
-          "present": {
-            "type": "boolean"
-          },
-          "preview": {
-            "description": "First 3 characters followed by \"•••\".",
-            "type": "string"
-          },
-          "run_path": {
-            "description": "Runtime path, e.g. /run/secrets/caddy/CLOUDFLARE_API_TOKEN.",
-            "type": "string"
-          },
-          "services": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "description",
-          "modified_at",
-          "name",
-          "present",
-          "run_path",
-          "services"
-        ],
-        "type": "object"
-      },
-      "SecretsList": {
-        "additionalProperties": false,
-        "properties": {
-          "deploy_pending": {
-            "type": "boolean"
-          },
-          "secrets": {
-            "items": {
-              "$ref": "#/components/schemas/SecretStatus"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "deploy_pending",
-          "secrets"
         ],
         "type": "object"
       },
@@ -5928,54 +5733,6 @@
         ],
         "type": "object"
       },
-      "SystemUpdateStatus": {
-        "additionalProperties": false,
-        "properties": {
-          "checked_at": {
-            "description": "Last release check; null = not yet.",
-            "format": "date-time",
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "core": {
-            "$ref": "#/components/schemas/CoreStatus"
-          },
-          "generation": {
-            "description": "Running system's generation; 0 = unknown.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "reboot_required": {
-            "description": "The running kernel/initrd differs from the installed system's.",
-            "type": "boolean"
-          },
-          "release": {
-            "$ref": "#/components/schemas/NixOSRelease"
-          },
-          "upgrade": {
-            "description": "A newer release; null = none.",
-            "oneOf": [
-              {
-                "$ref": "#/components/schemas/ReleaseUpgrade"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "checked_at",
-          "core",
-          "generation",
-          "reboot_required",
-          "release",
-          "upgrade"
-        ],
-        "type": "object"
-      },
       "Tailscale": {
         "additionalProperties": false,
         "properties": {
@@ -6093,10 +5850,6 @@
           "name": {
             "type": "string"
           },
-          "tier": {
-            "description": "Why a package counts as explicit: service or kernel.",
-            "type": "string"
-          },
           "to": {
             "description": "Empty = removed.",
             "type": "string"
@@ -6106,128 +5859,7 @@
           "from",
           "kind",
           "name",
-          "tier",
           "to"
-        ],
-        "type": "object"
-      },
-      "UpdateDay": {
-        "additionalProperties": false,
-        "properties": {
-          "date": {
-            "description": "YYYY-MM-DD.",
-            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-            "type": "string"
-          },
-          "events": {
-            "items": {
-              "$ref": "#/components/schemas/UpdateEvent"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "date",
-          "events"
-        ],
-        "type": "object"
-      },
-      "UpdateEvent": {
-        "additionalProperties": false,
-        "properties": {
-          "baseline": {
-            "description": "First recorded generation; nothing to diff against.",
-            "type": "boolean"
-          },
-          "changes": {
-            "items": {
-              "$ref": "#/components/schemas/UpdateChange"
-            },
-            "type": "array"
-          },
-          "current": {
-            "description": "The running system.",
-            "type": "boolean"
-          },
-          "dependencies": {
-            "description": "Dependency version changes, not listed.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "generation": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "id": {
-            "type": "string"
-          },
-          "nixos_version": {
-            "type": "string"
-          },
-          "source": {
-            "description": "rollback: a switch to a system that was live before; manual: any other deploy.",
-            "enum": [
-              "manual",
-              "rollback"
-            ],
-            "type": "string"
-          },
-          "system": {
-            "type": "string"
-          },
-          "time": {
-            "format": "date-time",
-            "type": "string"
-          },
-          "total_changes": {
-            "description": "Before search filtering.",
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "changes",
-          "dependencies",
-          "id",
-          "source",
-          "time",
-          "total_changes"
-        ],
-        "type": "object"
-      },
-      "UpdateTimeline": {
-        "additionalProperties": false,
-        "properties": {
-          "days": {
-            "items": {
-              "$ref": "#/components/schemas/UpdateDay"
-            },
-            "type": "array"
-          },
-          "page": {
-            "description": "1-based.",
-            "format": "int64",
-            "type": "integer"
-          },
-          "pages": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "total_days": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "total_events": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "days",
-          "page",
-          "pages",
-          "total_days",
-          "total_events"
         ],
         "type": "object"
       },
@@ -6511,7 +6143,7 @@
             "description": "Error"
           }
         },
-        "summary": "Ask the assistant about one thing the dashboard shows: log lines, a failed service, a backup run, a stack update, a core deploy or a notification. The daemon reads the material itself. The answer streams as text events, then one answer event; a failure is an error event.",
+        "summary": "Ask the assistant about one thing the dashboard shows: log lines, a failed service, a backup run, a stack update, a host update or a notification. The daemon reads the material itself. The answer streams as text events, then one answer event; a failure is an error event.",
         "tags": [
           "assistant"
         ]
@@ -15860,316 +15492,6 @@
         ]
       }
     },
-    "/secrets": {
-      "get": {
-        "operationId": "listSecrets",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SecretsList"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "default": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
-                  "properties": {
-                    "code": {
-                      "type": "string"
-                    },
-                    "detail": {
-                      "type": "string"
-                    },
-                    "instance": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "format": "int32",
-                      "type": "integer"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "type": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "type",
-                    "title",
-                    "status"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        },
-        "summary": "All registered secrets (presence only, never values).",
-        "tags": [
-          "secrets"
-        ]
-      }
-    },
-    "/secrets/{service}/{key}": {
-      "delete": {
-        "description": "`409 git_preflight` when the repo is not in a state that allows a commit.",
-        "operationId": "deleteSecret",
-        "parameters": [
-          {
-            "description": "Secret group, e.g. caddy.",
-            "in": "path",
-            "name": "service",
-            "required": true,
-            "schema": {
-              "description": "Secret group, e.g. caddy.",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Secret name within the group, e.g. CLOUDFLARE_API_TOKEN.",
-            "in": "path",
-            "name": "key",
-            "required": true,
-            "schema": {
-              "description": "Secret name within the group, e.g. CLOUDFLARE_API_TOKEN.",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SecretMutation"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "default": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
-                  "properties": {
-                    "code": {
-                      "type": "string"
-                    },
-                    "detail": {
-                      "type": "string"
-                    },
-                    "instance": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "format": "int32",
-                      "type": "integer"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "type": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "type",
-                    "title",
-                    "status"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        },
-        "summary": "Wipe a secret (sets it to the empty string); commits the change.",
-        "tags": [
-          "secrets"
-        ]
-      },
-      "get": {
-        "operationId": "getSecret",
-        "parameters": [
-          {
-            "description": "Secret group, e.g. caddy.",
-            "in": "path",
-            "name": "service",
-            "required": true,
-            "schema": {
-              "description": "Secret group, e.g. caddy.",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Secret name within the group, e.g. CLOUDFLARE_API_TOKEN.",
-            "in": "path",
-            "name": "key",
-            "required": true,
-            "schema": {
-              "description": "Secret name within the group, e.g. CLOUDFLARE_API_TOKEN.",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SecretStatus"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "default": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
-                  "properties": {
-                    "code": {
-                      "type": "string"
-                    },
-                    "detail": {
-                      "type": "string"
-                    },
-                    "instance": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "format": "int32",
-                      "type": "integer"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "type": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "type",
-                    "title",
-                    "status"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        },
-        "summary": "Metadata of one secret.",
-        "tags": [
-          "secrets"
-        ]
-      },
-      "put": {
-        "description": "`409 git_preflight` when the repo is not in a state that allows a commit.\n`description` is accepted for compatibility and ignored.",
-        "operationId": "setSecret",
-        "parameters": [
-          {
-            "description": "Secret group, e.g. caddy.",
-            "in": "path",
-            "name": "service",
-            "required": true,
-            "schema": {
-              "description": "Secret group, e.g. caddy.",
-              "type": "string"
-            }
-          },
-          {
-            "description": "Secret name within the group, e.g. CLOUDFLARE_API_TOKEN.",
-            "in": "path",
-            "name": "key",
-            "required": true,
-            "schema": {
-              "description": "Secret name within the group, e.g. CLOUDFLARE_API_TOKEN.",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/SecretSet"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SecretMutation"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "default": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
-                  "properties": {
-                    "code": {
-                      "type": "string"
-                    },
-                    "detail": {
-                      "type": "string"
-                    },
-                    "instance": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "format": "int32",
-                      "type": "integer"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "type": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "type",
-                    "title",
-                    "status"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        },
-        "summary": "Set or rotate a secret; commits the encrypted change.",
-        "tags": [
-          "secrets"
-        ]
-      }
-    },
     "/security/audits": {
       "get": {
         "operationId": "listSecurityAudits",
@@ -19341,66 +18663,6 @@
         ]
       }
     },
-    "/system-updates/deploy": {
-      "post": {
-        "description": "Fetches main, builds it, switches and checks the daemon and Caddy; if they do not come back the host returns to the generation before. The work outlives the daemon restart it causes: follow it in /system-updates/deploys.",
-        "operationId": "deployCore",
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreDeploy"
-                }
-              }
-            },
-            "description": "Accepted"
-          },
-          "default": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
-                  "properties": {
-                    "code": {
-                      "type": "string"
-                    },
-                    "detail": {
-                      "type": "string"
-                    },
-                    "instance": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "format": "int32",
-                      "type": "integer"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "type": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "type",
-                    "title",
-                    "status"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        },
-        "summary": "Deploy core from main.",
-        "tags": [
-          "sysupdates"
-        ]
-      }
-    },
     "/system-updates/deploys": {
       "get": {
         "operationId": "getCoreDeploys",
@@ -19457,7 +18719,7 @@
             "description": "Error"
           }
         },
-        "summary": "Core deploys and rollbacks, newest first.",
+        "summary": "Update operations (builds, downloads and installs), newest first.",
         "tags": [
           "sysupdates"
         ]
@@ -19554,7 +18816,7 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Image host: the booted, installed and staged versions of the image and the core extension.",
+        "summary": "The booted, installed and staged versions of the image and the core extension.",
         "tags": [
           "sysupdates"
         ]
@@ -19738,7 +19000,7 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Image host: the time of day a downloaded release installs by itself.",
+        "summary": "The time of day a downloaded release installs by itself.",
         "tags": [
           "sysupdates"
         ]
@@ -19960,7 +19222,7 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Image host: boot another installed image version, once or by default.",
+        "summary": "Boot another installed image version, once or by default.",
         "tags": [
           "sysupdates"
         ]
@@ -20096,7 +19358,7 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Image host: build the image and the core extension from main.",
+        "summary": "Build the image and the core extension from main.",
         "tags": [
           "sysupdates"
         ]
@@ -20232,7 +19494,7 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Image host: update the core extension, without a reboot.",
+        "summary": "Update the core extension, without a reboot.",
         "tags": [
           "sysupdates"
         ]
@@ -20368,7 +19630,7 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Image host: look for a newer release and download it.",
+        "summary": "Look for a newer release and download it.",
         "tags": [
           "sysupdates"
         ]
@@ -20551,7 +19813,7 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Image host: install the newest staged image into the free slot.",
+        "summary": "Install the newest staged image into the free slot.",
         "tags": [
           "sysupdates"
         ]
@@ -20734,7 +19996,7 @@
             "description": "Internal Server Error"
           }
         },
-        "summary": "Image host: install what is staged, the image and the core extension, in one operation.",
+        "summary": "Install what is staged, the image and the core extension, in one operation.",
         "tags": [
           "sysupdates"
         ]
@@ -20788,232 +20050,6 @@
           }
         },
         "summary": "Reboot the host.",
-        "tags": [
-          "sysupdates"
-        ]
-      }
-    },
-    "/system-updates/rollback": {
-      "post": {
-        "operationId": "rollbackCore",
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/CoreDeploy"
-                }
-              }
-            },
-            "description": "Accepted"
-          },
-          "default": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
-                  "properties": {
-                    "code": {
-                      "type": "string"
-                    },
-                    "detail": {
-                      "type": "string"
-                    },
-                    "instance": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "format": "int32",
-                      "type": "integer"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "type": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "type",
-                    "title",
-                    "status"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        },
-        "summary": "Switch core back to the generation before.",
-        "tags": [
-          "sysupdates"
-        ]
-      }
-    },
-    "/system-updates/status": {
-      "get": {
-        "operationId": "getSystemUpdateStatus",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SystemUpdateStatus"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "default": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
-                  "properties": {
-                    "code": {
-                      "type": "string"
-                    },
-                    "detail": {
-                      "type": "string"
-                    },
-                    "instance": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "format": "int32",
-                      "type": "integer"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "type": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "type",
-                    "title",
-                    "status"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        },
-        "summary": "The System card — release, newer release, reboot needed and the running generation.",
-        "tags": [
-          "sysupdates"
-        ]
-      }
-    },
-    "/system-updates/timeline": {
-      "get": {
-        "operationId": "getSystemUpdatesTimeline",
-        "parameters": [
-          {
-            "description": "Case-insensitive substring filter over change names.",
-            "explode": false,
-            "in": "query",
-            "name": "q",
-            "schema": {
-              "description": "Case-insensitive substring filter over change names.",
-              "type": "string"
-            }
-          },
-          {
-            "explode": false,
-            "in": "query",
-            "name": "source",
-            "schema": {
-              "enum": [
-                "manual",
-                "rollback"
-              ],
-              "type": "string"
-            }
-          },
-          {
-            "explode": false,
-            "in": "query",
-            "name": "page",
-            "schema": {
-              "default": 1,
-              "format": "int64",
-              "minimum": 1,
-              "type": "integer"
-            }
-          },
-          {
-            "description": "Days per page.",
-            "explode": false,
-            "in": "query",
-            "name": "days",
-            "schema": {
-              "default": 7,
-              "description": "Days per page.",
-              "format": "int64",
-              "maximum": 60,
-              "minimum": 1,
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UpdateTimeline"
-                }
-              }
-            },
-            "description": "OK"
-          },
-          "default": {
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
-                  "properties": {
-                    "code": {
-                      "type": "string"
-                    },
-                    "detail": {
-                      "type": "string"
-                    },
-                    "instance": {
-                      "type": "string"
-                    },
-                    "status": {
-                      "format": "int32",
-                      "type": "integer"
-                    },
-                    "title": {
-                      "type": "string"
-                    },
-                    "type": {
-                      "type": "string"
-                    }
-                  },
-                  "required": [
-                    "type",
-                    "title",
-                    "status"
-                  ],
-                  "type": "object"
-                }
-              }
-            },
-            "description": "Error"
-          }
-        },
-        "summary": "System generations grouped by day.",
         "tags": [
           "sysupdates"
         ]

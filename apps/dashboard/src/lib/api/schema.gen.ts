@@ -13,7 +13,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Ask the assistant about one thing the dashboard shows: log lines, a failed service, a backup run, a stack update, a core deploy or a notification. The daemon reads the material itself. The answer streams as text events, then one answer event; a failure is an error event. */
+        /** Ask the assistant about one thing the dashboard shows: log lines, a failed service, a backup run, a stack update, a host update or a notification. The daemon reads the material itself. The answer streams as text events, then one answer event; a failure is an error event. */
         post: operations["ask"];
         delete?: never;
         options?: never;
@@ -981,49 +981,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/secrets": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** All registered secrets (presence only, never values). */
-        get: operations["listSecrets"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/secrets/{service}/{key}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Metadata of one secret. */
-        get: operations["getSecret"];
-        /**
-         * Set or rotate a secret; commits the encrypted change.
-         * @description `409 git_preflight` when the repo is not in a state that allows a commit.
-         *     `description` is accepted for compatibility and ignored.
-         */
-        put: operations["setSecret"];
-        post?: never;
-        /**
-         * Wipe a secret (sets it to the empty string); commits the change.
-         * @description `409 git_preflight` when the repo is not in a state that allows a commit.
-         */
-        delete: operations["deleteSecret"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/security/audits": {
         parameters: {
             query?: never;
@@ -1635,26 +1592,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/system-updates/deploy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Deploy core from main.
-         * @description Fetches main, builds it, switches and checks the daemon and Caddy; if they do not come back the host returns to the generation before. The work outlives the daemon restart it causes: follow it in /system-updates/deploys.
-         */
-        post: operations["deployCore"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/system-updates/deploys": {
         parameters: {
             query?: never;
@@ -1662,7 +1599,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Core deploys and rollbacks, newest first. */
+        /** Update operations (builds, downloads and installs), newest first. */
         get: operations["getCoreDeploys"];
         put?: never;
         post?: never;
@@ -1679,7 +1616,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Image host: the booted, installed and staged versions of the image and the core extension. */
+        /** The booted, installed and staged versions of the image and the core extension. */
         get: operations["getImageStatus"];
         put?: never;
         post?: never;
@@ -1698,7 +1635,7 @@ export interface paths {
         };
         get?: never;
         /**
-         * Image host: the time of day a downloaded release installs by itself.
+         * The time of day a downloaded release installs by itself.
          * @description At that time a staged release is installed as installRelease does, with a reboot at once when it brings a new image. Each release is tried once.
          */
         put: operations["setImageAutoInstall"];
@@ -1719,7 +1656,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Image host: boot another installed image version, once or by default.
+         * Boot another installed image version, once or by default.
          * @description The way back to the version before, and the way to try a version again that failed its boots: one that comes up counts as good again. A default lasts until the next image is installed.
          */
         post: operations["bootImage"];
@@ -1739,7 +1676,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Image host: build the image and the core extension from main.
+         * Build the image and the core extension from main.
          * @description Fetches main and runs image/build.sh; the result is staged in the update folder. Follow it in /system-updates/deploys.
          */
         post: operations["buildImage"];
@@ -1759,7 +1696,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Image host: update the core extension, without a reboot.
+         * Update the core extension, without a reboot.
          * @description Merges the newest staged core extension and restarts the daemon and Caddy; if they do not come back, the version before goes back.
          */
         post: operations["updateCoreExtension"];
@@ -1779,7 +1716,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Image host: look for a newer release and download it.
+         * Look for a newer release and download it.
          * @description Asks the release server for its newest release and, when it is newer than what the host has, downloads it, checks its signed checksums and stages it in the update folder. Nothing is installed. Follow it in /system-updates/deploys.
          */
         post: operations["downloadRelease"];
@@ -1799,7 +1736,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Image host: install the newest staged image into the free slot.
+         * Install the newest staged image into the free slot.
          * @description It boots at the next reboot, which this can start now or at a time. A version that does not boot falls back to the one before by itself.
          */
         post: operations["installImage"];
@@ -1819,7 +1756,7 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Image host: install what is staged, the image and the core extension, in one operation.
+         * Install what is staged, the image and the core extension, in one operation.
          * @description The image goes into the free slot, then the core extension is merged and checked (the version before goes back when it does not start), then the reboot choice applies. Follow it in /system-updates/deploys.
          */
         post: operations["installRelease"];
@@ -1843,57 +1780,6 @@ export interface paths {
          * @description The reboot starts a few seconds after the response.
          */
         post: operations["rebootSystem"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/system-updates/rollback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Switch core back to the generation before. */
-        post: operations["rollbackCore"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/system-updates/status": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** The System card — release, newer release, reboot needed and the running generation. */
-        get: operations["getSystemUpdateStatus"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/system-updates/timeline": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** System generations grouped by day. */
-        get: operations["getSystemUpdatesTimeline"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2309,7 +2195,7 @@ export interface components {
             pools: components["schemas"]["PoolConfig"][];
         };
         CoreDeploy: {
-            /** @description Units that failed during the switch. They do not undo the deploy. */
+            /** @description Units that failed during the operation. They do not undo it. */
             failed_units: string[];
             /** Format: date-time */
             finished_at: string | null;
@@ -2318,12 +2204,9 @@ export interface components {
              * @description Start time in unix milliseconds.
              */
             id: number;
-            /**
-             * @description deploy and rollback on a NixOS host; build, download, core-update, image-update and install on an image host.
-             * @enum {string}
-             */
-            kind: "deploy" | "rollback" | "build" | "download" | "core-update" | "image-update" | "install";
-            /** @description The end of the build and switch output. */
+            /** @enum {string} */
+            kind: "build" | "download" | "core-update" | "image-update" | "install";
+            /** @description The end of the operation's output. */
             log: string;
             /** @description What it is doing now, or did last. */
             phase: string;
@@ -2331,11 +2214,11 @@ export interface components {
             reason: string;
             /** @enum {string} */
             result: "running" | "healthy" | "rolled_back" | "build_failed" | "failed" | "interrupted";
-            /** @description The commit of main being deployed or built; empty until it is fetched, and for a rollback. */
+            /** @description The commit of main a build is of; empty until it is fetched, and for every other kind. */
             rev: string;
             /** Format: date-time */
             started_at: string;
-            /** @description Image host: the image or core version built or installed. */
+            /** @description The image or core version built, downloaded or installed. */
             version?: string;
         };
         CoreExtension: {
@@ -2346,16 +2229,6 @@ export interface components {
             /** @description A core version that did not start at boot; the host runs the one before. */
             fell_back_from?: string;
             installed: string[];
-        };
-        CoreStatus: {
-            /** @description The host names the repository core is deployed from. */
-            configured: boolean;
-            deploying: boolean;
-            /** @description The newest commit of main the daemon has seen; empty = not checked yet. */
-            main_rev: string;
-            /** @description The commit the running system was built from. */
-            running_rev: string;
-            update_available: boolean;
         };
         Counts: {
             /** Format: int64 */
@@ -3085,14 +2958,6 @@ export interface components {
             /** @description The LAN's IPv4 subnets, such as 192.168.1.0/24: the clients a stack's port grant from lan lets through. */
             lan: string[];
         };
-        NixOSRelease: {
-            /** @description e.g. 26.11; empty = unknown. */
-            current: string;
-            /** @description Branch the base follows; null = pinned to a revision. */
-            follows: string | null;
-            /** @description Pinned to a pre-release revision; current is then read from the running NixOS version. */
-            pinned: boolean;
-        };
         NotificationDelivery: {
             /** Format: date-time */
             at: string;
@@ -3285,12 +3150,6 @@ export interface components {
             /** @description Where the host looks for releases. */
             url: string;
         };
-        ReleaseUpgrade: {
-            notes_url: string;
-            /** @description The branch exists but the release date has not passed. */
-            pre_release: boolean;
-            release: string;
-        };
         ResticInput: {
             /** @description Backend credentials as environment variables (AWS_ACCESS_KEY_ID, B2_ACCOUNT_KEY, ...). On update an absent value keeps the stored ones. */
             env?: {
@@ -3339,39 +3198,6 @@ export interface components {
         SSHKeys: {
             /** @description One public key per entry, in OpenSSH format (ssh-ed25519 AAAA… comment). */
             keys: string[];
-        };
-        SecretMutation: {
-            branch: string;
-            commit: string;
-            deploy_pending: boolean;
-            /** @description Committed locally but the push failed. */
-            push_pending: boolean;
-            warnings: string[];
-        };
-        SecretSet: {
-            /** @description Accepted and ignored. */
-            description?: string;
-            value: string;
-        };
-        SecretStatus: {
-            description: string;
-            /**
-             * Format: date-time
-             * @description Null if unknown.
-             */
-            modified_at: string | null;
-            /** @description service/KEY. */
-            name: string;
-            present: boolean;
-            /** @description First 3 characters followed by "•••". */
-            preview?: string;
-            /** @description Runtime path, e.g. /run/secrets/caddy/CLOUDFLARE_API_TOKEN. */
-            run_path: string;
-            services: string[];
-        };
-        SecretsList: {
-            deploy_pending: boolean;
-            secrets: components["schemas"]["SecretStatus"][];
         };
         SecurityAudit: {
             chunks: components["schemas"]["AuditChunk"][];
@@ -3885,24 +3711,6 @@ export interface components {
         SubvolumeUsageRequest: {
             paths: string[];
         };
-        SystemUpdateStatus: {
-            /**
-             * Format: date-time
-             * @description Last release check; null = not yet.
-             */
-            checked_at: string | null;
-            core: components["schemas"]["CoreStatus"];
-            /**
-             * Format: int64
-             * @description Running system's generation; 0 = unknown.
-             */
-            generation: number;
-            /** @description The running kernel/initrd differs from the installed system's. */
-            reboot_required: boolean;
-            release: components["schemas"]["NixOSRelease"];
-            /** @description A newer release; null = none. */
-            upgrade: components["schemas"]["ReleaseUpgrade"] | null;
-        };
         Tailscale: {
             /** @description Subnets offered to the tailnet, such as the LAN. */
             advertise_routes?: string[];
@@ -3936,58 +3744,8 @@ export interface components {
             /** @enum {string} */
             kind: "upgrade" | "downgrade" | "added" | "removed" | "changed";
             name: string;
-            /** @description Why a package counts as explicit: service or kernel. */
-            tier: string;
             /** @description Empty = removed. */
             to: string;
-        };
-        UpdateDay: {
-            /** @description YYYY-MM-DD. */
-            date: string;
-            events: components["schemas"]["UpdateEvent"][];
-        };
-        UpdateEvent: {
-            /** @description First recorded generation; nothing to diff against. */
-            baseline?: boolean;
-            changes: components["schemas"]["UpdateChange"][];
-            /** @description The running system. */
-            current?: boolean;
-            /**
-             * Format: int64
-             * @description Dependency version changes, not listed.
-             */
-            dependencies: number;
-            /** Format: int64 */
-            generation?: number;
-            id: string;
-            nixos_version?: string;
-            /**
-             * @description rollback: a switch to a system that was live before; manual: any other deploy.
-             * @enum {string}
-             */
-            source: "manual" | "rollback";
-            system?: string;
-            /** Format: date-time */
-            time: string;
-            /**
-             * Format: int64
-             * @description Before search filtering.
-             */
-            total_changes: number;
-        };
-        UpdateTimeline: {
-            days: components["schemas"]["UpdateDay"][];
-            /**
-             * Format: int64
-             * @description 1-based.
-             */
-            page: number;
-            /** Format: int64 */
-            pages: number;
-            /** Format: int64 */
-            total_days: number;
-            /** Format: int64 */
-            total_events: number;
         };
         Usage: {
             /**
@@ -9175,181 +8933,6 @@ export interface operations {
             };
         };
     };
-    listSecrets: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SecretsList"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        code?: string;
-                        detail?: string;
-                        instance?: string;
-                        /** Format: int32 */
-                        status: number;
-                        title: string;
-                        type: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    getSecret: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Secret group, e.g. caddy. */
-                service: string;
-                /** @description Secret name within the group, e.g. CLOUDFLARE_API_TOKEN. */
-                key: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SecretStatus"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        code?: string;
-                        detail?: string;
-                        instance?: string;
-                        /** Format: int32 */
-                        status: number;
-                        title: string;
-                        type: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    setSecret: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Secret group, e.g. caddy. */
-                service: string;
-                /** @description Secret name within the group, e.g. CLOUDFLARE_API_TOKEN. */
-                key: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["SecretSet"];
-            };
-        };
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SecretMutation"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        code?: string;
-                        detail?: string;
-                        instance?: string;
-                        /** Format: int32 */
-                        status: number;
-                        title: string;
-                        type: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    deleteSecret: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Secret group, e.g. caddy. */
-                service: string;
-                /** @description Secret name within the group, e.g. CLOUDFLARE_API_TOKEN. */
-                key: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SecretMutation"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        code?: string;
-                        detail?: string;
-                        instance?: string;
-                        /** Format: int32 */
-                        status: number;
-                        title: string;
-                        type: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     listSecurityAudits: {
         parameters: {
             query?: never;
@@ -11257,45 +10840,6 @@ export interface operations {
             };
         };
     };
-    deployCore: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Accepted */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CoreDeploy"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        code?: string;
-                        detail?: string;
-                        instance?: string;
-                        /** Format: int32 */
-                        status: number;
-                        title: string;
-                        type: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
     getCoreDeploys: {
         parameters: {
             query?: never;
@@ -12058,130 +11602,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        code?: string;
-                        detail?: string;
-                        instance?: string;
-                        /** Format: int32 */
-                        status: number;
-                        title: string;
-                        type: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    rollbackCore: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Accepted */
-            202: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CoreDeploy"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        code?: string;
-                        detail?: string;
-                        instance?: string;
-                        /** Format: int32 */
-                        status: number;
-                        title: string;
-                        type: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    getSystemUpdateStatus: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SystemUpdateStatus"];
-                };
-            };
-            /** @description Error */
-            default: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/problem+json": {
-                        code?: string;
-                        detail?: string;
-                        instance?: string;
-                        /** Format: int32 */
-                        status: number;
-                        title: string;
-                        type: string;
-                    } & {
-                        [key: string]: unknown;
-                    };
-                };
-            };
-        };
-    };
-    getSystemUpdatesTimeline: {
-        parameters: {
-            query?: {
-                /** @description Case-insensitive substring filter over change names. */
-                q?: string;
-                source?: "manual" | "rollback";
-                page?: number;
-                /** @description Days per page. */
-                days?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["UpdateTimeline"];
-                };
             };
             /** @description Error */
             default: {

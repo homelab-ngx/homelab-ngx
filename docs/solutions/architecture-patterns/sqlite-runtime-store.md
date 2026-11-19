@@ -21,7 +21,7 @@ Daemon state used to be spread over seven hand-rolled files (`services.yaml`, `s
 
 ## Guidance
 
-- All mutable daemon state lives in `/var/lib/homelab-daemon/homelab.db`. It is on the root disk so that it exists before `/pool` is mounted. Nix config (`/etc`) and secrets (sops) stay as files.
+- All mutable daemon state lives in `/var/lib/homelab-daemon/homelab.db`. It is on the root disk so that it exists before `/pool` is mounted. The Nix-rendered `config.json` stays a file, and so do the values sealed to the host key.
 - The driver is `modernc.org/sqlite` (pure Go, no cgo). Migrations are `apps/core/db/migrations/*.sql` (goose), and sqlc also reads them as the schema. Queries are in `db/queries/*.sql`. Timestamps are integer unix milliseconds.
 - `store.Open` sets WAL, `busy_timeout(5000)`, `synchronous(NORMAL)`, `foreign_keys(ON)`, and `_txlock=immediate`. The last one makes a write transaction take its lock up front and wait on the busy timeout, instead of failing when it tries to upgrade the lock.
 - Only the daemon migrates (`Migrate: true`). The CLI opens the DB with `Migrate: false`: it never creates the file and fails on a schema mismatch. The CLI opens the DB for exactly two things: the notify fallback when the daemon is down, and doctor failure streaks. Everything else goes through the API.

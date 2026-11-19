@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/urfave/cli/v2"
+
+	"homelab-ngx.com/core/internal/secretinput"
 )
 
 // printJSON writes v as indented JSON on stdout; nil prints {}.
@@ -37,12 +39,42 @@ func requireArgs(c *cli.Context, count int, usage string) error {
 	return nil
 }
 
-// splitSecret splits "service/KEY" into the two path parameters of
-// /secrets/{service}/{key}.
-func splitSecret(name string) (service, key string, err error) {
-	service, key, ok := strings.Cut(name, "/")
-	if !ok || service == "" || key == "" {
-		return "", "", fmt.Errorf("secret name must be service/KEY, got %q", name)
+// readSecretFor reads the new value from stdin or the terminal prompt.
+func readSecretFor(name string, fromStdin bool) (string, error) {
+	var val string
+	var err error
+	if fromStdin {
+		val, err = secretinput.Read(os.Stdin)
+	} else {
+		val, err = readPassword(fmt.Sprintf("Value for %s: ", name))
 	}
-	return service, key, nil
+	if err != nil {
+		return "", fmt.Errorf("reading value: %w", err)
+	}
+	if val == "" {
+		return "", fmt.Errorf("value must not be empty")
+	}
+	return val, nil
+}
+
+// argsAndBools splits c's arguments from the named boolean flags given after
+// them. urfave/cli v2 stops parsing flags at the first argument, and the
+// documented form puts --value-stdin last (`… set <name> --value-stdin`).
+// A flag given before the arguments is read as usual.
+func argsAndBools(c *cli.Context, names ...string) ([]string, map[string]bool) {
+	set := map[string]bool{}
+	for _, n := range names {
+		set[n] = c.Bool(n)
+	}
+	args := []string{}
+	for _, a := range c.Args().Slice() {
+		if n, ok := strings.CutPrefix(a, "--"); ok {
+			if _, known := set[n]; known {
+				set[n] = true
+				continue
+			}
+		}
+		args = append(args, a)
+	}
+	return args, set
 }

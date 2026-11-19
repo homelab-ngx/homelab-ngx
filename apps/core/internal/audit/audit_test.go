@@ -15,7 +15,6 @@ import (
 	"homelab-ngx.com/core/internal/httpx"
 	"homelab-ngx.com/core/internal/llm"
 	"homelab-ngx.com/core/internal/notifications"
-	"homelab-ngx.com/core/internal/secrets"
 	"homelab-ngx.com/core/internal/stacks"
 	"homelab-ngx.com/core/internal/store"
 	"homelab-ngx.com/core/internal/store/storetest"
@@ -96,12 +95,6 @@ func (f fakeStacks) List(context.Context) ([]stacks.Stack, error) {
 
 func (f fakeStacks) SecretValues(context.Context) ([]string, error) { return []string{f.secret}, nil }
 
-type fakeSecrets struct{}
-
-func (fakeSecrets) List(context.Context) (secrets.SecretsList, error) {
-	return secrets.SecretsList{Secrets: []secrets.SecretStatus{{Name: "caddy/CLOUDFLARE_API_TOKEN", Services: []string{"caddy"}, Present: true, RunPath: "/run/secrets/caddy", Preview: "cfx•••"}}}, nil
-}
-
 type fakeNotify struct {
 	mu   sync.Mutex
 	sent []notifications.Message
@@ -114,10 +107,7 @@ func (f *fakeNotify) Send(_ context.Context, m notifications.Message) (string, e
 	return "", nil
 }
 
-const (
-	stackSecret = "s3cr3t-stack-value"
-	sopsSecret  = "cf-token-0123456789"
-)
+const stackSecret = "s3cr3t-stack-value"
 
 func newService(t *testing.T, m *fakeModel) (*Service, *fakeNotify) {
 	t.Helper()
@@ -127,14 +117,12 @@ func newService(t *testing.T, m *fakeModel) (*Service, *fakeNotify) {
 		Host: config.Security{
 			Firewall: config.Firewall{Enabled: true, TCPPorts: []int{22, 443}},
 			SSH:      config.SSH{Enabled: true, Ports: []int{22}, Settings: map[string]any{"PasswordAuthentication": false}},
-			// A careless note that leaks both secrets.
-			Notes: []string{"the stack key is " + stackSecret + " and the token is " + sopsSecret},
+			// A careless note that leaks a secret.
+			Notes: []string{"the stack key is " + stackSecret},
 		},
-		Tunnel:   config.CloudflareTunnel{Enabled: true, Hostnames: []string{"photos.example.org"}, PublicHostnames: map[string]string{"photos.example.org": "the app cannot log in through Access"}},
-		Domain:   "home.example",
-		Stacks:   fakeStacks{secret: stackSecret},
-		Secrets:  fakeSecrets{},
-		ReadFile: func(string) ([]byte, error) { return []byte("CLOUDFLARE_API_TOKEN=" + sopsSecret + "\n"), nil },
+		Tunnel: config.CloudflareTunnel{Enabled: true, Hostnames: []string{"photos.example.org"}, PublicHostnames: map[string]string{"photos.example.org": "the app cannot log in through Access"}},
+		Domain: "home.example",
+		Stacks: fakeStacks{secret: stackSecret},
 	}
 	var a Assistant = fakeAssistant{}
 	if m != nil {
@@ -216,7 +204,7 @@ func TestAuditAsksEachAreaThenSummarises(t *testing.T) {
 		if !r.Reasoning || r.MaxTokens != chunkTokens {
 			t.Fatalf("request = %+v", r)
 		}
-		for _, leak := range []string{stackSecret, sopsSecret, "user:pw", "cfx"} {
+		for _, leak := range []string{stackSecret, "user:pw"} {
 			if strings.Contains(r.User, leak) {
 				t.Fatalf("%q was sent:\n%s", leak, r.User)
 			}

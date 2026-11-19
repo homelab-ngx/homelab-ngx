@@ -52,13 +52,13 @@ var briefs = map[Area]string{
 	AreaExposure: "Exposure and network: what is reachable, from where. The firewall, what listens, the hostnames published to the internet, the host's Caddy sites, the stacks' routes and ports, the VPN and Tailscale.",
 	AreaAccess:   "Access: who and what can operate the host. SSH, login users, sudo, nix trusted users, the dashboard and the daemon API, the stacks' API grants, and where the assistant sends material.",
 	AreaStacks:   "Stacks: what each stack may do on the host. Its grants (gpu, containers, egress, storage, api), its variables, grants waiting for approval, and where its source comes from.",
-	AreaSecrets:  "Secrets and backups: the host's secrets (names, users, how long since each changed) and whether the backups would survive losing the host.",
+	AreaSecrets:  "Backups: where they go and whether they would survive losing the host.",
 	AreaUpdates:  "Updates and health: how current the host and the stacks are, a pending reboot, and open problems that bear on security.",
 }
 
 // AreaTitles name the areas for people.
 var AreaTitles = map[Area]string{
-	AreaExposure: "Exposure", AreaAccess: "Access", AreaStacks: "Stacks", AreaSecrets: "Secrets and backups",
+	AreaExposure: "Exposure", AreaAccess: "Access", AreaStacks: "Stacks", AreaSecrets: "Backups",
 	AreaUpdates: "Updates", areaSummary: "Summary",
 }
 

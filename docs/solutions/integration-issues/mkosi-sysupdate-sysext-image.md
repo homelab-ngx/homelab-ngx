@@ -386,9 +386,9 @@ and a host that installed it would never take a build of main again.
 
 ## A fresh host has no age key
 
-sops-nix made `/var/lib/sops-age/keys.txt` on NixOS; on the image the daemon
-creates it on first start (`agefile.EnsureKey`), or every sealed value
-(stack variables, channel tokens, backup keys) fails with a bare 500.
+Nothing in the image makes `/var/lib/sops-age/keys.txt`, so the daemon
+creates it on first start (`agefile.EnsureKey`). Without it every sealed
+value (stack variables, channel tokens, backup keys) fails with a bare 500.
 
 ## Smaller details
 

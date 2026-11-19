@@ -124,11 +124,6 @@ func TestOtherQueriesRoundTrip(t *testing.T) {
 	if d, _ := q.ListNotificationDeliveries(ctx, []int64{nid}); len(d) != 1 || !d[0].Ok {
 		t.Fatal("deliveries")
 	}
-
-	_ = q.SetSecretRotation(ctx, store.SetSecretRotationParams{Name: "a/B", RotatedAt: 3})
-	if r, _ := q.ListSecretRotations(ctx); len(r) != 1 || r[0].RotatedAt != 3 {
-		t.Fatal("secret rotations")
-	}
 }
 
 func TestSnapshotKeep(t *testing.T) {

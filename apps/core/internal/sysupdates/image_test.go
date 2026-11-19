@@ -92,7 +92,7 @@ func TestImageStatus(t *testing.T) {
 		t.Fatalf("core = %+v", st.Core)
 	}
 	if _, err := (&Module{}).ImageStatus(context.Background()); !errors.Is(err, ErrNotImageHost) {
-		t.Fatalf("on NixOS: %v", err)
+		t.Fatalf("off the image: %v", err)
 	}
 }
 
@@ -108,11 +108,8 @@ func TestStartImageRefuses(t *testing.T) {
 	if _, err := img.StartImage(ctx, KindBuild, ""); !errors.Is(err, ErrDeployNotSet) {
 		t.Errorf("build without a source: %v", err)
 	}
-	if _, err := img.StartDeploy(ctx, KindDeploy); !errors.Is(err, ErrImageHost) {
-		t.Errorf("nixos deploy on an image host: %v", err)
-	}
 	if _, err := (&Module{}).StartImage(ctx, KindCoreUpdate, ""); !errors.Is(err, ErrNotImageHost) {
-		t.Errorf("image op on NixOS: %v", err)
+		t.Errorf("image op off the image: %v", err)
 	}
 }
 
@@ -133,7 +130,7 @@ func TestCoreUpdateHealthy(t *testing.T) {
 	sysupdateMoves(t, f, "2")
 	f.On("systemctl", "restart").Reply("")
 	f.On("systemctl", "is-active", "caddy.service").Reply("active\n")
-	x := newRun(t, f, KindCoreUpdate, func() (string, error) { return "", nil }, nil)
+	x := newRun(t, f, KindCoreUpdate, func() error { return nil })
 	if err := x.run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -157,12 +154,12 @@ func TestCoreUpdateRollsBack(t *testing.T) {
 	f.On("systemd-sysext", "refresh").Reply("")
 	f.On("systemctl", "is-active", "caddy.service").Reply("active\n")
 	broken := true
-	x := newRun(t, f, KindCoreUpdate, func() (string, error) {
+	x := newRun(t, f, KindCoreUpdate, func() error {
 		if broken && activeCore() == "2" {
-			return "", errors.New("no socket")
+			return errors.New("no socket")
 		}
-		return "", nil
-	}, nil)
+		return nil
+	})
 	if err := x.run(context.Background()); err == nil {
 		t.Fatal("a rolled back update reported success")
 	}
@@ -183,7 +180,7 @@ func TestImageUpdateReboots(t *testing.T) {
 		return cmdrunner.Result{}, nil
 	})
 	f.On("systemctl", "reboot").Reply("")
-	x := newRun(t, f, KindImageUpdate, func() (string, error) { return "", nil }, nil)
+	x := newRun(t, f, KindImageUpdate, func() error { return nil })
 	x.o.Reboot = "now"
 	if err := x.run(context.Background()); err != nil {
 		t.Fatal(err)

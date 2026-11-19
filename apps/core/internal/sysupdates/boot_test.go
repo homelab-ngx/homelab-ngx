@@ -17,6 +17,7 @@ import (
 
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/cmdrunner/cmdrunnertest"
+	"homelab-ngx.com/core/internal/notifications"
 )
 
 // bootHost adds the boot loader's variables and the boot check's files to
@@ -73,7 +74,7 @@ func TestBootImage(t *testing.T) {
 		}
 	}
 	if _, err := (&Module{}).BootImage(ctx, "1", "once", false); !errors.Is(err, ErrNotImageHost) {
-		t.Errorf("on NixOS: %v", err)
+		t.Errorf("off the image: %v", err)
 	}
 }
 
@@ -84,7 +85,7 @@ func TestBootCheckNotes(t *testing.T) {
 	_ = os.WriteFile(bootCheckFile, []byte("the daemon does not answer\n"), 0o644)
 	_ = os.WriteFile(coreFellBackFile, []byte(`{"from":"2","to":"1"}`+"\n"), 0o644)
 	n := &fakeNotifier{}
-	m := &Module{image: true, notify: n, file: filepath.Join(t.TempDir(), "x.json"), now: time.Now}
+	m := &Module{image: true, notify: n, dir: t.TempDir(), now: time.Now}
 	st, err := m.ImageStatus(context.Background())
 	if err != nil || st.BootCheck != "the daemon does not answer" || st.Core.FellBackFrom != "2" {
 		t.Fatalf("status = %+v %v", st, err)
@@ -131,7 +132,7 @@ func TestAutoInstall(t *testing.T) {
 	f.On("systemctl", "is-active", deployUnit).Reply("inactive\n")
 	f.On("systemd-run").Reply("")
 	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.Local)
-	m := &Module{image: true, r: f, file: filepath.Join(t.TempDir(), "x.json"), now: func() time.Time { return now }}
+	m := &Module{image: true, r: f, dir: t.TempDir(), now: func() time.Time { return now }}
 	ctx := context.Background()
 	if _, err := m.SetAutoInstall(ctx, "25:00"); !errors.Is(err, ErrBadTime) {
 		t.Fatalf("a bad time: %v", err)
@@ -183,7 +184,7 @@ func TestInstallRelease(t *testing.T) {
 		order = append(order, "reboot")
 		return cmdrunner.Result{}, nil
 	})
-	x := newRun(t, f, KindInstall, func() (string, error) { return "", nil }, nil)
+	x := newRun(t, f, KindInstall, func() error { return nil })
 	x.o.Reboot = "now"
 	if err := x.run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -201,12 +202,12 @@ func TestInstallRelease(t *testing.T) {
 	touch(t, filepath.Join(imageESPs[0], "homelab_1.efi"), filepath.Join(coreExtDir, "homelab-core_1.raw"))
 	useCore(t, "1")
 	order = nil
-	x = newRun(t, f, KindInstall, func() (string, error) {
+	x = newRun(t, f, KindInstall, func() error {
 		if activeCore() == "2" {
-			return "", errors.New("no socket")
+			return errors.New("no socket")
 		}
-		return "", nil
-	}, nil)
+		return nil
+	})
 	x.o.Reboot = "now"
 	if err := x.run(context.Background()); err == nil {
 		t.Fatal("an install whose core went back reported success")
@@ -285,4 +286,14 @@ func TestRoomFor(t *testing.T) {
 	if err := roomFor(context.Background(), dir, files); err == nil || !strings.Contains(err.Error(), "not enough room") {
 		t.Fatalf("too little room: %v", err)
 	}
+}
+
+type fakeNotifier struct {
+	scope   string
+	current []notifications.Problem
+}
+
+func (f *fakeNotifier) Reconcile(_ context.Context, scope string, current []notifications.Problem) (notifications.Result, error) {
+	f.scope, f.current = scope, current
+	return notifications.Result{}, nil
 }

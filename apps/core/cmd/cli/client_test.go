@@ -122,7 +122,7 @@ func runApp(t *testing.T, args ...string) error {
 	t.Helper()
 	app := &cli.App{Name: "homelab", Writer: io.Discard, ErrWriter: io.Discard,
 		Flags:    []cli.Flag{&cli.BoolFlag{Name: "json"}},
-		Commands: []*cli.Command{servicesCmd(), secretCmd(), backupCmd(), stacksCmd()}}
+		Commands: []*cli.Command{servicesCmd(), backupCmd(), stacksCmd()}}
 	return app.Run(append([]string{"homelab"}, args...))
 }
 
@@ -138,35 +138,5 @@ func TestServiceStartMapsProblemToError(t *testing.T) {
 	err := runApp(t, "services", "start", "immich")
 	if err == nil || !strings.Contains(err.Error(), "mount constraint missing") || !strings.Contains(err.Error(), "409") {
 		t.Fatalf("got %v", err)
-	}
-}
-
-func TestSecretNameSplitsIntoTwoPathParams(t *testing.T) {
-	var got string
-	serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = r.URL.Path
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"name":"caddy/CLOUDFLARE_API_TOKEN","description":"d","present":true,"modified_at":null,"run_path":"","services":[]}`))
-	}))
-	if err := runApp(t, "secret", "show", "caddy/CLOUDFLARE_API_TOKEN"); err != nil {
-		t.Fatal(err)
-	}
-	if got != "/api/secrets/caddy/CLOUDFLARE_API_TOKEN" {
-		t.Fatalf("path = %q", got)
-	}
-	if err := runApp(t, "secret", "show", "nokey"); err == nil || !strings.Contains(err.Error(), "service/KEY") {
-		t.Fatalf("want split error, got %v", err)
-	}
-}
-
-func TestSplitSecret(t *testing.T) {
-	svc, key, err := splitSecret("a/B/C")
-	if err != nil || svc != "a" || key != "B/C" {
-		t.Fatalf("%q %q %v", svc, key, err)
-	}
-	for _, bad := range []string{"", "x", "/k", "s/"} {
-		if _, _, err := splitSecret(bad); err == nil {
-			t.Errorf("%q should fail", bad)
-		}
 	}
 }

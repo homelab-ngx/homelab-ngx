@@ -66,7 +66,7 @@ _Avoid_: API key, secret (a stack variable is something else)
 
 **Stack variable**:
 A value a stack gets from the host instead of its repo. The manifest (version 5) declares each one with a kind: env (a plain value), secret (write-only, no default), path (a host directory the operator picks, bound at the variable's mount) or, from version 8, address (see Address variable). Each is required or optional, and env and path may have a default. The operator may add env variables of their own (plain unless marked secret). The value is the stored one, else the default, else unset; an install or update waits until every required one has a value. Stored age-encrypted in the stack's state directory; env and secret values are delivered at `/run/secrets/<NAME>` and, when env-safe, in `/run/secrets/env`, and a path as a bind.
-_Avoid_: stack secret key, sops secret (stacks hold no sops), env var (only the env-safe ones reach `env`)
+_Avoid_: stack secret key, env var (only the env-safe ones reach `env`)
 
 **Stack listener**:
 The daemon's second API, on TCP 7781, which a stack reaches at its host address (`10.99.N.1`), serving only read and control operations to a stack whose token, source address and scope check out.
@@ -81,7 +81,7 @@ One install, update or rollback of a stack, kept in `stack_updates` with its res
 _Avoid_: deployment, release
 
 **Core deploy**:
-One update of core, or one rollback to the version before, started through the daemon (dashboard or CLI). On an image host it installs a new core extension or image with systemd-sysupdate and checks the daemon and Caddy; if they do not come back the host returns to the version before. Its result is healthy, rolled back, build failed, failed or interrupted.
+One update of core, or one rollback to the version before, started through the daemon (dashboard or CLI). It installs a new core extension or image with systemd-sysupdate and checks the daemon and Caddy; if they do not come back the host returns to the version before. Its result is healthy, rolled back, build failed, failed or interrupted.
 _Avoid_: update attempt (that is a stack's), release
 
 **Stack lock**:

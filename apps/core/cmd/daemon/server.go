@@ -19,7 +19,6 @@ import (
 	"homelab-ngx.com/core/internal/llm"
 	"homelab-ngx.com/core/internal/metrics"
 	"homelab-ngx.com/core/internal/notifications"
-	"homelab-ngx.com/core/internal/secrets"
 	"homelab-ngx.com/core/internal/services"
 	"homelab-ngx.com/core/internal/stacks"
 	"homelab-ngx.com/core/internal/storage"
@@ -38,7 +37,6 @@ type deps struct {
 	backups       *backups.Service
 	storage       *storage.Service
 	stacks        *stacks.Service
-	secrets       *secrets.Service
 	sysupdates    *sysupdates.Module
 	notifications *notifications.Notifier
 	channels      *notifications.Channels
@@ -60,7 +58,6 @@ func features(d deps) []feature {
 		backups.NewHTTP(d.backups),
 		storage.NewHTTP(d.storage),
 		stacks.NewHTTP(d.stacks),
-		secrets.NewHTTP(d.secrets),
 		sysupdates.NewHTTP(d.sysupdates),
 		notifications.NewHTTP(d.notifications, d.channels),
 		hostcfg.NewHTTP(d.hostcfg),

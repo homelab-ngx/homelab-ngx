@@ -36,7 +36,6 @@ import (
 	logging "homelab-ngx.com/core/internal/logging"
 	"homelab-ngx.com/core/internal/metrics"
 	"homelab-ngx.com/core/internal/notifications"
-	"homelab-ngx.com/core/internal/secrets"
 	"homelab-ngx.com/core/internal/services"
 	"homelab-ngx.com/core/internal/stacks"
 	"homelab-ngx.com/core/internal/storage"
@@ -125,33 +124,25 @@ func run(configPath string) error {
 	} else {
 		log.Info("notifier not configured")
 	}
-	// Two-step runner wiring: secrets needs a plain runner to shell out to
-	// sops/git; every other consumer gets a runner that can inject registry
-	// secrets as environment variables.
-	repo := secrets.ResolveRepoPath(os.Getenv("HOMELAB_FLAKE"))
-	sec := secrets.New(cmdrunner.OS{}, secrets.DefaultRegistryPath, repo, secrets.NewRotationStore(st), nil)
-	r := cmdrunner.OS{Secrets: sec.Resolver()}
+	r := cmdrunner.OS{}
 
 	sd := systemd.New(r)
-	sysMod := sysupdates.New(r, nix.Paths.StateDir, repo)
+	sysMod := sysupdates.New(r, nix.Paths.StateDir)
 	sysMod.SetNotifier(notify)
-	// An image host updates through sysupdate (#97), a NixOS host deploys.
+	// Only a host on the image has updates.
 	sysMod.SetImage(hostcfg.Detect("/etc/os-release") == hostcfg.ManagedImage)
 	if exe, err := os.Executable(); err == nil {
-		host, _ := os.Hostname()
 		sysMod.SetDeploy(sysupdates.DeployConfig{
-			Source: os.Getenv("HOMELAB_CORE_SOURCE"), Host: host,
-			Socket: nix.Paths.Socket, Exe: exe, Unpushed: sec.Unpushed,
+			Source: os.Getenv("HOMELAB_CORE_SOURCE"), Socket: nix.Paths.Socket, Exe: exe,
 		})
 	}
-	// The host's own settings: kept and applied by the daemon on the image,
-	// read from the NixOS config on NixOS. The stacks follow their domain,
-	// dashboard address and LAN.
+	// The host's own settings: kept and applied by the daemon on the image.
+	// The stacks follow their domain, dashboard address and LAN.
 	hostSvc := hostcfg.New(st, stacks.DefaultHost(r).AgeKeyFile, hostcfg.Detect("/etc/os-release"), nix,
 		&hostcfg.ImageApplier{Runner: r}, logging.Logger("hostcfg"))
 	stackHost := stacks.DefaultHost(r)
-	// A fresh host has no age key yet (sops-nix made it on NixOS): stack
-	// variables, channel tokens and backup keys are sealed to it.
+	// A fresh host has no age key yet: stack variables, channel tokens and
+	// backup keys are sealed to it.
 	if made, err := agefile.EnsureKey(stackHost.AgeKeyFile); err != nil {
 		log.Warn("no host age key", "path", stackHost.AgeKeyFile, "error", err)
 	} else if made {
@@ -212,7 +203,7 @@ func run(configPath string) error {
 	}, logging.Logger("llm"))
 
 	// The security audit reads what the host's configuration says, the
-	// stacks, secrets, backups and updates, and asks the audit model.
+	// stacks, backups and updates, and asks the audit model.
 	auditSvc := audit.New(st, assistant, audit.Sources{
 		Facts: func(ctx context.Context) (config.Security, config.CloudflareTunnel, string) {
 			v, err := hostSvc.Values(ctx)
@@ -224,11 +215,11 @@ func run(configPath string) error {
 		Probe: func(ctx context.Context, t config.CloudflareTunnel) []cloudflare.HostnameStatus {
 			return cloudflare.ProbeHostnames(ctx, nil, t.Hostnames, t.PublicHostnames)
 		},
-		Runner: r, Stacks: stacksSvc, Secrets: sec, Backups: bk, Updates: sysMod, Problems: notify, Assistant: assistant,
+		Runner: r, Stacks: stacksSvc, Backups: bk, Updates: sysMod, Problems: notify, Assistant: assistant,
 	}, notify, logging.Logger("llm"))
 
 	handler, webHandler, stackHandler := handlers(deps{
-		services: svcs, backups: bk, storage: stor, stacks: stacksSvc, secrets: sec,
+		services: svcs, backups: bk, storage: stor, stacks: stacksSvc,
 		sysupdates: sysMod, notifications: notify, channels: channels, hostcfg: hostSvc, config: cfg, runner: r, metrics: met,
 		drafts: draftsSvc, assistant: assistant, ask: askSvc, audit: auditSvc,
 		auth: auth.New(st, logging.Logger("auth")),
@@ -330,24 +321,22 @@ func run(configPath string) error {
 	return werr
 }
 
-// runCheckConfig validates a nix-rendered config.json and prints a summary.
-// runCoreDeploy is the process a core deploy runs in: the daemon starts it
-// in a transient unit, because the switch restarts the daemon.
+// runCoreDeploy is the process an update runs in: the daemon starts it in a
+// transient unit, because a core update restarts the daemon.
 func runCoreDeploy(args []string) int {
 	fs := flag.NewFlagSet("core-deploy", flag.ContinueOnError)
 	var o sysupdates.RunOptions
-	fs.Int64Var(&o.ID, "id", 0, "deploy record id")
-	fs.StringVar(&o.Kind, "kind", sysupdates.KindDeploy, "deploy or rollback")
-	fs.StringVar(&o.Source, "source", "", "flake reference of the repository")
-	fs.StringVar(&o.Host, "host", "", "nixosConfigurations attribute")
+	fs.Int64Var(&o.ID, "id", 0, "update record id")
+	fs.StringVar(&o.Kind, "kind", "", "build, download, core-update, image-update or install")
+	fs.StringVar(&o.Source, "source", "", "the repository a build fetches")
 	fs.StringVar(&o.Socket, "socket", "", "daemon socket")
-	fs.StringVar(&o.State, "state", "", "deploy records file")
+	fs.StringVar(&o.State, "state", "", "update records file")
 	fs.StringVar(&o.Reboot, "reboot", "", "image update: \"\", \"now\" or HH:MM")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	if o.ID == 0 || o.State == "" || o.Socket == "" || (o.Kind == sysupdates.KindDeploy && (o.Source == "" || o.Host == "")) {
-		fmt.Fprintln(os.Stderr, "core-deploy: started by the daemon; see POST /system-updates/deploy")
+	if o.ID == 0 || o.Kind == "" || o.State == "" || o.Socket == "" {
+		fmt.Fprintln(os.Stderr, "core-deploy: started by the daemon; see POST /system-updates/image/release")
 		return 2
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -359,6 +348,7 @@ func runCoreDeploy(args []string) int {
 	return 0
 }
 
+// runCheckConfig validates a nix-rendered config.json and prints a summary.
 func runCheckConfig(args []string) int {
 	if len(args) != 1 {
 		fmt.Fprintln(os.Stderr, "usage: homelab-daemon check-config <path>")

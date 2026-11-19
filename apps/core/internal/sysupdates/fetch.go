@@ -1,6 +1,6 @@
 package sysupdates
 
-// Releases: an image host looks for a newer release on the release server
+// Releases: the host looks for a newer release on the release server
 // once a day. A newer one is downloaded in the deploy unit (KindDownload),
 // its SHA256SUMS checked against the release key and every file against its
 // sum, and staged in the update folder as a build from main would be. The
@@ -423,7 +423,7 @@ func (x *deployRun) download(ctx context.Context) (string, string) {
 
 // ── daemon side ─────────────────────────────────────────────────────────
 
-func (m *Module) releasePath() string { return filepath.Join(filepath.Dir(m.file), releaseFile) }
+func (m *Module) releasePath() string { return filepath.Join(m.dir, releaseFile) }
 
 // releaseState reads the state; the caller holds m.rel.mu.
 func (m *Module) releaseStateLocked() releaseState {

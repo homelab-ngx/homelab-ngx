@@ -1,7 +1,7 @@
 // Package agefile encrypts small secrets to the host's own age key and
-// reads them back with it. The key file is the one sops-nix keeps
-// (/var/lib/sops-age/keys.txt): what is sealed here is unreadable in a
-// backup and readable again on the host that holds the key.
+// reads them back with it (/var/lib/sops-age/keys.txt, a path kept from
+// the hosts that came before the image): what is sealed here is unreadable
+// in a backup and readable again on the host that holds the key.
 package agefile
 
 import (
@@ -84,7 +84,7 @@ func Open(keyFile string, cipher []byte) ([]byte, error) {
 }
 
 // EnsureKey makes keyFile with one new X25519 identity when it does not
-// exist, so a fresh host (the image, where no sops-nix made one) can seal
+// exist, so a fresh host can seal
 // secrets. An existing file is left alone. It reports whether it made one.
 func EnsureKey(keyFile string) (bool, error) {
 	if _, err := os.Stat(keyFile); err == nil {

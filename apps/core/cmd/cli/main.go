@@ -35,7 +35,6 @@ func main() {
 		Commands: []*cli.Command{
 			servicesCmd(),
 			backupCmd(),
-			secretCmd(),
 			authCmd(),
 			configCmd(),
 			daemonCmd(),
@@ -45,7 +44,6 @@ func main() {
 			systemCmd(),
 			storageCmd(),
 			hostCmd(),
-			deployCmd(),
 			updateCmd(),
 			completionCmd(),
 		},
@@ -88,43 +86,12 @@ func jsonFlag(c *cli.Context) bool {
 	return false
 }
 
-// ── deploy ───────────────────────────────────────────────────────────────────
-
-func deployCmd() *cli.Command {
-	return &cli.Command{
-		Name:  "deploy",
-		Usage: "Deploy core from main through the daemon, and wait for the result",
-		Subcommands: []*cli.Command{
-			{
-				Name:   "rollback",
-				Usage:  "Switch core back to the generation before",
-				Action: func(c *cli.Context) error { return runDeploy(c, "/system-updates/rollback", nil) },
-			},
-			{
-				Name:  "status",
-				Usage: "Show the latest deploy",
-				Action: func(c *cli.Context) error {
-					list, err := call[[]sysupdates.CoreDeploy](c.Context, http.MethodGet, "/system-updates/deploys", nil)
-					if err != nil {
-						return err
-					}
-					if len(*list) == 0 {
-						return printJSON(nil)
-					}
-					return printDeploy(c, (*list)[0])
-				},
-			},
-		},
-		Action: func(c *cli.Context) error { return runDeploy(c, "/system-updates/deploy", nil) },
-	}
-}
-
-// ── update (image host) ──────────────────────────────────────────────────────
+// ── update ───────────────────────────────────────────────────────────────────
 
 func updateCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "update",
-		Usage: "Image host: build, install and inspect updates of the image and the core extension",
+		Usage: "Build, download, install and inspect updates of the image and the core extension",
 		Subcommands: []*cli.Command{
 			{
 				Name:  "status",
@@ -190,14 +157,15 @@ func updateCmd() *cli.Command {
 }
 
 // deployPoll is how often runDeploy asks for the result; deployWait is how
-// long it puts up with a daemon that does not answer (the switch restarts it).
+// long it puts up with a daemon that does not answer (a core update restarts
+// it).
 var (
 	deployPoll = 2 * time.Second
 	deployWait = 10 * time.Minute
 )
 
-// runDeploy starts a deploy or rollback and follows it to its result. The
-// daemon restarts during the switch, so a failed call is retried.
+// runDeploy starts an update operation and follows it to its result. The
+// daemon restarts during a core update, so a failed call is retried.
 func runDeploy(c *cli.Context, path string, body any) error {
 	started, err := call[sysupdates.CoreDeploy](c.Context, http.MethodPost, path, body)
 	if err != nil {
@@ -225,7 +193,7 @@ func runDeploy(c *cli.Context, path string, body any) error {
 			}
 		}
 		if d == nil {
-			return fmt.Errorf("the daemon no longer lists deploy %d", started.Id)
+			return fmt.Errorf("the daemon no longer lists update %d", started.Id)
 		}
 		if d.Phase != phase && !jsonFlag(c) {
 			phase = d.Phase
@@ -244,7 +212,7 @@ func runDeploy(c *cli.Context, path string, body any) error {
 	}
 }
 
-// printDeploy prints a finished deploy: the record as JSON, or a few lines.
+// printDeploy prints a finished update: the record as JSON, or a few lines.
 // The log is left out of the text form unless it failed.
 func printDeploy(c *cli.Context, d sysupdates.CoreDeploy) error {
 	if jsonFlag(c) {

@@ -15,7 +15,7 @@ import (
 	"homelab-ngx.com/core/internal/httpx"
 )
 
-// hostKey writes a host age key file, as sops-nix keeps it, with a new
+// hostKey writes a host age key file with a new
 // identity and returns its path.
 func hostKey(t *testing.T, dir string) string {
 	t.Helper()

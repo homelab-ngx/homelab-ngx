@@ -88,7 +88,7 @@ func (fakeStacks) UpdateAttempt(_ context.Context, id int64) (stacks.StackUpdate
 type fakeDeploys struct{}
 
 func (fakeDeploys) Deploys(context.Context) []sysupdates.CoreDeploy {
-	return []sysupdates.CoreDeploy{{Id: 99, Kind: "deploy", Result: "rolled_back", Reason: "Caddy did not come back", FailedUnits: []string{"caddy.service"}}}
+	return []sysupdates.CoreDeploy{{Id: 99, Kind: "core-update", Result: "rolled_back", Reason: "Caddy did not come back", FailedUnits: []string{"caddy.service"}}}
 }
 
 type fakeNotifications struct{}
@@ -206,7 +206,7 @@ func TestRecordPrompts(t *testing.T) {
 	}{
 		{AskRequest{Kind: KindBackupRun, Ref: "4"}, []string{`Backup "photos", run 4`, "Error: one folder failed", "Library (/pool/photos): failed; error: permission denied", "restic: Fatal: unable"}},
 		{AskRequest{Kind: KindStackUpdate, Ref: "8"}, []string{`Stack "immich", update attempt 8`, "Reason: immich-server did not become healthy", "[earlier lines left out]", "error: health check timed out"}},
-		{AskRequest{Kind: KindCoreDeploy, Ref: "99"}, []string{"Core deploy", "Reason: Caddy did not come back", "during the switch: caddy.service"}},
+		{AskRequest{Kind: KindCoreDeploy, Ref: "99"}, []string{"Host update (core-update)", "Reason: Caddy did not come back", "during the update: caddy.service"}},
 		{AskRequest{Kind: KindNotification, Ref: "12"}, []string{"a problem was opened", "Title: Disk sdb is failing", "8 reallocated sectors", "Delivery by email failed: smtp: timeout"}},
 	}
 	for _, c := range cases {
@@ -278,7 +278,7 @@ func TestAskStreamsOverHTTP(t *testing.T) {
 	}
 	out, _ = io.ReadAll(res.Body)
 	res.Body.Close()
-	if !strings.Contains(string(out), "event: error\ndata: {\"message\":\"no core deploy 1\"}") {
+	if !strings.Contains(string(out), "event: error\ndata: {\"message\":\"no host update 1\"}") {
 		t.Fatalf("error stream:\n%s", out)
 	}
 }

@@ -17,19 +17,13 @@
   const audits = createQuery(() => ({ queryKey: securityKeys.audits, queryFn: fetchAudits }));
   const lastAudit = $derived(audits.data?.[0]);
 
-  // An image host answers the first; a NixOS host the second.
+  // Only a host on the image answers this.
   const image = createQuery(() => ({
     queryKey: ["daemon", "system-updates", "image"],
     queryFn: () => call(api.GET("/system-updates/image")),
     retry: false,
   }));
-  const status = createQuery(() => ({ queryKey: ["daemon", "system-updates", "status"], queryFn: () => call(api.GET("/system-updates/status")) }));
-  const updates = $derived.by(() => {
-    if (image.data) return headline(image.data);
-    const core = status.data?.core;
-    if (!core?.configured) return undefined;
-    return core.update_available ? { tone: "info" as const, state: "update ready", detail: "" } : { tone: "ok" as const, state: "up to date", detail: "" };
-  });
+  const updates = $derived(image.data ? headline(image.data) : undefined);
 
   const host = createQuery(() => ({ queryKey: hostKeys.settings, queryFn: fetchHostSettings }));
   const network = $derived.by(() => {

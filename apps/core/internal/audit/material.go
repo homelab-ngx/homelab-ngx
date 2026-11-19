@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -16,7 +15,6 @@ import (
 	"homelab-ngx.com/core/internal/config"
 	"homelab-ngx.com/core/internal/llm"
 	"homelab-ngx.com/core/internal/notifications"
-	"homelab-ngx.com/core/internal/secrets"
 	"homelab-ngx.com/core/internal/stacks"
 	"homelab-ngx.com/core/internal/sysupdates"
 )
@@ -30,15 +28,12 @@ type (
 		// scrub them out of the material.
 		SecretValues(ctx context.Context) ([]string, error)
 	}
-	SecretSource interface {
-		List(ctx context.Context) (secrets.SecretsList, error)
-	}
 	BackupSource interface {
 		List(ctx context.Context) ([]backups.Backup, error)
 		Destinations(ctx context.Context) ([]backups.Destination, error)
 	}
 	UpdateSource interface {
-		Status(ctx context.Context) sysupdates.SystemUpdateStatus
+		ImageStatus(ctx context.Context) (sysupdates.ImageStatus, error)
 	}
 	ProblemSource interface {
 		OpenProblems(ctx context.Context) ([]notifications.ProblemState, error)
@@ -50,10 +45,10 @@ type (
 
 // Sources are where an audit's material comes from.
 type Sources struct {
-	// Host is what the host's NixOS configuration says (config.json).
+	// Host is what the host's configuration says (config.json).
 	Host config.Security
 	// Facts, when set, gives Host, Tunnel and Domain at the time of the
-	// audit instead: an image host's settings change at run time.
+	// audit instead: the host's settings change at run time.
 	Facts func(ctx context.Context) (config.Security, config.CloudflareTunnel, string)
 	// Tunnel is the Cloudflare tunnel's published hostnames.
 	Tunnel config.CloudflareTunnel
@@ -64,13 +59,10 @@ type Sources struct {
 	// Runner runs ss for the listening sockets.
 	Runner    cmdrunner.Runner
 	Stacks    StackSource
-	Secrets   SecretSource
 	Backups   BackupSource
 	Updates   UpdateSource
 	Problems  ProblemSource
 	Assistant SettingsSource
-	// ReadFile reads a sops secret's file, only to scrub its value out.
-	ReadFile func(string) ([]byte, error)
 }
 
 // Caps on the material.
@@ -157,7 +149,7 @@ func (s *Service) exposure(ctx context.Context, list []stacks.Stack, stackErr er
 	h := src.Host
 	var b strings.Builder
 
-	b.WriteString("# Firewall (NixOS configuration)\n")
+	b.WriteString("# Firewall\n")
 	fmt.Fprintf(&b, "enabled: %t\n", h.Firewall.Enabled)
 	fmt.Fprintf(&b, "open on every interface: TCP %s; UDP %s\n", ints(h.Firewall.TCPPorts), ints(h.Firewall.UDPPorts))
 	for _, name := range sortedKeys(h.Firewall.Interfaces) {
@@ -299,7 +291,7 @@ func (s *Service) access(ctx context.Context, list []stacks.Stack, stackErr erro
 	h := src.Host
 	var b strings.Builder
 
-	b.WriteString("# SSH server (NixOS configuration)\n")
+	b.WriteString("# SSH server\n")
 	if !h.SSH.Enabled {
 		b.WriteString("off\n")
 	} else {
@@ -416,21 +408,7 @@ func stacksMaterial(list []stacks.Stack, stackErr error, known bool) string {
 func (s *Service) secretsAndBackups(ctx context.Context) string {
 	src := s.sources(ctx)
 	var b strings.Builder
-	b.WriteString("# Host secrets (sops; names only)\n")
-	if src.Secrets == nil {
-		b.WriteString(notVisible + "\n")
-	} else if l, err := src.Secrets.List(ctx); err != nil {
-		fmt.Fprintf(&b, "could not be read: %v\n", err)
-	} else {
-		for _, sec := range l.Secrets {
-			fmt.Fprintf(&b, "%s: used by %s; present %t; last changed %s\n", sec.Name, list0(sec.Services), sec.Present, dayPtr(sec.ModifiedAt))
-		}
-		if l.DeployPending {
-			b.WriteString("a secret change is waiting for a deploy\n")
-		}
-	}
-
-	b.WriteString("\n# Backup destinations (no credentials)\n")
+	b.WriteString("# Backup destinations (no credentials)\n")
 	if src.Backups == nil {
 		b.WriteString(notVisible + "\n")
 		return b.String()
@@ -480,24 +458,30 @@ func (s *Service) secretsAndBackups(ctx context.Context) string {
 func (s *Service) updates(ctx context.Context, list []stacks.Stack, stackErr error) string {
 	src := s.sources(ctx)
 	var b strings.Builder
-	b.WriteString("# Core (the host's NixOS system)\n")
+	b.WriteString("# Core (the host image and the core extension)\n")
 	if src.Updates == nil {
 		b.WriteString(notVisible + "\n")
+	} else if u, err := src.Updates.ImageStatus(ctx); err != nil {
+		fmt.Fprintf(&b, "could not be read: %v\n", err)
 	} else {
-		u := src.Updates.Status(ctx)
-		fmt.Fprintf(&b, "NixOS release %s", orDash(u.Release.Current))
-		if u.Release.Follows != nil {
-			fmt.Fprintf(&b, ", follows %s", *u.Release.Follows)
+		fmt.Fprintf(&b, "image version %s, core version %s\n", orDash(u.Booted), orDash(u.Core.Active))
+		switch r := u.Release; {
+		case r.Error != "":
+			fmt.Fprintf(&b, "the last release check failed: %s\n", r.Error)
+		case r.Latest != "":
+			fmt.Fprintf(&b, "newest release %s\n", r.Latest)
 		}
-		fmt.Fprintf(&b, ", pinned %t\n", u.Release.Pinned)
-		if u.Upgrade != nil {
-			fmt.Fprintf(&b, "a newer release is out: %s\n", u.Upgrade.Release)
+		if u.Release.CheckedAt != nil {
+			fmt.Fprintf(&b, "checked %s\n", day(*u.Release.CheckedAt))
 		}
-		fmt.Fprintf(&b, "running commit %s, main is %s, update available %t\n", short(u.Core.RunningRev), short(u.Core.MainRev), u.Core.UpdateAvailable)
-		fmt.Fprintf(&b, "reboot required (a newer kernel is installed): %t\n", u.RebootRequired)
-		if u.CheckedAt != nil {
-			fmt.Fprintf(&b, "checked %s\n", day(*u.CheckedAt))
+		if staged := append(append([]string{}, u.Available...), u.Core.Available...); len(staged) > 0 {
+			fmt.Fprintf(&b, "downloaded and not installed: %s\n", strings.Join(staged, ", "))
 		}
+		fmt.Fprintf(&b, "a newer image is installed and waits for a reboot: %t\n", u.PendingReboot)
+		if u.FellBackFrom != "" {
+			fmt.Fprintf(&b, "image %s did not boot; the host is back on the version before\n", u.FellBackFrom)
+		}
+		fmt.Fprintf(&b, "installs releases by itself: %s\n", orDash(u.AutoInstallAt))
 	}
 
 	b.WriteString("\n# Stack updates\n")
@@ -599,8 +583,7 @@ func firewallRules(cmds string) []string {
 	return out
 }
 
-// knownSecrets are the values to scrub: the stacks' secret variables and
-// the host's sops secrets, whole and line by line (an env file's values).
+// knownSecrets are the values to scrub: the stacks' secret variables.
 func (s *Service) knownSecrets(ctx context.Context) []string {
 	var out []string
 	add := func(v string) {
@@ -615,32 +598,6 @@ func (s *Service) knownSecrets(ctx context.Context) []string {
 		}
 		for _, v := range vals {
 			add(v)
-		}
-	}
-	if s.src.Secrets != nil {
-		read := s.src.ReadFile
-		if read == nil {
-			read = os.ReadFile
-		}
-		l, err := s.src.Secrets.List(ctx)
-		if err != nil {
-			s.log.Warn("audit: secrets could not be listed for the scrub", "error", err)
-		}
-		for _, sec := range l.Secrets {
-			if sec.RunPath == "" || !sec.Present {
-				continue
-			}
-			b, err := read(sec.RunPath)
-			if err != nil {
-				continue
-			}
-			add(string(b))
-			for _, line := range strings.Split(string(b), "\n") {
-				add(line)
-				if _, v, ok := strings.Cut(line, "="); ok {
-					add(strings.Trim(strings.TrimSpace(v), `"'`))
-				}
-			}
 		}
 	}
 	// Longest first, so a value that contains another goes whole.
