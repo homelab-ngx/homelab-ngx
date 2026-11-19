@@ -14,10 +14,19 @@
 let
   lib = pkgs.lib;
 
-  # The extension matches any image of this level (SYSEXT_LEVEL in the
-  # image's os-release); raise both together when the extension starts
-  # needing something new from the image.
+  # systemd-sysext merges an extension only into an image of its level
+  # (SYSEXT_LEVEL in the image's os-release). The level stays 1: what a core
+  # needs from the image is said by minImage.
   sysextLevel = "1";
+
+  # The oldest image version this core runs on; empty for any. Raise it to
+  # the version of the image that brings what the core cannot do without.
+  # A host applies a core only on an image that new (the image's
+  # usr/lib/homelab/core-at-boot, the daemon's core update), so a release
+  # with a higher minimum installs its image first and the core at the
+  # restart. What the core can do without, it does without: an older image
+  # must not stop it from starting.
+  minImage = "";
 
   static =
     drv:
@@ -154,6 +163,7 @@ pkgs.runCommand "homelab-core-extension"
     SYSEXT_LEVEL=${sysextLevel}
     SYSEXT_ID=homelab-core
     SYSEXT_VERSION_ID=${daemon.version}
+    HOMELAB_MIN_IMAGE=${minImage}
     EXTENSION_RELOAD_MANAGER=1
     EOF
     chmod -R u+w,go-w $root

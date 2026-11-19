@@ -69,6 +69,13 @@ x86_64 Linux and on Apple silicon Macs; the image builds only on Linux.
   `src/ui-rules.test.ts` fails when a page grows past its word limits or
   uses a font size, mono or a fold outside the system. Cut the text instead
   of raising a limit. The dashboard is Svelte 5 with runes.
+- **A core runs on older images.** Image and core update apart, so a new
+  core meets hosts whose image is older. When the daemon uses something of
+  the image (a program, a unit, a file), it treats its absence as that
+  feature being unavailable and still starts. When it cannot do without,
+  raise `minImage` in `nix/pkgs/core-extension.nix` to the image version
+  that brings it: hosts then apply that core only on such an image. Details:
+  `docs/solutions/integration-issues/mkosi-sysupdate-sysext-image.md`.
 - **Dependency hashes.** After changing `go.mod`/`go.sum` or
   `apps/dashboard/package-lock.json`, run
   `scripts/update-hashes.sh daemon|dashboard` to refresh

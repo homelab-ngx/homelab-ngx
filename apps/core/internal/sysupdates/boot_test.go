@@ -24,9 +24,12 @@ import (
 // an image host's temp root.
 func bootHost(t *testing.T, root string) {
 	t.Helper()
-	old := []string{efiVars, bootCheckFile, coreFellBackFile}
+	old := []string{efiVars, bootCheckFile, coreFellBackFile, coreFailedFile, coreMinImageBin}
 	efiVars, bootCheckFile, coreFellBackFile = filepath.Join(root, "efivars"), filepath.Join(root, "boot-check-failed"), filepath.Join(root, "core-fell-back")
-	t.Cleanup(func() { efiVars, bootCheckFile, coreFellBackFile = old[0], old[1], old[2] })
+	coreFailedFile, coreMinImageBin = filepath.Join(root, "core-failed"), filepath.Join(root, "core-min-image")
+	t.Cleanup(func() {
+		efiVars, bootCheckFile, coreFellBackFile, coreFailedFile, coreMinImageBin = old[0], old[1], old[2], old[3], old[4]
+	})
 	_ = os.MkdirAll(efiVars, 0o755)
 }
 

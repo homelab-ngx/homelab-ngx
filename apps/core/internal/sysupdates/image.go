@@ -40,16 +40,22 @@ const (
 
 // Where the image host keeps its updates; variables for tests.
 var (
-	imageUpdates   = "/var/lib/homelab/updates"
-	imageBuildDir  = "/var/cache/homelab-image"
-	imageESPs      = []string{"/boot/EFI/Linux", "/efi/EFI/Linux"}
-	coreExtDir     = "/var/lib/extensions.d"
-	coreExtLink    = "/var/lib/extensions/homelab-core.raw"
-	osRelease      = "/etc/os-release"
-	sysupdateBin   = "/usr/lib/systemd/systemd-sysupdate"
-	githubTokens   = []string{"/var/lib/homelab/github-token", "/run/secrets/nix/GITHUB_TOKEN"}
-	imageKeep      = 2
-	imageBuildTime = 2 * time.Hour
+	imageUpdates  = "/var/lib/homelab/updates"
+	imageBuildDir = "/var/cache/homelab-image"
+	imageESPs     = []string{"/boot/EFI/Linux", "/efi/EFI/Linux"}
+	coreExtDir    = "/var/lib/extensions.d"
+	coreExtLink   = "/var/lib/extensions/homelab-core.raw"
+	osRelease     = "/etc/os-release"
+	sysupdateBin  = "/usr/lib/systemd/systemd-sysupdate"
+	githubTokens  = []string{"/var/lib/homelab/github-token", "/run/secrets/nix/GITHUB_TOKEN"}
+	// coreMinImageBin prints the oldest image version a core extension
+	// runs on; an image from before the rule has no such program. A core
+	// that did not start is listed in coreFailedFile, and no boot uses it
+	// again by itself (the image's usr/lib/homelab/core-at-boot).
+	coreMinImageBin = "/usr/lib/homelab/core-min-image"
+	coreFailedFile  = "/var/lib/homelab/core-failed"
+	imageKeep       = 2
+	imageBuildTime  = 2 * time.Hour
 )
 
 // Errors of the image operations.
@@ -446,10 +452,60 @@ func moveFile(from, to string) error {
 	return os.Remove(from)
 }
 
+// coreWaits is the newest staged core when it is newer than the active one
+// and needs a newer image than the host runs, with that image's version;
+// "" when the staged core can be used now. An image without
+// coreMinImageBin knows no minimum, and a core is tried on it as before.
+func (x *deployRun) coreWaits(ctx context.Context) (core, image string) {
+	staged := versionsIn(filepath.Join(imageUpdates, "core"), coreFileRE)
+	if len(staged) == 0 || compareVersions(staged[0], activeCore()) <= 0 {
+		return "", ""
+	}
+	if _, err := os.Stat(coreMinImageBin); err != nil {
+		return "", ""
+	}
+	cctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	res, err := x.r.Run(cctx, cmdrunner.Cmd{Module: "sysupdates", Name: coreMinImageBin,
+		Args: []string{filepath.Join(imageUpdates, "core", "homelab-core_"+staged[0]+".raw")}})
+	min := strings.TrimSpace(res.Stdout)
+	if err != nil || min == "" || compareVersions(min, bootedVersion()) <= 0 {
+		return "", ""
+	}
+	return staged[0], min
+}
+
+// coreFailed lists the cores that did not start.
+func coreFailed() []string {
+	b, _ := os.ReadFile(coreFailedFile)
+	return strings.Fields(string(b))
+}
+
+// markCoreFailed writes down (failed) or forgets a core that did not start.
+func markCoreFailed(v string, failed bool) {
+	list := slices.DeleteFunc(coreFailed(), func(s string) bool { return s == v })
+	if failed {
+		list = append(list, v)
+	}
+	if len(list) == 0 {
+		_ = os.Remove(coreFailedFile)
+		return
+	}
+	if err := os.WriteFile(coreFailedFile, []byte(strings.Join(list, "\n")+"\n"), 0o644); err != nil {
+		log.Warn("the cores that did not start were not written down", "error", err)
+	}
+}
+
 // coreUpdate merges the newest staged core extension and restarts the
-// daemon and Caddy on it; if they do not come back, the one before goes back.
+// daemon and Caddy on it; if they do not come back, the one before goes
+// back and no boot tries the new one again by itself. A core that needs a
+// newer image than the host runs is refused.
 func (x *deployRun) coreUpdate(ctx context.Context) (string, string) {
 	prev := activeCore()
+	if v, min := x.coreWaits(ctx); v != "" {
+		x.d.Version = v
+		return DeployFailed, fmt.Sprintf("core %s needs image %s or newer, and the host runs %s: install the image and restart", v, min, bootedVersion())
+	}
 	x.phase("Update")
 	if out, err := x.cmd(ctx, 10*time.Minute, nil, sysupdateBin, "--component=homelab-core", "--verify=no", "update"); err != nil {
 		return DeployFailed, "sysupdate: " + strings.TrimSpace(lastLines(out, 5))
@@ -470,12 +526,15 @@ func (x *deployRun) coreUpdate(ctx context.Context) (string, string) {
 	x.phase("Health check")
 	why := x.waitHealthy(ctx)
 	if why == "" {
+		// Asked for and healthy: an earlier failure of it is forgotten.
+		markCoreFailed(now, false)
 		return DeployHealthy, ""
 	}
 	if prev == "" {
 		return DeployFailed, why
 	}
 	x.phase("Roll back")
+	markCoreFailed(now, true)
 	if err := os.Remove(coreExtLink); err == nil || errors.Is(err, os.ErrNotExist) {
 		_ = os.Symlink(filepath.Join("..", filepath.Base(coreExtDir), "homelab-core_"+prev+".raw"), coreExtLink)
 	}
@@ -503,11 +562,16 @@ func (x *deployRun) imageUpdate(ctx context.Context) (string, string) {
 // install installs what is staged in the order that keeps the host on a
 // working pair: the image into the free slot (nothing runs it yet), then
 // the core extension, which is checked and put back when it does not start,
-// and only then the reboot into the new image.
+// and only then the reboot into the new image. A core that needs the new
+// image is left for that image's first boot, which applies it.
 func (x *deployRun) install(ctx context.Context) (string, string) {
 	image, why := x.installImage(ctx)
 	if why != "" {
 		return DeployFailed, why
+	}
+	if v, min := x.coreWaits(ctx); image != "" && v != "" && compareVersions(min, image) <= 0 {
+		x.logf("core %s needs image %s or newer: it is applied when image %s starts", v, min, image)
+		return x.rebootChoice(ctx)
 	}
 	result, reason := x.coreUpdate(ctx)
 	if image == "" {

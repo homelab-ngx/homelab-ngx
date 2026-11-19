@@ -4,7 +4,9 @@
 #
 # When the daemon does not answer, the core extension from before is tried:
 # a core that only breaks at boot must not take the host down. If that one
-# answers it stays, and the daemon says so.
+# answers it stays, the daemon says so, and the core that did not start is
+# written down (core-failed), so no boot uses it again by itself
+# (usr/lib/homelab/core-at-boot).
 #
 # A boot that fails the check restarts only while the boot loader counts its
 # tries (a version on its first boots): the tries run out and the version
@@ -57,6 +59,7 @@ check() {
     use "$prev"
     if answers 30; then
       printf '{"from":"%s","to":"%s"}\n' "$(version "$cur")" "$(version "$prev")" > /var/lib/homelab/core-fell-back
+      grep -qFx "$(version "$cur")" /var/lib/homelab/core-failed 2>/dev/null || version "$cur" >> /var/lib/homelab/core-failed
       echo "core $(version "$cur") did not start: the host runs core $(version "$prev")" >&2
       return 0
     fi

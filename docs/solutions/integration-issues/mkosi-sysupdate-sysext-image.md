@@ -128,6 +128,35 @@ has the root, and never the installer medium when another disk has it.
   the machine ID, so two disks installed on one machine got the same ESP
   and `/var` partition UUIDs.
 
+## A core and the image it runs on
+
+Image and core are released together and update apart: the core without a
+restart, the image with one. The one rule between them is that **a core
+names the oldest image it runs on** (`HOMELAB_MIN_IMAGE` in its
+extension-release, `minImage` in `nix/pkgs/core-extension.nix`; empty for
+any). Images try to stay compatible with older cores, without a promise,
+and a core does without what an older image lacks rather than not start.
+`SYSEXT_LEVEL` stays 1 on both: an extension of another level is not merged
+at all, which leaves a host without its daemon.
+
+- **Every boot picks the core** (`homelab-core-update.service`, before
+  `systemd-sysext.service`, so nothing has to restart): the newest one the
+  image takes, among the installed cores and the newest downloaded one. A
+  downloaded core is so in use after any restart, and an image the boot
+  loader went back to gets a core that runs on it.
+- **The daemon's core update refuses a core that needs a newer image**, and
+  an install of both puts the image in its slot and leaves the core for
+  that image's first boot.
+- **A failed update is rolled back, and not tried again by itself.** The
+  image by boot counting. The core by the update's health check, or at boot
+  by the boot check, which merges the core before; either writes the
+  version to `/var/lib/homelab/core-failed`, which the boot's pick skips.
+  A core update asked for by hand tries it again. The file is not deleted
+  instead: the release check would download the same core again.
+- **An image from before the rule** has no `core-min-image`: the daemon
+  then knows no minimum and tries a core as before, with the health check
+  behind it.
+
 ## The Nix store is on /var
 
 An install first gave the store a partition of its own, 16 to 32 GB, in

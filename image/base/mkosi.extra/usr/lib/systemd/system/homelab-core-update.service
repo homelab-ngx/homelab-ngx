@@ -1,0 +1,15 @@
+[Unit]
+Description=Use the newest core extension this image takes
+# Before the merge, so nothing runs on the core from before and nothing has
+# to restart (usr/lib/homelab/core-at-boot). Not on the installer medium,
+# which has one core and installs no update.
+DefaultDependencies=no
+RequiresMountsFor=/var/lib/extensions /var/lib/extensions.d /var/lib/homelab
+After=local-fs.target
+Before=systemd-sysext.service
+ConditionPathExists=!/var/lib/homelab/installer
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/homelab/core-at-boot
+[Install]
+WantedBy=sysinit.target

@@ -1,0 +1,13 @@
+#!/bin/sh
+# core-min-image FILE: the oldest image version the core extension FILE
+# runs on (HOMELAB_MIN_IMAGE in its extension-release), or nothing when it
+# names none or cannot be read.
+set -u
+file=${1:?core-min-image FILE}
+dir=$(mktemp -d /run/homelab-core-min.XXXXXX) || exit 0
+if mount -o ro "$file" "$dir" 2>/dev/null; then
+  sed -n 's/^HOMELAB_MIN_IMAGE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$dir/usr/lib/extension-release.d/extension-release.homelab-core" 2>/dev/null | head -n1
+  umount "$dir"
+fi
+rmdir "$dir" 2>/dev/null
+exit 0

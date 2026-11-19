@@ -5,6 +5,7 @@ enable sshd.service
 enable homelab-ssh-hostkey.service
 enable nix-daemon.socket
 enable systemd-sysext.service
+enable homelab-core-update.service
 enable systemd-confext.service
 enable homelab-boot-check.service
 enable homelab-extension-units.service

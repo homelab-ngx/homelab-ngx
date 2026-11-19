@@ -35,7 +35,8 @@
 #      and the daemon says so. On that version, good before: a daemon that
 #      cannot start leaves the host up with the boot check failed, not in a
 #      restart loop; and a core extension that does not start is replaced at
-#      boot by the one before
+#      boot by the one before, once. Before all that: a downloaded core is in
+#      use after a restart, and one that names a newer image is refused
 #  12. with BUILD=1: the host builds an update from main itself
 #  13. the free-space install boots alone, next to the other system's files
 #  14. an erased disk whose boot loader goes on another disk's ESP boots
@@ -764,6 +765,33 @@ fi
 
 if [ -n "$broken" ]; then
   step "11. $broken installs in one operation; its broken image falls back to $next"
+  # A downloaded core is in use after a restart, unless it names a newer
+  # image than the host runs. (An image from before that leaves it staged.)
+  atboot=
+  if vssh 'test -x /usr/lib/homelab/core-at-boot'; then
+    atboot=1
+    need=$next.1
+    rm -rf "$vm/core" && fsck.erofs --extract="$vm/core" "$out/core/homelab-core_$next.raw" >/dev/null
+    grep -q '^HOMELAB_MIN_IMAGE=' "$vm/core/usr/lib/extension-release.d/extension-release.homelab-core" || die "core $next names no minimum image"
+    sed -i 's/^HOMELAB_MIN_IMAGE=.*/HOMELAB_MIN_IMAGE=9999/' "$vm/core/usr/lib/extension-release.d/extension-release.homelab-core"
+    mkfs.erofs -zlz4hc --all-root -T 1 "$vm/homelab-core_$need.raw" "$vm/core" >/dev/null
+    vscp "$vm/homelab-core_$need.raw" root@127.0.0.1:/var/lib/homelab/updates/core/
+    rm -rf "$vm/core" "$vm/homelab-core_$need.raw"
+    d=$(op system-updates/image/core)
+    [ "$(jq -r .result <<<"$d")" = failed ] && jq -e '.reason | contains("needs image 9999")' <<<"$d" >/dev/null || die "a core for a newer image was not refused: $d"
+    reboot_vm
+    booted "$next"
+    daemon || die "the daemon does not answer"
+    [ "$(api http://x/api/system-updates/image | jq -r .core.active)" = "$next" ] || die "a core for a newer image was applied at boot"
+    vssh "rm /var/lib/homelab/updates/core/homelab-core_$need.raw"
+    vscp "$out/core/homelab-core_$broken.raw" root@127.0.0.1:/var/lib/homelab/updates/core/
+    reboot_vm
+    booted "$next"
+    daemon || die "the daemon does not answer on the core applied at boot"
+    [ "$(api http://x/api/system-updates/image | jq -r .core.active)" = "$broken" ] || die "the downloaded core $broken is not in use after a restart: $(vssh 'journalctl -b -u homelab-core-update --no-pager | tail -5')"
+    vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
+    ok "a core for a newer image refused and left staged; the downloaded core $broken in use after a restart"
+  fi
   stage_image "$broken"
   vscp "$out/core/homelab-core_$broken.raw" root@127.0.0.1:/var/lib/homelab/updates/core/
   d=$(op system-updates/image/release)
@@ -826,7 +854,17 @@ EOS
   api http://x/api/system-updates/image | jq -e --arg b "$broken" --arg n "$next" '.core.fell_back_from == $b and .core.active == $n and (.boot_check // "") == ""' >/dev/null ||
     die "after a broken core: $(api http://x/api/system-updates/image | jq -c '{core, boot_check}')"
   hostcheck
-  ok "a core that does not start: core $next back at boot, and the daemon reports it"
+  again=
+  if [ -n "$atboot" ]; then
+    # No boot tries that core again by itself.
+    vssh "grep -qFx '$broken' /var/lib/homelab/core-failed" || die "the core that did not start is not written down"
+    reboot_vm
+    booted "$next"
+    daemon || die "the daemon does not answer"
+    [ "$(api http://x/api/system-updates/image | jq -r .core.active)" = "$next" ] || die "the core that did not start was used again: $(vssh 'journalctl -b -u homelab-core-update --no-pager | tail -5')"
+    again=", and not tried again at the next boot"
+  fi
+  ok "a core that does not start: core $next back at boot, and the daemon reports it$again"
 else
   step "11. fall back skipped: image/out has fewer than three versions"
 fi

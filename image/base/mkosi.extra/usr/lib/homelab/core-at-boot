@@ -1,0 +1,59 @@
+#!/bin/sh
+# Before the core extension is merged: make the active one the newest this
+# image takes. So a core that was downloaded and not installed is in use
+# after a restart, whichever way the host was restarted, and an image the
+# boot loader went back to gets a core that runs on it.
+#
+# A core takes an image when the image is at least the core's minimum
+# (usr/lib/homelab/core-min-image) and the core did not fail before
+# (/var/lib/homelab/core-failed, written by the boot check and by a core
+# update that was rolled back). The candidates are the installed cores and
+# the newest staged one, which is all systemd-sysupdate installs.
+#
+# Nothing here fails the boot: what it could not do is logged, and the core
+# from before stays.
+link=${HOMELAB_CORE_LINK:-/var/lib/extensions/homelab-core.raw}
+dir=${HOMELAB_CORE_DIR:-/var/lib/extensions.d}
+staged=${HOMELAB_CORE_STAGED:-/var/lib/homelab/updates/core}
+failed=${HOMELAB_CORE_FAILED:-/var/lib/homelab/core-failed}
+osrelease=${HOMELAB_OS_RELEASE:-/etc/os-release}
+minimum=${HOMELAB_CORE_MIN_IMAGE:-/usr/lib/homelab/core-min-image}
+sysupdate=${HOMELAB_SYSUPDATE:-/usr/lib/systemd/systemd-sysupdate}
+
+log() { echo "core-at-boot: $*"; }
+versions() { ls "$1" 2>/dev/null | sed -n 's/^homelab-core_\(.*\)\.raw$/\1/p'; }
+# le A B: version A is at most B.
+le() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]; }
+
+image=$(sed -n 's/^IMAGE_VERSION="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$osrelease" | head -n1)
+[ -n "$image" ] || { log "the image has no version"; exit 0; }
+current=
+[ -L "$link" ] && current=$(basename "$(readlink "$link")" | sed -n 's/^homelab-core_\(.*\)\.raw$/\1/p')
+
+# takes V FILE: this image takes core V.
+takes() {
+  if [ -e "$failed" ] && grep -qFx "$1" "$failed"; then
+    return 1
+  fi
+  min=$("$minimum" "$2")
+  [ -z "$min" ] || le "$min" "$image"
+}
+
+newest_staged=$(versions "$staged" | sort -V | tail -n1)
+for v in $( { versions "$dir"; echo "$newest_staged"; } | grep . | sort -Vu | sort -Vr); do
+  if [ -e "$dir/homelab-core_$v.raw" ]; then
+    takes "$v" "$dir/homelab-core_$v.raw" || { log "core $v is not for image $image, or failed before"; continue; }
+    if [ "$v" != "$current" ]; then
+      ln -sfn "../$(basename "$dir")/homelab-core_$v.raw" "$link" && log "core $v instead of ${current:-none}"
+    fi
+    exit 0
+  fi
+  takes "$v" "$staged/homelab-core_$v.raw" || { log "the downloaded core $v is not for image $image, or failed before"; continue; }
+  if "$sysupdate" --component=homelab-core --verify=no update >/dev/null 2>&1 &&
+    [ "$(basename "$(readlink "$link")")" = "homelab-core_$v.raw" ]; then
+    log "installed the downloaded core $v instead of ${current:-none}"
+    exit 0
+  fi
+  log "the downloaded core $v could not be installed"
+done
+exit 0

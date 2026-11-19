@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"homelab-ngx.com/core/internal/cmdrunner"
@@ -168,6 +170,67 @@ func TestCoreUpdateRollsBack(t *testing.T) {
 	}
 	if len(f.CallsMatching("systemd-sysext", "refresh")) != 1 {
 		t.Fatal("the extension was not merged again")
+	}
+	// No boot uses it again by itself; asked for again and healthy, it is
+	// forgotten.
+	if got := coreFailed(); !slices.Equal(got, []string{"2"}) {
+		t.Fatalf("cores that did not start = %v", got)
+	}
+	broken = false
+	x = newRun(t, f, KindCoreUpdate, func() error { return nil })
+	if err := x.run(context.Background()); err != nil || activeCore() != "2" || len(coreFailed()) != 0 {
+		t.Fatalf("the second try: %v, active %s, failed %v", err, activeCore(), coreFailed())
+	}
+}
+
+// A core names the oldest image it runs on. On an older one it is refused,
+// and an install of both leaves it for the new image's first boot.
+func TestACoreThatNeedsANewerImageWaitsForIt(t *testing.T) {
+	imageHost(t, "1")
+	touch(t, filepath.Join(coreExtDir, "homelab-core_1.raw"), filepath.Join(imageUpdates, "core", "homelab-core_2.raw"),
+		filepath.Join(imageESPs[0], "homelab_1.efi"), coreMinImageBin)
+	useCore(t, "1")
+	f := cmdrunnertest.NewFake()
+	f.On(coreMinImageBin).Reply("2\n")
+	x := newRun(t, f, KindCoreUpdate, func() error { return nil })
+	if err := x.run(context.Background()); err == nil {
+		t.Fatal("a core that needs a newer image was applied")
+	}
+	d := record(t, x)
+	if d.Result != DeployFailed || !strings.Contains(d.Reason, "core 2 needs image 2 or newer") || activeCore() != "1" {
+		t.Fatalf("record = %+v, active %s", d, activeCore())
+	}
+	if n := len(f.CallsMatching(sysupdateBin)); n != 0 {
+		t.Fatalf("sysupdate ran %d times for a core that was refused", n)
+	}
+
+	// With its image: the image goes into the free slot, the core waits.
+	f.On(sysupdateBin, "--verify=no", "update").Do(func(cmdrunner.Cmd) (cmdrunner.Result, error) {
+		touch(t, filepath.Join(imageESPs[0], "homelab_2+3-0.efi"))
+		return cmdrunner.Result{}, nil
+	})
+	f.On("systemctl", "reboot").Reply("")
+	x = newRun(t, f, KindInstall, func() error { return nil })
+	x.o.Reboot = "now"
+	if err := x.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d := record(t, x); d.Result != DeployHealthy || d.Version != "2" || activeCore() != "1" || len(f.CallsMatching("systemctl", "reboot")) != 1 {
+		t.Fatalf("record = %+v, active %s", d, activeCore())
+	}
+	if n := len(f.CallsMatching(sysupdateBin, "--component=homelab-core")); n != 0 {
+		t.Fatal("the core was applied before its image started")
+	}
+
+	// A core without a minimum, or one the image meets, is applied.
+	f2 := cmdrunnertest.NewFake()
+	f2.On(coreMinImageBin).Reply("1\n")
+	sysupdateMoves(t, f2, "2")
+	f2.On("systemctl", "restart").Reply("")
+	f2.On("systemctl", "is-active", "caddy.service").Reply("active\n")
+	x = newRun(t, f2, KindCoreUpdate, func() error { return nil })
+	if err := x.run(context.Background()); err != nil || activeCore() != "2" {
+		t.Fatalf("a core the image meets: %v, active %s", err, activeCore())
 	}
 }
 
