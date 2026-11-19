@@ -36,18 +36,18 @@
 - The host is a read-only Arch Linux image with two root slots and dm-verity.
   An update is written to the other slot. If it fails to boot three times,
   the host starts the slot before.
-- Every service runs in a stack: its own NixOS system in a systemd-nspawn
+- Every service you add runs in a stack: its own NixOS system in a systemd-nspawn
   container, with its own user namespace, private network, update and
   rollback. A stack update cannot rebuild or restart the host.
 - The daemon, the dashboard, the `homelab` CLI and Caddy ship as one system
   extension. It updates without a reboot and leaves stacks running.
 - A stack is a git repo with a `flake.nix` and a manifest. You install it by
-  URL or write it in the dashboard's editor. Your own app becomes a stack the
-  same way.
+  URL, or write it in the dashboard's editor, which starts from a template.
+  Your own app becomes a stack the same way.
 - A stack can run container images with Podman when upstream ships nothing
   else.
 - The manifest lists what the stack needs from the host: hostnames, storage
-  paths, the GPU, outbound destinations, forwarded ports, containers, the
+  paths, the GPU (Intel and AMD), outbound destinations, forwarded ports, containers, the
   daemon's API. Each is a grant, and the stack gets it when you approve it.
 - Variables and secrets are set on the host and encrypted with age. A stack
   repo holds no secret, path or address, so anyone can install it.
@@ -58,57 +58,74 @@
 - Builds are reproducible. A release is built from a tag with pinned inputs
   (a dated Arch snapshot and a `flake.lock`), and the same tag gives the same
   image, bit for bit.
-- Releases are signed. A host verifies the signature before it stages an
-  update.
+- Releases are signed. A host looks for a new one daily, verifies its
+  signature before staging it, and installs it when you ask.
 - Remote access is set up in the dashboard: a domain with a wildcard
-  certificate (DNS-01), a WireGuard VPN, a Cloudflare tunnel, Tailscale.
+  certificate (DNS-01, with Cloudflare or Porkbun), a WireGuard VPN, a Cloudflare tunnel, Tailscale.
 - Backups go to S3, rclone or restic destinations, and the dashboard lists
   the folders no backup covers. Problems reach you through ntfy or a webhook.
-- The host is headless. You install it from a USB stick and do the rest from
-  a browser on another device.
+- The host needs no screen or keyboard. You install it from a USB stick and
+  run it from a browser on another device. Two things need a shell on the
+  host: creating a pool and resetting the dashboard's password.
 - The image is 41 packages and what they depend on, 264 in all. The
   installer is 1.3 GB.
 
 ## Why
 
-On most home servers the OS and the services are one system: one NixOS
-configuration, one Docker host, one set of packages. A service update can
-then rebuild, restart or break the machine everything else runs on, remote
-access included.
+When the OS and the services are one NixOS configuration, or share one set
+of packages, a service update rebuilds the system that also carries remote
+access. A bad one can leave the machine unreachable.
 
-homelab-ngx keeps the two apart. The host follows SteamOS: a read-only Arch
-image in two slots, replaced whole, with the version before kept to fall back
-on. It changes rarely and knows nothing about the services it runs.
+homelab-ngx keeps the two apart. The host is built the way SteamOS is: a
+read-only Arch image in two slots. It knows nothing about the services it
+runs.
 
-It does the job you would give Unraid or TrueNAS SCALE: one machine for
-storage and services, run from a browser. Both are ahead in storage
-management, file sharing and apps. They build and repair arrays in the web
-UI, share folders over SMB and NFS, and have large app catalogues.
-homelab-ngx has none of the three yet (see [Roadmap](#roadmap)).
+It is for the job you would give Unraid or TrueNAS SCALE: one machine for
+storage and services, run from a browser. Both build and repair arrays in
+the web UI, share folders over SMB and NFS, and have an app catalogue.
+homelab-ngx does none of these yet (see [Roadmap](#roadmap)): you create a
+pool in a shell and install a stack by its URL.
 
-What it has is services as code. Nix builds a stack from a commit you chose,
-so you can read what runs, pin it, roll it back and build it again next year.
-You pull an image someone else assembled only when you ask for one.
+A stack is code. Nix builds it from a commit you chose, so you can read what
+runs, pin it and roll it back. You pull an image someone else assembled only
+when you ask for one.
 
 We chose bcachefs because one pool takes drives of different sizes, and it
 checksums and replicates what it stores. It is maintained outside the mainline
 kernel, so the image builds its module from `bcachefs-dkms`.
 
-## Showcase
+## Screenshots
 
 Stacks, and one stack's page:
 
-![The list of stacks](docs/images/stacks-light.png)
-![A stack's page: units, grants, variables and updates](docs/images/stack-light.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/stacks-dark.png">
+  <img src="docs/images/stacks-light.png" alt="The list of stacks">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/stack-dark.png">
+  <img src="docs/images/stack-light.png" alt="A stack's page: units, grants, variables and updates">
+</picture>
 
 Storage and backups:
 
-![A bcachefs pool on the storage page](docs/images/storage-light.png)
-![Backups and their destinations](docs/images/backups-light.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/storage-dark.png">
+  <img src="docs/images/storage-light.png" alt="A bcachefs pool on the storage page">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/backups-dark.png">
+  <img src="docs/images/backups-light.png" alt="Backups and their destinations">
+</picture>
 
 The installer, opened from another device:
 
-![The installer's page](docs/images/installer-light.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/installer-dark.png">
+  <img src="docs/images/installer-light.png" alt="The installer's page">
+</picture>
 
 ## Requirements
 
@@ -118,8 +135,8 @@ The installer, opened from another device:
   another OS. The system disk can be NVMe, SATA, a USB disk, eMMC, or sit
   behind a RAID or SAS controller (LSI/Broadcom, HPE Smart Array, Adaptec,
   Areca, 3ware); in a VM, a virtio, VMware, Hyper-V or Xen disk.
-- 6 GB of RAM or more if the host builds its own updates; less is enough when
-  it installs published releases.
+- 4 GB of RAM, which is what the image check boots with. 6 GB if the host
+  builds its own updates instead of installing releases.
 - A wired network with DHCP, at least for the install: the installer has no
   Wi-Fi and no setup at the console.
 
@@ -137,13 +154,12 @@ drivers are in the image and have not been run by this project.
    newest release's `homelab-ngx_VERSION.img`; each
    [release](https://github.com/homelab-ngx/homelab-ngx/releases) links its
    own.
-2. Write the file to a USB stick of 8 GB or more and boot from it.
+2. Write the file to a USB stick of 8 GB or more, which erases the stick,
+   and boot from it. On Linux, with the stick at `/dev/sdX`:
+   `sudo dd if=homelab-ngx_VERSION.img of=/dev/sdX bs=4M conv=fsync status=progress`
 3. Open the address the console prints, from another device on the same
    network. Pick a blank disk or a free region, set the host name, time zone,
    SSH keys and network, and install.
-   With a screen and keyboard on the host, or its first serial port, the
-   stick also gives you a root shell there, without a password, to look
-   around before installing. The installed host asks for a login.
 4. Restart from the page; the stick can stay in until the host is up. Or
    turn the host off there, remove the stick and start it. The host answers
    at `<hostname>.local`.
@@ -151,6 +167,10 @@ drivers are in the image and have not been run by this project.
    after the install. Then set up the domain, a storage pool, notifications,
    remote access and stacks. A forgotten password is removed on the host
    with `homelab auth reset`.
+
+The stick also opens a root shell, without a password, on the host's screen
+and first serial port, to look around before installing. The installed host
+asks for a login.
 
 ## Verification
 
@@ -168,6 +188,8 @@ gpg --verify SHA256SUMS.gpg SHA256SUMS
 sha256sum -c --ignore-missing SHA256SUMS
 ```
 
+`gpg --verify` prints the key's fingerprint. Compare it with the one above.
+
 ## Roadmap
 
 None of this is built yet:
@@ -177,7 +199,7 @@ None of this is built yet:
 - Secure Boot, with a signed kernel image.
 - A documentation site.
 - Creating a pool, and adding or removing its drives, in the dashboard.
-- Snapshots.
+- bcachefs snapshots of a subvolume.
 - Network shares over SMB and NFS.
 - ZFS as a second filesystem for pools.
 - A CI job that builds each release twice and compares the two.
@@ -204,6 +226,9 @@ make image-check   # boot the built image in a VM: a pool, a stack, an install
 - [docs/solutions](docs/solutions): why things are shaped the way they are.
   The [stack contract](docs/solutions/architecture-patterns/stack-contract.md)
   is the place to start when writing a stack.
+
+Report a problem or ask a question in the
+[issues](https://github.com/homelab-ngx/homelab-ngx/issues).
 
 ## License
 

@@ -87,8 +87,8 @@ x86_64 Linux and on Apple silicon Macs; the image builds only on Linux.
 
 ## Writing
 
-This covers the README, the docs, commit messages, issues and release
-notes. Dashboard copy has its own, stricter rules in
+This covers the README, the docs, issues and commit messages (the release
+notes are made from them). Dashboard copy has its own, stricter rules in
 `apps/dashboard/DESIGN.md`.
 
 The reader runs a home server and has never seen this repo. Write to them

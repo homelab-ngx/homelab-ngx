@@ -25,9 +25,10 @@ Services are Nix first: a stack is built from a commit the operator chose,
 not pulled as an image someone else assembled. A stack can still run a
 container image when upstream ships nothing else. Storage is bcachefs.
 
-It does the job of Unraid or TrueNAS SCALE, one machine for storage and
-services run from a browser, for an operator who would rather read and pin
-what runs than pick it from an app list.
+It is for the job Unraid and TrueNAS SCALE do: one machine for storage and
+services, run from a browser. It has no network shares and no catalogue yet.
+A stack is read and pinned as code, whether it is installed by URL or, later,
+from a catalogue.
 
 ## Users
 
@@ -87,12 +88,4 @@ uid, and anyone can install it.
 
 ## Later
 
-Not built, and listed in the README's roadmap:
-
-- a catalogue the dashboard installs stacks from;
-- Secure Boot, with a signed kernel image;
-- a documentation site;
-- creating a pool and changing its drives in the dashboard, and snapshots;
-- network shares over SMB and NFS;
-- ZFS as a second filesystem for pools;
-- a CI job that builds each release twice and compares the two.
+What is not built is in the README's Roadmap.
