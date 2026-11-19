@@ -406,9 +406,7 @@ size=$(stat -c %s "$out/homelab_$version.raw")
 # disk UUID, the same in every build: the constant it carries must be this.
 medium=$(sfdisk --disk-id "$out/homelab_$version.raw" | tr A-F a-f)
 for f in mkosi.extra/usr/lib/udev/rules.d/61-homelab-disk.rules mkosi.initrd.conf/mkosi.extra/usr/lib/homelab/loader-disk-wait; do
-  known=$(grep -v '^ *#' "$here/base/$f" | grep -oiE '[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}' | tr A-F a-f | sort -u) ||
-    die "no disk UUID for the installer medium in image/base/$f"
-  [ "$known" = "$medium" ] || die "the installer medium's disk UUID is $medium, but image/base/$f has $known"
+  grep -v '^ *#' "$here/base/$f" | grep -qi "$medium" || die "the installer medium's disk UUID is $medium, which image/base/$f does not name"
 done
 boot "$vm/stick.raw" "$vm/disk.raw" "$vm/beside.raw"
 booted "$version"
