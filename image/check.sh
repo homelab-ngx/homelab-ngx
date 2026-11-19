@@ -6,6 +6,8 @@
 #      logged in on the screen and the serial port, and lists the disks; a
 #      second browser is refused the installer and takes it over with the
 #      code the console shows
+#      (a Windows disk with the 100 MB ESP Windows makes is refused, with
+#      the reason)
 #   2. it installs into the free region picked on a stand-in Windows disk (an
 #      ESP with another system's loaders, a gap, an NTFS partition), leaves
 #      the gap alone and turns off
@@ -118,17 +120,19 @@ cp --sparse=always "$out/homelab_$version.raw" "$vm/stick.raw"
 # The disk the installer erases; a build on the host (BUILD=1) needs room in /var.
 qemu-img create -q -f raw "$vm/disk.raw" "$([ "${BUILD:-}" = 1 ] && echo 100G || echo 80G)"
 for d in pool1 pool2; do qemu-img create -q -f raw "$vm/$d.raw" 8G; done
-# windisk FILE [GAP]: a stand-in for a Windows disk: a 512 MB ESP with Windows
-# Boot Manager and a fallback loader of its own, then GAP free (as Windows
-# leaves after shrinking or deleting a partition), an NTFS-typed partition,
-# and the rest free.
+# windisk FILE [GAP] [ESP]: a stand-in for a Windows disk: an ESP (512 MB
+# unless given; Windows' own setup makes 100 MB) with Windows Boot Manager
+# and a fallback loader of its own, then GAP free (as Windows leaves after
+# shrinking or deleting a partition), an NTFS-typed partition, and the rest
+# free.
 windisk() {
+  local esp=${3:-512M}
   qemu-img create -q -f raw "$1" 90G
   if [ -n "${2:-}" ]; then
-    printf 'label: gpt\n,512M,U\n,%s,L\n,20G,EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n' "$2" | sfdisk -q "$1"
+    printf 'label: gpt\n,%s,U\n,%s,L\n,20G,EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n' "$esp" "$2" | sfdisk -q "$1"
     sfdisk -q --delete "$1" 2
   else
-    printf 'label: gpt\n,512M,U\n,20G,EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n' | sfdisk -q "$1"
+    printf 'label: gpt\n,%s,U\n,20G,EBD0A0A2-B9E5-4433-87C0-68B6B72699C7\n' "$esp" | sfdisk -q "$1"
   fi
   local espstart espsize
   read -r espstart espsize < <(sfdisk -J "$1" | jq -r '.partitiontable.partitions[0] | "\(.start) \(.size)"')
@@ -146,6 +150,8 @@ windisk "$vm/beside.raw" 2G
 qemu-img create -q -f raw "$vm/sys.raw" 80G
 # A disk sold as 64 GB: 64 billion bytes, 59.6 GiB.
 qemu-img create -q -f raw "$vm/small.raw" 64000000000
+# A Windows disk as Windows' setup makes it: the ESP is too small to share.
+windisk "$vm/win100.raw" "" 100M
 windisk "$vm/win2.raw"
 cpus=${CPUS:-4}
 # A build on the host (BUILD=1): one Go compile takes about 2.5 GB.
@@ -495,7 +501,7 @@ medium=$(sfdisk --disk-id "$out/homelab_$version.raw" | tr A-F a-f)
 for f in mkosi.extra/usr/lib/udev/rules.d/61-homelab-disk.rules mkosi.initrd.conf/mkosi.extra/usr/lib/homelab/loader-disk-wait; do
   grep -v '^ *#' "$here/base/$f" | grep -qi "$medium" || die "the installer medium's disk UUID is $medium, which image/base/$f does not name"
 done
-boot "$vm/stick.raw" "$vm/disk.raw" "$vm/beside.raw" "$vm/small.raw"
+boot "$vm/stick.raw" "$vm/disk.raw" "$vm/beside.raw" "$vm/small.raw" "$vm/win100.raw"
 booted "$version"
 vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
 [ "$(stickname)" = vda ] || die "the disk with the medium's UUID is $(stickname), not vda"
@@ -513,6 +519,17 @@ if [ "$(jq -r '.min_bytes' <<<"$st")" -le 64000000000 ]; then
   plan=$(post installer/plan '{"disk":"vdd","erase":true}')
   [ "$(jq -r .ok <<<"$plan")" = true ] || die "no plan for a 64 GB disk: $(jq -r .reason <<<"$plan")"
   small="; a 64 GB disk offered, with a plan that fits"
+fi
+# Next to a Windows with the 100 MB ESP its setup makes there is no install,
+# and the page says why; the disk can still be erased. (A version before the
+# reason named Windows refuses it too.)
+tiny=$(jq -c '.disks[] | select(.name == "vde")' <<<"$st")
+jq -e '.erase.ok and (.beside.ok | not)' <<<"$tiny" >/dev/null || die "a disk with a 100 MB ESP: $(jq -c '{erase, beside}' <<<"$tiny")"
+if vssh 'test -e /usr/lib/systemd/system-generators/homelab-nix'; then
+  jq -r .beside.reason <<<"$tiny" | grep -q 'Windows makes one of 100 MB' || die "the refusal does not say why: $(jq -r .beside.reason <<<"$tiny")"
+  plan=$(post installer/plan '{"disk":"vde","erase":false}')
+  [ "$(jq -r .ok <<<"$plan")" = false ] && jq -r .reason <<<"$plan" | grep -q '400 MB' || die "a plan next to a 100 MB ESP: $plan"
+  small="$small; free space next to a 100 MB ESP refused with the reason"
 fi
 # The installer is one browser's, and not for ever: a second claim is
 # refused, the code on the console takes it over, and the token from before
@@ -544,7 +561,7 @@ step "2. install into the free space next to the other system"
 # The large free region after the NTFS partition, not the 2 GB gap before it.
 region=$(jq -r '.disks[] | select(.name == "vdc") | .free | max_by(.size) | .start' <<<"$st")
 install vdc false beside '{"mode":"static","address":"10.0.2.15/24","gateway":"10.0.2.2","dns":["10.0.2.3"]}' "" "$region"
-drop small
+drop small win100
 ntfs=$(sfdisk -J "$vm/beside.raw" | jq '.partitiontable.partitions[] | select(.type == "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7") | .start')
 ingap=$(sfdisk -J "$vm/beside.raw" | jq --argjson n "$ntfs" '[.partitiontable.partitions[] | select(.start > 2048 and .start < $n)] | length')
 [ "$ingap" = 0 ] || die "$ingap new partitions went into the gap before the other system's: $(sfdisk -d "$vm/beside.raw")"

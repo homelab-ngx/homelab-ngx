@@ -9,14 +9,17 @@ const (
 	gib = uint64(1) << 30
 	mib = uint64(1) << 20
 	// MinBytes is the space an install needs: the minimums of the image's
-	// partition definitions (usr/lib/repart.sysinstall.d) add up to 57.4 GiB
-	// (ESP 0.3, two roots with their verity 8.1, /var 49, the Nix store on
+	// partition definitions (usr/lib/repart.sysinstall.d) add up to 58.1 GiB
+	// (ESP 1, two roots with their verity 8.1, /var 49, the Nix store on
 	// it), with room to spare here. A disk sold as 64 GB has 59.6 GiB, so
 	// the page says 64 GB.
 	MinBytes = 59 * gib
-	// minESP is the smallest existing ESP an install shares: room for two
-	// kernels (A/B), as the ESP definition's SizeMinBytes says.
-	minESP = 300 * mib
+	// espRoom is the free space an install needs on an ESP that is already
+	// there: two kernels (A/B, 139 MiB each at 0.1.0, with room to grow) and
+	// systemd-boot. An ESP smaller than that cannot have it, which is all a
+	// disk's listing can tell; the free space is measured for a plan and an
+	// install (Service.espHasRoom). A new ESP is 1 GB.
+	espRoom = 400 * mib
 )
 
 // InstallPartition type GUIDs (upper case, as UDisks2 reports them lower case).
@@ -116,6 +119,11 @@ func assess(d InstallDisk) InstallDisk {
 	return d
 }
 
+// smallESP is why a disk with a small ESP takes no install next to its
+// system: the install shares the ESP that is there, and Windows makes one of
+// 100 MB.
+const smallESP = "Its EFI partition is smaller than 400 MB, too small for this system's kernels (Windows makes one of 100 MB). Erase the disk, or install on another disk."
+
 func beside(d InstallDisk) InstallChoice {
 	if d.InUse {
 		return InstallChoice{Reason: "The installer runs from this disk."}
@@ -130,8 +138,8 @@ func beside(d InstallDisk) InstallChoice {
 		if sameTypes(p.Type) {
 			return InstallChoice{Reason: "It holds another system with the same partition types (" + p.Name + "): erase it or delete those partitions."}
 		}
-		if p.Holds == "esp" && p.Size < minESP {
-			return InstallChoice{Reason: "Its EFI partition is smaller than 300 MB."}
+		if p.Holds == "esp" && p.Size < espRoom {
+			return InstallChoice{Reason: smallESP}
 		}
 	}
 	if d.FreeTotal < MinBytes {

@@ -159,6 +159,8 @@ func TestFinishESP(t *testing.T) {
 	writeFiles(t, dir, map[string]string{
 		"EFI/BOOT/BOOTX64.EFI":            "SYSTEMD-BOOT",
 		"EFI/Microsoft/Boot/bootmgfw.efi": "WINDOWS",
+		"EFI/Linux/homelab_0.0.0+3-0.efi": "AN EARLIER INSTALL",
+		"EFI/Linux/other.efi":             "ANOTHER LINUX",
 		"loader/loader.conf":              "#timeout 3\ndefault homelab-*\nconsole-mode keep\n",
 	})
 	writeFiles(t, stick, map[string]string{"EFI/Linux/homelab_0.0.1+2-1.efi": "UKI"})
@@ -168,6 +170,9 @@ func TestFinishESP(t *testing.T) {
 	read := func(f string) string { b, _ := os.ReadFile(filepath.Join(dir, f)); return string(b) }
 	if read("EFI/Linux/homelab_0.0.1.efi") != "UKI" {
 		t.Error("the kernel is not in EFI/Linux under its version, without a boot counter")
+	}
+	if read("EFI/Linux/homelab_0.0.0+3-0.efi") != "" || read("EFI/Linux/other.efi") != "ANOTHER LINUX" {
+		t.Error("an earlier install's kernel stays, or another system's is gone")
 	}
 	if got := read("loader/loader.conf"); got != "#timeout 3\nconsole-mode keep\ntimeout 3\neditor no\ndefault homelab_*\n" {
 		t.Errorf("loader.conf = %q", got)
@@ -337,11 +342,15 @@ func argv(f *cmdrunnertest.Fake, prefix ...string) string {
 func TestRepartSeedIsRandom(t *testing.T) {
 	// The default seed is the machine ID: two installs from one machine
 	// would share partition UUIDs.
-	oldMount := mountDir
-	mountDir = filepath.Join(t.TempDir(), "esp")
-	defer func() { mountDir = oldMount }()
+	src := t.TempDir()
+	writeFiles(t, src, map[string]string{"00-esp.conf": "[Partition]\nType=esp\n", "10-root.conf": "[Partition]\nType=root\n"})
+	old, oldMount := definitions, mountDir
+	definitions, mountDir = src, filepath.Join(t.TempDir(), "esp")
+	defer func() { definitions, mountDir = old, oldMount }()
 	d := assess(windows(512 * mib))
 	f := cmdrunnertest.NewFake()
+	f.On("mount").Reply("")
+	f.On("umount").Reply("")
 	f.On("systemd-repart").Reply("[]")
 	f.On("udevadm").Reply("")
 	f.On("blockdev", "--getss").Reply("512\n")
@@ -474,5 +483,88 @@ func TestDefinitionsWithoutTheESP(t *testing.T) {
 	entries, _ := os.ReadDir(d)
 	if len(entries) != 1 || entries[0].Name() != "10-root.conf" {
 		t.Errorf("definitions = %v", entries)
+	}
+}
+
+// An install next to another system uses the ESP that is there: it needs
+// room for two kernels on it, and repart must not be told to resize it.
+func TestAnExistingESPNeedsRoomAndKeepsItsSize(t *testing.T) {
+	src := t.TempDir()
+	writeFiles(t, src, map[string]string{"00-esp.conf": "[Partition]\nType=esp\n", "10-root.conf": "[Partition]\nType=root\n"})
+	old, oldMount, oldFree := definitions, mountDir, espFree
+	definitions, mountDir = src, filepath.Join(t.TempDir(), "esp")
+	defer func() { definitions, mountDir, espFree = old, oldMount, oldFree }()
+	free := uint64(450 * mib)
+	espFree = func(string) (uint64, error) { return free, nil }
+
+	d := assess(windows(512 * mib))
+	f := cmdrunnertest.NewFake()
+	f.On("mount").Reply("")
+	f.On("umount").Reply("")
+	f.On("systemd-repart").Do(func(c cmdrunner.Cmd) (cmdrunner.Result, error) {
+		for _, a := range c.Args {
+			if dir, ok := strings.CutPrefix(a, "--definitions="); ok {
+				if _, err := os.Stat(filepath.Join(dir, "00-esp.conf")); err == nil && slices.Contains(c.Args, "--empty=allow") {
+					return cmdrunner.Result{}, errors.New("repart was given the ESP definition next to an existing ESP")
+				}
+			}
+		}
+		return cmdrunner.Result{Stdout: "[]"}, nil
+	})
+	s := New(f, fakeDisks{list: []InstallDisk{d}}, quiet())
+	ctx := context.Background()
+	p, err := s.Plan(ctx, "nvme0n1", false, "", 0)
+	if err != nil || !p.OK {
+		t.Fatalf("plan with room: %+v %v", p, err)
+	}
+	if m := f.CallsMatching("mount"); len(m) != 1 || !slices.Contains(m[0].Args, "ro") || m[0].Args[2] != "/dev/nvme0n1p1" {
+		t.Errorf("the ESP is looked at read-only: %s", argv(f, "mount"))
+	}
+
+	free = 260 * mib // a 512 MB ESP another system filled half of
+	p, err = s.Plan(ctx, "nvme0n1", false, "", 0)
+	if err != nil || p.OK || !strings.Contains(p.Reason, "260 MB free") {
+		t.Errorf("plan without room: %+v %v", p, err)
+	}
+	token, _ := s.Claim()
+	err = s.Install(ctx, token, "nvme0n1", false, Setup{Hostname: "h"})
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "260 MB free") {
+		t.Errorf("install without room: %v", err)
+	}
+	// Erasing the disk makes a new ESP: nothing to measure.
+	n := len(f.CallsMatching("mount"))
+	if p, err = s.Plan(ctx, "nvme0n1", true, "", 0); err != nil || !p.OK || len(f.CallsMatching("mount")) != n {
+		t.Errorf("erase plan: %+v %v", p, err)
+	}
+}
+
+// A Windows disk as Windows makes it is refused with the reason, at the
+// disk and as the place for another disk's boot loader.
+func TestAWindowsSizedESPIsRefusedWithAReason(t *testing.T) {
+	d := assess(windows(100 * mib))
+	if d.Beside.OK || !strings.Contains(d.Beside.Reason, "Windows makes one of 100 MB") {
+		t.Errorf("beside: %+v", d.Beside)
+	}
+	other := assess(InstallDisk{Name: "sda", Path: "/dev/sda", Size: 500 * gib, Table: "none"})
+	s := New(cmdrunnertest.NewFake(), fakeDisks{list: []InstallDisk{d, other}}, quiet())
+	if _, err := s.Plan(context.Background(), "sda", true, "nvme0n1p1", 0); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "400 MB") {
+		t.Errorf("another disk's small ESP: %v", err)
+	}
+}
+
+func TestESPFreeCountsThisSystemsKernels(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"EFI/Linux/homelab_1+3-0.efi": strings.Repeat("k", 1<<20), "EFI/Linux/homelab_2.efi": strings.Repeat("k", 1<<10),
+		"EFI/Linux/other.efi": strings.Repeat("o", 1<<20), "EFI/Microsoft/Boot/bootmgfw.efi": strings.Repeat("w", 1<<20),
+	})
+	// An install replaces this system's kernels, so their room counts as
+	// free; another system's files do not.
+	if got := ownKernels(dir); got != 1<<20+1<<10 {
+		t.Errorf("this system's kernels take %d bytes", got)
+	}
+	free, err := espFree(dir)
+	if err != nil || free < 1<<20+1<<10 {
+		t.Errorf("free = %d, %v", free, err)
 	}
 }

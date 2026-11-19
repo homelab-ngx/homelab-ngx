@@ -133,12 +133,15 @@
   }
 
   // The boot loader's EFI partition: this disk's (new or kept), or one on
-  // another disk (Windows'), so one boot menu lists both systems.
+  // another disk (Windows'), so one boot menu lists both systems. One
+  // smaller than the room the kernels need is not offered; the plan says
+  // when a larger one is too full.
+  const ESP_ROOM = 400 * 2 ** 20;
   let esp = $state("");
   const espChoices = $derived(
     st.disks
       .filter((d) => !d.in_use && d.name !== pick?.disk)
-      .flatMap((d) => d.partitions.filter((p) => p.holds === "esp" && p.size >= 300 * 2 ** 20).map((p) => ({ name: p.name, model: d.model || d.name }))),
+      .flatMap((d) => d.partitions.filter((p) => p.holds === "esp" && p.size >= ESP_ROOM).map((p) => ({ name: p.name, model: d.model || d.name }))),
   );
 
   async function choose(erase: boolean) {
@@ -311,7 +314,15 @@
           {/if}
           <button type="button" class="btn {st.can_restart ? '' : 'btn-primary'}" disabled={pending} onclick={() => act(() => call(api.POST("/installer/poweroff", { headers })))}>Turn off</button>
         </div>
-        {#if st.can_restart}
+        <!-- On an EFI partition shared with another system the fallback
+             loader stays that system's: firmware that ignores its boot
+             entries starts it, and firmware that took none has no entry
+             for this one. -->
+        {#if st.shared_esp && st.can_restart}
+          <p class="text-xs text-muted">If the other system starts instead, pick Linux Boot Manager in the firmware's boot menu.</p>
+        {:else if st.shared_esp}
+          <p class="text-xs text-muted">The firmware took no boot entry. Add one in its setup for <code>\EFI\systemd\systemd-bootx64.efi</code>.</p>
+        {:else if st.can_restart}
           <p class="text-xs text-muted">After Turn off, remove the installer medium before turning on.</p>
         {/if}
       {/if}

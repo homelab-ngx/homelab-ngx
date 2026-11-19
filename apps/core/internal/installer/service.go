@@ -99,6 +99,9 @@ type Service struct {
 	// entry is the firmware's boot entry for the installed system (four hex
 	// digits), empty when none was found.
 	entry string
+	// onShared says the install's boot loader is on an ESP that was there
+	// before it, which another system may start from.
+	onShared bool
 }
 
 // New returns the installer; disks is UDisks{} on the stick.
@@ -141,6 +144,7 @@ func (s *Service) State(ctx context.Context) (InstallerState, error) {
 		Current:    s.lease(ctx),
 		Machine:    machine(),
 		CanRestart: s.step == StepInstalled && s.entry != "",
+		SharedESP:  s.step == StepInstalled && s.onShared,
 	}, nil
 }
 
@@ -329,7 +333,13 @@ func (s *Service) Plan(ctx context.Context, disk string, erase bool, esp string,
 	if err != nil {
 		return InstallPlan{}, err
 	}
-	defs, done, err := definitionsFor(shared != nil)
+	existing := existingESP(d, erase, shared)
+	if why, err := s.espHasRoom(ctx, existing); err != nil {
+		return InstallPlan{}, err
+	} else if why != "" {
+		return InstallPlan{Reason: why, Rows: []InstallPlanRow{}}, nil
+	}
+	defs, done, err := definitionsFor(existing != "")
 	if err != nil {
 		return InstallPlan{}, err
 	}
@@ -372,8 +382,8 @@ func (s *Service) sharedESP(ctx context.Context, target InstallDisk, name string
 				return nil, fmt.Errorf("%w: %s is on the installer medium", ErrInvalid, name)
 			case d.Name == target.Name:
 				return nil, nil // the target's own ESP: repart keeps it as it is
-			case p.Size < minESP:
-				return nil, fmt.Errorf("%w: %s is smaller than 300 MB", ErrInvalid, name)
+			case p.Size < espRoom:
+				return nil, fmt.Errorf("%w: %s is smaller than 400 MB", ErrInvalid, name)
 			}
 			return &p, nil
 		}
@@ -381,12 +391,78 @@ func (s *Service) sharedESP(ctx context.Context, target InstallDisk, name string
 	return nil, fmt.Errorf("%w: no partition %s", ErrInvalid, name)
 }
 
+// existingESP is the ESP an install uses as it is: another disk's (shared),
+// or the target disk's own when the install goes into its free space. ""
+// when the install makes a new one.
+func existingESP(d InstallDisk, erase bool, shared *InstallPartition) string {
+	switch {
+	case shared != nil:
+		return shared.Path
+	case !erase:
+		return partOf(d, typeESP)
+	}
+	return ""
+}
+
+// espFree is the free space on the file system mounted at dir, with what
+// this system's own kernels take there (an install over an earlier one
+// replaces them); a variable for tests.
+var espFree = func(dir string) (uint64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(dir, &st); err != nil {
+		return 0, err
+	}
+	return st.Bavail*uint64(st.Bsize) + ownKernels(dir), nil
+}
+
+// ownKernels is the size of this system's kernels on the ESP mounted at dir.
+func ownKernels(dir string) (size uint64) {
+	own, _ := filepath.Glob(filepath.Join(dir, "EFI", "Linux", "homelab_*.efi"))
+	for _, f := range own {
+		if fi, err := os.Stat(f); err == nil {
+			size += uint64(fi.Size())
+		}
+	}
+	return size
+}
+
+// espHasRoom says why the existing ESP dev cannot take the install's boot
+// loader and kernels, "" when it can (or dev is "": the install makes its
+// own). It mounts the ESP read-only at a place of its own, since a plan may
+// be asked for while an install has the ESP mounted.
+func (s *Service) espHasRoom(ctx context.Context, dev string) (string, error) {
+	if dev == "" {
+		return "", nil
+	}
+	dir, err := workDir("room-")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(dir)
+	if _, err := s.r.Run(ctx, cmdrunner.Cmd{Module: "installer", Name: "mount", Args: []string{"-o", "ro", dev, dir}}); err != nil {
+		return "", fmt.Errorf("mount %s: %w", dev, err)
+	}
+	free, ferr := espFree(dir)
+	if _, err := s.r.Run(ctx, cmdrunner.Cmd{Module: "installer", Name: "umount", Args: []string{dir}}); err != nil && ferr == nil {
+		ferr = fmt.Errorf("umount %s: %w", dev, err)
+	}
+	if ferr != nil {
+		return "", ferr
+	}
+	if free < espRoom {
+		return fmt.Sprintf("The EFI partition %s has %d MB free; this system's kernels need 400 MB there.", filepath.Base(dev), free/mib), nil
+	}
+	return "", nil
+}
+
 // definitionsFor is the image's partition definitions, without the ESP's
-// when the boot loader goes on another disk's ESP. That copy is the
-// caller's own folder, removed by done: a plan asked for while another plan
-// or an install runs must not take its definitions away.
-func definitionsFor(sharedESP bool) (dir string, done func(), err error) {
-	if !sharedESP {
+// when the install uses an ESP that is already there (existingESP): repart
+// matches partitions to definitions by type, and would try to grow that ESP
+// to the definition's size. That copy is the caller's own folder, removed
+// by done: a plan asked for while another plan or an install runs must not
+// take its definitions away.
+func definitionsFor(withoutESP bool) (dir string, done func(), err error) {
+	if !withoutESP {
 		return definitions, func() {}, nil
 	}
 	dir, err = workDir("definitions-")
@@ -495,8 +571,21 @@ func (s *Service) Install(ctx context.Context, token, disk string, erase bool, s
 	if c := choice(d, erase); !c.OK {
 		return fmt.Errorf("%w: %s", ErrInvalid, c.Reason)
 	}
-	if _, err := s.sharedESP(ctx, d, setup.ESP); err != nil {
+	shared, err := s.sharedESP(ctx, d, setup.ESP)
+	if err != nil {
 		return err
+	}
+	// Only the installer's holder has a disk mounted to be looked at.
+	s.mu.Lock()
+	err = s.holds(token)
+	s.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if why, err := s.espHasRoom(ctx, existingESP(d, erase, shared)); err != nil {
+		return err
+	} else if why != "" {
+		return fmt.Errorf("%w: %s", ErrInvalid, why)
 	}
 	if !erase && setup.Region != 0 && !regionOK(d, setup.Region) {
 		return fmt.Errorf("%w: no free region at byte %d of %s", ErrInvalid, setup.Region, disk)
@@ -510,6 +599,7 @@ func (s *Service) Install(ctx context.Context, token, disk string, erase bool, s
 		return ErrBusy
 	}
 	s.step, s.phase, s.disk, s.hostname, s.lines, s.err, s.entry = StepInstalling, "partition", disk, setup.Hostname, nil, "", ""
+	s.onShared = existingESP(d, erase, shared) != ""
 	go s.run(context.WithoutCancel(ctx), d, erase, setup)
 	return nil
 }
@@ -583,13 +673,7 @@ func (s *Service) install(ctx context.Context, d InstallDisk, erase bool, setup 
 	if err != nil {
 		return err
 	}
-	existing := ""
-	switch {
-	case shared != nil:
-		existing = shared.Path
-	case !erase:
-		existing = partOf(d, typeESP)
-	}
+	existing := existingESP(d, erase, shared)
 	var fallback []byte
 	if existing != "" {
 		_ = s.withMount(ctx, existing, func(dir string) error {
@@ -597,7 +681,7 @@ func (s *Service) install(ctx context.Context, d InstallDisk, erase bool, setup 
 			return nil
 		})
 	}
-	defs, done, err := definitionsFor(shared != nil)
+	defs, done, err := definitionsFor(existing != "")
 	if err != nil {
 		return err
 	}
@@ -625,9 +709,12 @@ func (s *Service) install(ctx context.Context, d InstallDisk, erase bool, setup 
 	s.line("Installing the boot loader and kernel " + version)
 	err = s.withMount(ctx, esp, func(dir string) error {
 		// The machine-id token keeps bootctl from writing an entry token
-		// into the read-only root.
+		// into the read-only root. --graceful: firmware that takes no boot
+		// entry (its variables full or read-only) does not fail the install;
+		// the page then says how the system is started (bootFirst finds no
+		// entry).
 		if err := s.cmd(ctx, "bootctl", "--esp-path="+dir, "--entry-token=machine-id",
-			"--make-entry-directory=no", "--variables=yes", "install"); err != nil {
+			"--make-entry-directory=no", "--variables=yes", "--graceful", "install"); err != nil {
 			return err
 		}
 		return finishESP(dir, kernel, version, fallback)
@@ -857,7 +944,7 @@ func firstInOrder(listing, uuid string) (entry, order string, ok bool) {
 }
 
 // finishESP puts the running kernel where image updates keep theirs
-// (EFI/Linux, as homelab_VERSION.efi), makes the image the boot menu's
+// (EFI/Linux, as homelab_VERSION.efi) in place of an earlier install's, makes the image the boot menu's
 // default, and puts back a fallback loader another system had.
 func finishESP(dir, kernel, version string, fallback []byte) error {
 	b, err := os.ReadFile(kernel)
@@ -867,6 +954,14 @@ func finishESP(dir, kernel, version string, fallback []byte) error {
 	linux := filepath.Join(dir, "EFI", "Linux")
 	if err := os.MkdirAll(linux, 0o755); err != nil {
 		return err
+	}
+	// An earlier install's kernels on a shared ESP start nothing any more,
+	// and espFree counted their room as this install's.
+	old, _ := filepath.Glob(filepath.Join(linux, "homelab_*.efi"))
+	for _, f := range old {
+		if err := os.Remove(f); err != nil {
+			return err
+		}
 	}
 	if err := os.WriteFile(filepath.Join(linux, "homelab_"+version+".efi"), b, 0o644); err != nil {
 		return err

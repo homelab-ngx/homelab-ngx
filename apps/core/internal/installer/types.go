@@ -78,6 +78,9 @@ type InstallerState struct {
 	// CanRestart is false after an install whose boot entry the firmware
 	// does not list: that machine is turned off and started by hand.
 	CanRestart bool `json:"can_restart" doc:"Installed, and the firmware has a boot entry for the new system: restartInstaller can start it."`
+	// SharedESP: the ESP's fallback loader is the other system's, so
+	// firmware that ignores its boot entries starts that one.
+	SharedESP bool `json:"shared_esp" doc:"Installed with the boot loader on an EFI partition that was there before, next to another system's."`
 }
 
 // Machine is what an install depends on besides the disk.

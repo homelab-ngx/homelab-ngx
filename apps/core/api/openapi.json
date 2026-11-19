@@ -2933,6 +2933,10 @@
             ],
             "type": "string"
           },
+          "shared_esp": {
+            "description": "Installed with the boot loader on an EFI partition that was there before, next to another system's.",
+            "type": "boolean"
+          },
           "step": {
             "enum": [
               "idle",
@@ -2953,7 +2957,8 @@
           "min_bytes",
           "current",
           "machine",
-          "can_restart"
+          "can_restart",
+          "shared_esp"
         ],
         "type": "object"
       },

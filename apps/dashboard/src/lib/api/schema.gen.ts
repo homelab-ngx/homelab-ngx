@@ -2819,6 +2819,8 @@ export interface components {
              * @enum {string}
              */
             phase?: "partition" | "boot" | "finish";
+            /** @description Installed with the boot loader on an EFI partition that was there before, next to another system's. */
+            shared_esp: boolean;
             /** @enum {string} */
             step: "idle" | "installing" | "installed" | "failed";
         };

@@ -285,8 +285,9 @@ booted.
 ## A 64 GB disk is 59.6 GiB
 
 The partition minimums added up to 63.4 GiB, so a disk sold as 64 GB was
-refused as "smaller than 64 GB". `/var`'s minimum is 34 GiB now, the sum
-58.4 GiB and the installer's `MinBytes` 59 GiB. Change a minimum in
+refused as "smaller than 64 GB". The sum is 58.1 GiB now (ESP 1, two roots
+with their verity 8.1, `/var` with the Nix store 49) and the installer's
+`MinBytes` 59 GiB. Change a minimum in
 `repart.sysinstall.d` and `MinBytes` together; the check plans an install
 onto a disk of 64 billion bytes.
 
@@ -309,8 +310,24 @@ on 2026-11-18:
   kernels are `homelab_V.efi`, so the installer sets `default homelab_*`.
 - **repart matches existing partitions to definitions by type.** An ESP
   definition with a 1 GB minimum makes repart grow a smaller existing ESP,
-  which fails when another partition follows it ("can't fit"); the ESP
-  definition takes 300 MB to 1 GB. A `linux-generic` definition would adopt
+  which fails when another partition follows it ("can't fit"). So the
+  installer leaves the ESP definition out whenever the install uses an ESP
+  that is already there, and a new ESP is exactly 1 GB.
+- **An existing ESP needs 400 MB free, not a size.** Two kernels (A/B) are
+  139 MiB each at 0.1.0, next to whatever the other system keeps there; a
+  300 MB ESP with Windows' files does not hold them. The page refuses an ESP
+  smaller than 400 MB from the disk listing, and a plan or an install mounts
+  a larger one read-only and measures it, counting this system's own
+  kernels from an earlier install as free. Windows' setup makes a 100 MB
+  ESP, so free space on such a disk is refused: there is no second boot
+  partition (XBOOTLDR) for the kernels. Such a machine takes the system on
+  another disk, with that disk's own ESP.
+- **`bootctl install --graceful`**: firmware whose variables are full or
+  read-only takes no boot entry, and that must not fail an install whose
+  fallback loader starts anyway. On an ESP shared with another system the
+  fallback loader stays that system's, so the page says to pick Linux Boot
+  Manager in the firmware's boot menu, or, without an entry, to add one for
+  `\EFI\systemd\systemd-bootx64.efi`. A `linux-generic` definition would adopt
   any Linux data partition on the disk, so `/nix` had its own type GUID, and
   the page refuses free space on a disk that already has root, verity or
   `/var`-typed partitions.
