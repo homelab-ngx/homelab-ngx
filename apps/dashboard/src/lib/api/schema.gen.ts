@@ -1672,6 +1672,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system-updates/image/auto-install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Image host: the time of day a downloaded release installs by itself.
+         * @description At that time a staged release is installed as installRelease does, with a reboot at once when it brings a new image. Each release is tried once.
+         */
+        put: operations["setImageAutoInstall"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system-updates/image/boot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Image host: boot another installed image version, once or by default.
+         * @description The way back to the version before, and the way to try a version again that failed its boots: one that comes up counts as good again. A default lasts until the next image is installed.
+         */
+        post: operations["bootImage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system-updates/image/build": {
         parameters: {
             query?: never;
@@ -1746,6 +1786,26 @@ export interface paths {
          * @description It boots at the next reboot, which this can start now or at a time. A version that does not boot falls back to the one before by itself.
          */
         post: operations["installImage"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system-updates/image/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Image host: install what is staged, the image and the core extension, in one operation.
+         * @description The image goes into the free slot, then the core extension is merged and checked (the version before goes back when it does not start), then the reboot choice applies. Follow it in /system-updates/deploys.
+         */
+        post: operations["installRelease"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1996,6 +2056,10 @@ export interface components {
             title: string;
             usage?: components["schemas"]["AnswerUsage"];
         };
+        AutoInBody: {
+            /** @description A time of day such as 03:30, in the host's time zone; empty: only when asked. */
+            at: string;
+        };
         Backup: {
             /** @description Upload limit, e.g. 4M (bytes per second with a K, M or G suffix); empty for none. */
             bwlimit: string;
@@ -2152,6 +2216,17 @@ export interface components {
             /** Format: int64 */
             run_id: number;
         };
+        BootInBody: {
+            /**
+             * @description once: at the next reboot only. default: every boot, until the next image is installed.
+             * @enum {string}
+             */
+            mode: "once" | "default";
+            /** @description Reboot after the answer. */
+            reboot?: boolean;
+            /** @description An installed image version; empty with mode default: the newest again. */
+            version: string;
+        };
         ChangeInBody: {
             /** @description The password now; required from the dashboard, not from the CLI. */
             current_password?: string;
@@ -2227,10 +2302,10 @@ export interface components {
              */
             id: number;
             /**
-             * @description deploy and rollback on a NixOS host; build, download, core-update and image-update on an image host.
+             * @description deploy and rollback on a NixOS host; build, download, core-update, image-update and install on an image host.
              * @enum {string}
              */
-            kind: "deploy" | "rollback" | "build" | "download" | "core-update" | "image-update";
+            kind: "deploy" | "rollback" | "build" | "download" | "core-update" | "image-update" | "install";
             /** @description The end of the build and switch output. */
             log: string;
             /** @description What it is doing now, or did last. */
@@ -2251,6 +2326,8 @@ export interface components {
             active: string;
             /** @description Staged in the update folder, newer than the active one. */
             available: string[];
+            /** @description A core version that did not start at boot; the host runs the one before. */
+            fell_back_from?: string;
             installed: string[];
         };
         CoreStatus: {
@@ -2677,14 +2754,22 @@ export interface components {
             mode: "dhcp" | "static";
         };
         ImageStatus: {
+            /** @description The time of day (HH:MM, the host's time zone) a downloaded release installs by itself, with a reboot for a new image; empty: only when asked. */
+            auto_install_at?: string;
             /** @description Staged in the update folder, newer than every installed one. */
             available: string[];
+            /** @description Why this boot did not pass its check; empty when it did. The host stays up on a version that was good before. */
+            boot_check?: string;
             /** @description The image version running now. */
             booted: string;
             core: components["schemas"]["CoreExtension"];
+            /** @description The version set to boot by default with bootImage; empty: the newest version that is not bad. */
+            default?: string;
             fell_back_from?: string;
             /** @description Versions in the boot menu, newest first. */
             installed: components["schemas"]["ImageVersion"][];
+            /** @description The version set to boot once, at the next reboot. */
+            oneshot?: string;
             pending_reboot: boolean;
             /** @description The last look at the release server. */
             release: components["schemas"]["ReleaseCheck"];
@@ -11150,6 +11235,225 @@ export interface operations {
             };
         };
     };
+    setImageAutoInstall: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutoInBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageStatus"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    bootImage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BootInBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImageStatus"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     buildImage: {
         parameters: {
             query?: never;
@@ -11382,6 +11686,106 @@ export interface operations {
         };
     };
     installImage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["InstallInBody"];
+            };
+        };
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoreDeploy"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    installRelease: {
         parameters: {
             query?: never;
             header?: never;

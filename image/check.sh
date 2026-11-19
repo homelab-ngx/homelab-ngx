@@ -24,9 +24,14 @@
 #      refused, the real one downloads and is staged; then a core update to
 #      it through the API, without a reboot, the stack untouched
 #  10. an image update to the downloaded version through the API, with a
-#      reboot; everything holds
-#  11. a broken image (a third version, its root corrupted on purpose) falls
-#      back to the one before by itself, and the daemon says so
+#      reboot; everything holds. The version before boots once more when the
+#      API is asked, and the newest again after it
+#  11. a third version installs in one operation, image and core; its root
+#      is corrupted on purpose, so it falls back to the one before by itself,
+#      and the daemon says so. On that version, good before: a daemon that
+#      cannot start leaves the host up with the boot check failed, not in a
+#      restart loop; and a core extension that does not start is replaced at
+#      boot by the one before
 #  12. with BUILD=1: the host builds an update from main itself
 #  13. the free-space install boots alone, next to the other system's files
 #  14. an erased disk whose boot loader goes on another disk's ESP boots
@@ -269,6 +274,12 @@ ownid() {
 }
 # put PATH JSON: PUT a body to the daemon's API, the body over stdin.
 put() { vssh "cat > /tmp/body.json" <<<"$2" && api -X PUT "http://x/api/$1" -d @/tmp/body.json >/dev/null; }
+# post PATH JSON: the same with POST; prints the answer.
+post() { vssh "cat > /tmp/body.json" <<<"$2" && api -X POST "http://x/api/$1" -d @/tmp/body.json; }
+# gone: wait for the VM to stop answering, as a reboot it started itself does.
+gone() { for _ in $(seq 1 60); do vssh true 2>/dev/null || break; sleep 2; done; }
+# daemon: wait for the daemon's API.
+daemon() { for _ in $(seq 1 ${1:-30}); do api http://x/api/version >/dev/null 2>&1 && return 0; sleep 2; done; return 1; }
 # stage_image V: put version V's image files in the host's update folder, as
 # a build there would.
 stage_image() {
@@ -595,15 +606,35 @@ if [ -n "$next" ]; then
   vssh 'systemd-sysext status --no-legend' | grep -q homelab-core || die "the core extension is not merged on $next"
   hostcheck
   ok "booted $next with everything in place"
+  # The way back by hand: the version before is still in its slot.
+  st=$(post system-updates/image/boot "{\"version\":\"$version\",\"mode\":\"default\"}") || die "making $version the default was refused: $st"
+  [ "$(jq -r .default <<<"$st")" = "$version" ] || die "$version is not the default: $(jq -c '{default, oneshot}' <<<"$st")"
+  st=$(post system-updates/image/boot '{"version":"","mode":"default"}') || die "clearing the default was refused: $st"
+  [ "$(jq -r '.default // ""' <<<"$st")" = "" ] || die "the default is still set: $(jq -c '{default, oneshot}' <<<"$st")"
+  [ "$(post system-updates/image/boot '{"version":"0.0.0.1","mode":"once"}' | jq -r .code)" = no_such_version ] || die "a version that is not installed was accepted"
+  st=$(post system-updates/image/boot "{\"version\":\"$version\",\"mode\":\"once\",\"reboot\":true}") || die "booting $version once was refused: $st"
+  [ "$(jq -r .oneshot <<<"$st")" = "$version" ] || die "$version is not set to boot once: $(jq -c '{default, oneshot}' <<<"$st")"
+  gone
+  up
+  daemon || die "the daemon does not answer on $version"
+  booted "$version"
+  reboot_vm
+  booted "$next"
+  hostcheck
+  ok "$version booted once more from the API, then $next again"
 else
   step "9-10. core and image updates skipped: image/out has one version"
 fi
 
 if [ -n "$broken" ]; then
-  step "11. a broken image ($broken) falls back to $next"
+  step "11. $broken installs in one operation; its broken image falls back to $next"
   stage_image "$broken"
-  d=$(op system-updates/image/install)
-  [ "$(jq -r .version <<<"$d")" = "$broken" ] || die "$broken was not installed: $d"
+  vscp "$out/core/homelab-core_$broken.raw" root@127.0.0.1:/var/lib/homelab/updates/core/
+  d=$(op system-updates/image/release)
+  [ "$(jq -r .result <<<"$d")" = healthy ] && [ "$(jq -r .version <<<"$d")" = "$broken" ] || die "$broken was not installed: $d"
+  api http://x/api/system-updates/image | jq -e --arg v "$broken" '.core.active == $v and .pending_reboot' >/dev/null ||
+    die "after the install: $(api http://x/api/system-updates/image | jq -c '{core: .core.active, pending_reboot, installed}')"
+  ok "image $broken in the free slot and core $broken running, from one call"
   # Corrupt the new slot's root: its verity check fails, so does the boot.
   vssh bash -s "$broken" <<'EOS' || die "could not corrupt the new slot"
 set -e
@@ -627,6 +658,39 @@ EOS
   [ "$(api http://x/api/system-updates/image | jq -r .fell_back_from)" = "$broken" ] || die "the daemon does not say it fell back from $broken"
   hostcheck
   ok "back on $next by itself; the daemon reports the fall back from $broken"
+
+  # A daemon that cannot start (a file where its state folder was), on a
+  # version that was good before: the boot check tries the core before,
+  # fails, and leaves the host up.
+  vssh 'systemctl stop homelab-daemon && mv /var/lib/homelab-daemon /var/lib/homelab-daemon.keep && touch /var/lib/homelab-daemon'
+  vssh 'systemctl reboot' || true
+  for _ in $(seq 1 30); do vssh true 2>/dev/null || break; sleep 1; done
+  up
+  bootid=$(vssh 'cat /proc/sys/kernel/random/boot_id')
+  for _ in $(seq 1 120); do [ "$(vssh 'systemctl is-failed homelab-boot-check.service' 2>/dev/null)" = failed ] && break; sleep 5; done
+  [ "$(vssh 'systemctl is-failed homelab-boot-check.service')" = failed ] || die "the boot check did not fail with the daemon broken: $(vssh 'systemctl is-active homelab-boot-check.service')"
+  sleep 30
+  [ "$(vssh 'cat /proc/sys/kernel/random/boot_id')" = "$bootid" ] || die "the host restarted after the boot check failed on a good version"
+  vssh 'grep -q "daemon does not answer" /run/homelab/boot-check-failed' || die "no reason left: $(vssh 'cat /run/homelab/boot-check-failed')"
+  [ "$(vssh 'readlink /var/lib/extensions/homelab-core.raw')" = "../extensions.d/homelab-core_$broken.raw" ] ||
+    die "the core extension was not put back: $(vssh 'readlink /var/lib/extensions/homelab-core.raw')"
+  vssh 'rm /var/lib/homelab-daemon && mv /var/lib/homelab-daemon.keep /var/lib/homelab-daemon && systemctl restart homelab-daemon'
+  daemon || die "the daemon does not answer after its repair"
+  api http://x/api/system-updates/image | jq -e '.boot_check | contains("daemon does not answer")' >/dev/null || die "the daemon does not report the failed boot check"
+  ok "a daemon that cannot start: the host stayed up with the boot check failed, and says why once repaired"
+
+  # A core extension that does not start (its file overwritten): the boot
+  # check merges the one before.
+  vssh "dd if=/dev/urandom of=/var/lib/extensions.d/homelab-core_$broken.raw bs=1M count=4 conv=notrunc,fsync status=none"
+  vssh 'systemctl reboot' || true
+  for _ in $(seq 1 30); do vssh true 2>/dev/null || break; sleep 1; done
+  up
+  daemon 150 || die "the daemon does not answer on the core before"
+  booted "$next"
+  api http://x/api/system-updates/image | jq -e --arg b "$broken" --arg n "$next" '.core.fell_back_from == $b and .core.active == $n and (.boot_check // "") == ""' >/dev/null ||
+    die "after a broken core: $(api http://x/api/system-updates/image | jq -c '{core, boot_check}')"
+  hostcheck
+  ok "a core that does not start: core $next back at boot, and the daemon reports it"
 else
   step "11. fall back skipped: image/out has fewer than three versions"
 fi

@@ -33,6 +33,7 @@ export const imageSteps: Record<string, readonly string[]> = {
   download: ["Check", "Verify", "Download", "Stage"],
   "core-update": ["Update", "Restart", "Health check"],
   "image-update": ["Update"],
+  install: ["Update", "Restart", "Health check"],
 };
 
 export const stepsOf = (d: CoreDeploy): readonly string[] => imageSteps[d.kind] ?? (d.kind === "rollback" ? rollbackSteps : deploySteps);
@@ -50,6 +51,8 @@ export function deployTitle(d: CoreDeploy, short: (rev: string) => string): stri
       return `Updating core${d.version ? ` to ${d.version}` : ""}`;
     case "image-update":
       return `Installing the image${d.version ? ` ${d.version}` : ""}`;
+    case "install":
+      return `Installing${d.version ? ` ${d.version}` : ""}`;
   }
   return `Updating core${d.rev ? ` to ${short(d.rev)}` : ""}`;
 }

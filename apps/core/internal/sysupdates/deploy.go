@@ -55,7 +55,7 @@ const (
 // generation before.
 type CoreDeploy struct {
 	Id          int64      `json:"id" doc:"Start time in unix milliseconds."`
-	Kind        string     `json:"kind" enum:"deploy,rollback,build,download,core-update,image-update" doc:"deploy and rollback on a NixOS host; build, download, core-update and image-update on an image host."`
+	Kind        string     `json:"kind" enum:"deploy,rollback,build,download,core-update,image-update,install" doc:"deploy and rollback on a NixOS host; build, download, core-update, image-update and install on an image host."`
 	Rev         string     `json:"rev" doc:"The commit of main being deployed or built; empty until it is fetched, and for a rollback."`
 	Version     string     `json:"version,omitempty" doc:"Image host: the image or core version built or installed."`
 	Phase       string     `json:"phase" doc:"What it is doing now, or did last."`

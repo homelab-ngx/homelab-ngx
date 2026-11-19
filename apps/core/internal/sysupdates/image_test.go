@@ -48,6 +48,9 @@ func imageHost(t *testing.T, booted string) string {
 	for _, d := range []string{imageUpdates + "/core", imageESPs[0], coreExtDir, filepath.Dir(coreExtLink)} {
 		_ = os.MkdirAll(d, 0o755)
 	}
+	// The boot loader's variables and the boot check's files too: a test
+	// must not read, or remove, the machine's own.
+	bootHost(t, root)
 	_ = os.WriteFile(osRelease, []byte("ID=arch\nIMAGE_ID=homelab\nIMAGE_VERSION="+booted+"\n"), 0o644)
 	return root
 }

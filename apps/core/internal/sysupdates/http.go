@@ -28,7 +28,19 @@ type (
 	deployOut   struct{ Body CoreDeploy }
 	deploysOut  struct{ Body []CoreDeploy }
 	imageOut    struct{ Body ImageStatus }
-	installIn   struct {
+	bootIn      struct {
+		Body struct {
+			Version string `json:"version" doc:"An installed image version; empty with mode default: the newest again."`
+			Mode    string `json:"mode" enum:"once,default" doc:"once: at the next reboot only. default: every boot, until the next image is installed."`
+			Reboot  bool   `json:"reboot,omitempty" doc:"Reboot after the answer."`
+		}
+	}
+	autoIn struct {
+		Body struct {
+			At string `json:"at" doc:"A time of day such as 03:30, in the host's time zone; empty: only when asked."`
+		}
+	}
+	installIn struct {
 		// Optional: no body is a later reboot.
 		Body *struct {
 			Reboot string `json:"reboot,omitempty" doc:"Empty: the new version boots at the next reboot. now: reboot at once. HH:MM: reboot then, today."`
@@ -83,6 +95,21 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeOperator, imageOp("installImage", "/system-updates/image/install",
 		"Image host: install the newest staged image into the free slot.",
 		"It boots at the next reboot, which this can start now or at a time. A version that does not boot falls back to the one before by itself."), h.install)
+	httpx.Register(a, httpx.ScopeOperator, imageOp("installRelease", "/system-updates/image/release",
+		"Image host: install what is staged, the image and the core extension, in one operation.",
+		"The image goes into the free slot, then the core extension is merged and checked (the version before goes back when it does not start), then the reboot choice applies. Follow it in /system-updates/deploys."), h.installRelease)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "bootImage", Method: http.MethodPost, Path: "/system-updates/image/boot", Tags: tags,
+		Summary:     "Image host: boot another installed image version, once or by default.",
+		Description: "The way back to the version before, and the way to try a version again that failed its boots: one that comes up counts as good again. A default lasts until the next image is installed.",
+		Errors:      []int{http.StatusBadRequest, http.StatusNotFound, http.StatusConflict},
+	}, h.boot)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "setImageAutoInstall", Method: http.MethodPut, Path: "/system-updates/image/auto-install", Tags: tags,
+		Summary:     "Image host: the time of day a downloaded release installs by itself.",
+		Description: "At that time a staged release is installed as installRelease does, with a reboot at once when it brings a new image. Each release is tried once.",
+		Errors:      []int{http.StatusBadRequest, http.StatusConflict},
+	}, h.autoInstall)
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "rebootSystem", Method: http.MethodPost, Path: "/system-updates/reboot", Tags: tags,
 		Summary: "Reboot the host.", Description: "The reboot starts a few seconds after the response.",
@@ -136,6 +163,38 @@ func (h *HTTP) install(ctx context.Context, in *installIn) (*deployOut, error) {
 		reboot = in.Body.Reboot
 	}
 	return startOut(h.mod.StartImage(ctx, KindImageUpdate, reboot))
+}
+
+func (h *HTTP) installRelease(ctx context.Context, in *installIn) (*deployOut, error) {
+	reboot := ""
+	if in.Body != nil {
+		reboot = in.Body.Reboot
+	}
+	return startOut(h.mod.StartImage(ctx, KindInstall, reboot))
+}
+
+func imageStatusOut(st ImageStatus, err error) (*imageOut, error) {
+	switch {
+	case errors.Is(err, ErrNotImageHost):
+		return nil, httpx.Conflict("not_image_host", "%s", err.Error())
+	case errors.Is(err, ErrNoSuchVersion):
+		return nil, httpx.NotFound("no_such_version", "%s", err.Error())
+	case errors.Is(err, ErrBadBootMode):
+		return nil, httpx.BadRequest("invalid_mode", "%s", err.Error())
+	case errors.Is(err, ErrBadTime):
+		return nil, httpx.BadRequest("invalid_time", "%s", err.Error())
+	case err != nil:
+		return nil, err
+	}
+	return &imageOut{Body: st}, nil
+}
+
+func (h *HTTP) boot(ctx context.Context, in *bootIn) (*imageOut, error) {
+	return imageStatusOut(h.mod.BootImage(ctx, in.Body.Version, in.Body.Mode, in.Body.Reboot))
+}
+
+func (h *HTTP) autoInstall(ctx context.Context, in *autoIn) (*imageOut, error) {
+	return imageStatusOut(h.mod.SetAutoInstall(ctx, in.Body.At))
 }
 
 func (h *HTTP) start(ctx context.Context, kind string) (*deployOut, error) {

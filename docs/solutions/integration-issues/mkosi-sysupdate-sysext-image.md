@@ -187,6 +187,52 @@ extension is installed: a new image the extension does not work on falls
 back too. Its unit needs `TimeoutStartSec=` above that, or the oneshot's 90 s
 default kills the check and fails the boot.
 
+## The boot check restarts only a boot that is counted
+
+A reboot helps only while the boot loader has tries to count. Once a version
+is blessed its UKI has no counter, and the installer medium's never had
+one. With `FailureAction=reboot` on the unit, anything that kept the daemon
+from answering on such a version (a full `/var`, a bad `daemon.env`, a
+failed migration) restarted the host for ever, with SSH up two minutes per
+turn.
+
+So the unit has no failure action, and the script
+(`usr/lib/homelab/boot-check`) decides:
+
+- `systemd-bless-boot status` says `indeterminate` while this boot is being
+  counted. Only then does a failed check reboot.
+- Otherwise the host stays up with the unit failed. The reason is in
+  `/run/homelab/boot-check-failed` and on the console (`/run/issue.d`), and
+  the daemon reports it once it runs again.
+- Before it gives up, the check merges the core extension from before and
+  waits again. If the daemon answers on that one it stays, with a note in
+  `/var/lib/homelab/core-fell-back` the daemon reads; if not, the newer one
+  goes back, so the host is left as it was set.
+
+`make image-check` breaks the daemon and the core extension on a blessed
+version and expects the host up both times (step 11).
+
+## Booting another version by hand
+
+systemd-boot's own variables do it: `bootctl set-oneshot` and `set-default`
+with the entry's id, the UKI's file name without its counter
+(`homelab_<v>.efi`). The daemon reads them from efivarfs and sets them with
+`bootctl` (`internal/sysupdates/boot.go`).
+
+- A default set by hand pins the host to that version, so installing a new
+  image clears it.
+- A version that used up its tries (`+0-3`) still boots when it is asked
+  for. It is not counted then, and when it reaches `boot-complete.target`
+  `systemd-bless-boot good` renames it to a good one.
+
+## One operation installs a release
+
+The order is the image, the core, then the reboot. The image only fills the
+free slot, so nothing runs it yet. The core is merged next and checked on
+the running image, where the version before goes back when it does not
+start; the host reboots into the new image only after that. A core that
+went back leaves the image in its slot and starts no reboot.
+
 ## Installing from the stick (#104)
 
 The installer runs repart with `usr/lib/repart.sysinstall.d`, then `bootctl

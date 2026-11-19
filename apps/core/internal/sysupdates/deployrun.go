@@ -38,7 +38,7 @@ type RunOptions struct {
 	Host   string
 	Socket string
 	State  string
-	// Reboot is an image update's: "", "now" or "HH:MM".
+	// Reboot is an image update's or an install's: "", "now" or "HH:MM".
 	Reboot string
 }
 
@@ -106,7 +106,7 @@ func (x *deployRun) run(ctx context.Context) error {
 
 func (x *deployRun) work(ctx context.Context) (result, reason string) {
 	switch x.o.Kind {
-	case KindBuild, KindDownload, KindCoreUpdate, KindImageUpdate:
+	case KindBuild, KindDownload, KindCoreUpdate, KindImageUpdate, KindInstall:
 		return x.imageWork(ctx)
 	}
 	if x.o.Kind == KindRollback {

@@ -34,6 +34,9 @@ const (
 	KindBuild       = "build"
 	KindCoreUpdate  = "core-update"
 	KindImageUpdate = "image-update"
+	// KindInstall installs what is staged, in order: the image into the
+	// free slot, the core extension, then the reboot choice.
+	KindInstall = "install"
 )
 
 // Where the image host keeps its updates; variables for tests.
@@ -73,6 +76,8 @@ type CoreExtension struct {
 	Active    string   `json:"active" doc:"The version merged now; empty when none is installed."`
 	Installed []string `json:"installed"`
 	Available []string `json:"available" doc:"Staged in the update folder, newer than the active one."`
+	// FellBackFrom: the boot check put the core before back (boot.go).
+	FellBackFrom string `json:"fell_back_from,omitempty" doc:"A core version that did not start at boot; the host runs the one before."`
 }
 
 // ImageStatus is where the image host stands.
@@ -84,10 +89,15 @@ type ImageStatus struct {
 	PendingReboot bool `json:"pending_reboot"`
 	// FellBackFrom is a newer version that failed its tries, so the host is
 	// back on the one before.
-	FellBackFrom string        `json:"fell_back_from,omitempty"`
-	Core         CoreExtension `json:"core"`
-	Source       string        `json:"source" doc:"What a build fetches: the repository core comes from."`
-	Release      ReleaseCheck  `json:"release" doc:"The last look at the release server."`
+	FellBackFrom string `json:"fell_back_from,omitempty"`
+	Default      string `json:"default,omitempty" doc:"The version set to boot by default with bootImage; empty: the newest version that is not bad."`
+	Oneshot      string `json:"oneshot,omitempty" doc:"The version set to boot once, at the next reboot."`
+	BootCheck    string `json:"boot_check,omitempty" doc:"Why this boot did not pass its check; empty when it did. The host stays up on a version that was good before."`
+	// AutoInstallAt: see SetAutoInstall.
+	AutoInstallAt string        `json:"auto_install_at,omitempty" doc:"The time of day (HH:MM, the host's time zone) a downloaded release installs by itself, with a reboot for a new image; empty: only when asked."`
+	Core          CoreExtension `json:"core"`
+	Source        string        `json:"source" doc:"What a build fetches: the repository core comes from."`
+	Release       ReleaseCheck  `json:"release" doc:"The last look at the release server."`
 }
 
 // SetImage marks the host an image host: deploys go through sysupdate.
@@ -228,12 +238,18 @@ func (m *Module) ImageStatus(context.Context) (ImageStatus, error) {
 		top = st.Core.Installed[0]
 	}
 	st.Core.Available = newer(versionsIn(filepath.Join(imageUpdates, "core"), coreFileRE), top)
+	st.Default, st.Oneshot = entryVersion(loaderVar("LoaderEntryDefault")), entryVersion(loaderVar("LoaderEntryOneShot"))
+	st.BootCheck = bootCheckFailure()
+	if fb, ok := coreFellBack(); ok {
+		st.Core.FellBackFrom = fb.From
+	}
+	st.AutoInstallAt = m.autoInstallAt()
 	return st, nil
 }
 
-// StartImage starts a build, a core update or an image update. reboot is
-// for an image update: "" leaves the new version for the next reboot, "now"
-// reboots at once, "HH:MM" at that time.
+// StartImage starts a build, a core update, an image update or an install
+// of everything staged. reboot is for a new image: "" leaves the new version
+// for the next reboot, "now" reboots at once, "HH:MM" at that time.
 func (m *Module) StartImage(ctx context.Context, kind, reboot string) (CoreDeploy, error) {
 	if !m.image {
 		return CoreDeploy{}, ErrNotImageHost
@@ -241,7 +257,7 @@ func (m *Module) StartImage(ctx context.Context, kind, reboot string) (CoreDeplo
 	if kind == KindBuild && m.dep.Source == "" {
 		return CoreDeploy{}, ErrDeployNotSet
 	}
-	if reboot != "" && (kind != KindImageUpdate || (reboot != "now" && !rebootAtRE.MatchString(reboot))) {
+	if reboot != "" && ((kind != KindImageUpdate && kind != KindInstall) || (reboot != "now" && !rebootAtRE.MatchString(reboot))) {
 		return CoreDeploy{}, ErrBadReboot
 	}
 	return m.start(ctx, kind, "--reboot", reboot)
@@ -257,6 +273,8 @@ func (x *deployRun) imageWork(ctx context.Context) (result, reason string) {
 		return x.coreUpdate(ctx)
 	case KindImageUpdate:
 		return x.imageUpdate(ctx)
+	case KindInstall:
+		return x.install(ctx)
 	case KindDownload:
 		return x.download(ctx)
 	}
@@ -474,17 +492,63 @@ func (x *deployRun) coreUpdate(ctx context.Context) (string, string) {
 // imageUpdate installs the newest staged image into the free slot; it boots
 // at the next reboot, which this may start.
 func (x *deployRun) imageUpdate(ctx context.Context) (string, string) {
+	v, why := x.installImage(ctx)
+	if why != "" {
+		return DeployFailed, why
+	}
+	if v == "" {
+		return DeployHealthy, ""
+	}
+	return x.rebootChoice(ctx)
+}
+
+// install installs what is staged in the order that keeps the host on a
+// working pair: the image into the free slot (nothing runs it yet), then
+// the core extension, which is checked and put back when it does not start,
+// and only then the reboot into the new image.
+func (x *deployRun) install(ctx context.Context) (string, string) {
+	image, why := x.installImage(ctx)
+	if why != "" {
+		return DeployFailed, why
+	}
+	result, reason := x.coreUpdate(ctx)
+	if image == "" {
+		return result, reason
+	}
+	x.d.Version = image
+	if result != DeployHealthy {
+		return result, reason + "; image " + image + " is installed and boots at the next reboot"
+	}
+	return x.rebootChoice(ctx)
+}
+
+// installImage puts the newest staged image in the free slot and returns its
+// version, "" when the host already has the newest; why says what failed.
+func (x *deployRun) installImage(ctx context.Context) (version, why string) {
 	booted := bootedVersion()
 	x.phase("Update")
 	if out, err := x.cmd(ctx, 30*time.Minute, nil, sysupdateBin, "--verify=no", "update"); err != nil {
-		return DeployFailed, "sysupdate: " + strings.TrimSpace(lastLines(out, 5))
+		return "", "sysupdate: " + strings.TrimSpace(lastLines(out, 5))
 	}
 	vs := parseUKIs(ukiNames(), booted)
 	if len(vs) == 0 || compareVersions(vs[0].Version, booted) <= 0 {
 		x.phase("Already the newest image " + booted)
-		return DeployHealthy, ""
+		return "", ""
 	}
 	x.d.Version = vs[0].Version
+	// A default set by hand (bootImage) would keep the host on the version
+	// it names: a new version takes over again.
+	if loaderVar("LoaderEntryDefault") != "" {
+		if _, err := x.cmd(ctx, time.Minute, nil, "bootctl", "set-default", ""); err != nil {
+			x.logf("the default boot entry could not be cleared: %v", err)
+		}
+	}
+	return vs[0].Version, ""
+}
+
+// rebootChoice does what the operation was asked to do after a new image is
+// in its slot: leave it for the next reboot, reboot now, or at a time.
+func (x *deployRun) rebootChoice(ctx context.Context) (string, string) {
 	switch reboot := x.o.Reboot; reboot {
 	case "":
 		x.phase("Installed " + x.d.Version + "; it boots at the next reboot")

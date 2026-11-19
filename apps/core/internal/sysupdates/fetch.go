@@ -5,7 +5,12 @@ package sysupdates
 // its SHA256SUMS checked against the release key and every file against its
 // sum, and staged in the update folder as a build from main would be. The
 // operator is told once and installs it from the Core host page; nothing
-// installs by itself.
+// installs by itself unless the operator set a time for it (boot.go).
+//
+// A download that stops keeps what it has (updates/.download/<version>) and
+// the next one goes on from there with a range request. Before it starts,
+// the file system must have room for what is left plus a reserve: /var is
+// the host's state, and a full one stops the daemon.
 //
 // The server's layout (the release workflow publishes it):
 //
@@ -34,6 +39,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/ProtonMail/go-crypto/openpgp"
@@ -64,7 +70,9 @@ const (
 	imageReleaseScope = "image-release:"
 	smallFileMax      = 64 << 10
 	latestTimeout     = 30 * time.Second
-	fileTimeout       = 2 * time.Hour
+	// downloadReserve stays free on the update folder's file system.
+	downloadReserve = 1 << 30
+	fileTimeout     = 2 * time.Hour
 )
 
 // releaseClient fetches from the release server; a variable for tests.
@@ -85,6 +93,10 @@ type ReleaseCheck struct {
 type releaseState struct {
 	ReleaseCheck
 	Notified string `json:"notified,omitempty"`
+	// AutoInstallAt is when a staged release installs by itself ("HH:MM";
+	// "" never), and AutoTried the version that was started for (boot.go).
+	AutoInstallAt string `json:"auto_install_at,omitempty"`
+	AutoTried     string `json:"auto_tried,omitempty"`
 }
 
 type imageRelease struct {
@@ -210,28 +222,110 @@ func releaseFiles(sums []byte, v string) (map[string]string, error) {
 	return files, nil
 }
 
-// fetchFile downloads url to path and checks it against its sum.
+// freeSpace is the room left on dir's file system; a variable for tests.
+var freeSpace = func(dir string) (uint64, error) {
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(dir, &st); err != nil {
+		return 0, err
+	}
+	return uint64(st.Bavail) * uint64(st.Bsize), nil //nolint:unconvert // the fields' types differ by platform
+}
+
+// remoteSize asks the server for a file's size; -1 when it does not say.
+func remoteSize(ctx context.Context, url string) int64 {
+	ctx, cancel := context.WithTimeout(ctx, latestTimeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+	if err != nil {
+		return -1
+	}
+	resp, err := releaseClient.Do(req)
+	if err != nil {
+		return -1
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return -1
+	}
+	return resp.ContentLength
+}
+
+// roomFor checks dir's file system has room for the files still to come
+// (url to local path) and the reserve. Sizes the server does not give are
+// left out.
+func roomFor(ctx context.Context, dir string, files map[string]string) error {
+	var need int64
+	for url, path := range files {
+		size := remoteSize(ctx, url)
+		if fi, err := os.Stat(path); err == nil {
+			size -= fi.Size()
+		}
+		if size > 0 {
+			need += size
+		}
+	}
+	free, err := freeSpace(dir)
+	if err != nil {
+		return nil // nothing to compare with: the download says if it runs out
+	}
+	if uint64(need)+downloadReserve > free {
+		return fmt.Errorf("not enough room in %s: the download needs %d MB and %d MB must stay free, %d MB are free",
+			dir, need>>20, int64(downloadReserve)>>20, free>>20)
+	}
+	return nil
+}
+
+// fetchFile downloads url to path and checks it against its sum. What an
+// earlier try left at path is kept and the rest asked for; a server that
+// does not do ranges sends the whole file again. A file that does not match
+// its sum is removed, so the next try starts it afresh.
 func fetchFile(ctx context.Context, url, path, sum string) (int64, error) {
 	ctx, cancel := context.WithTimeout(ctx, fileTimeout)
 	defer cancel()
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	h := sha256.New()
+	have, err := io.Copy(h, f)
+	if err != nil {
+		return 0, err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, err
 	}
+	if have > 0 {
+		req.Header.Set("Range", "bytes="+strconv.FormatInt(have, 10)+"-")
+	}
 	resp, err := releaseClient.Do(req)
 	if err != nil {
-		return 0, err
+		return have, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("%s: %s", url, resp.Status)
+	switch {
+	case resp.StatusCode == http.StatusPartialContent && have > 0:
+	case resp.StatusCode == http.StatusOK:
+		// The whole file: start over.
+		if have > 0 {
+			if _, err := f.Seek(0, io.SeekStart); err != nil {
+				return 0, err
+			}
+			if err := f.Truncate(0); err != nil {
+				return 0, err
+			}
+			h.Reset()
+			have = 0
+		}
+	case resp.StatusCode == http.StatusRequestedRangeNotSatisfiable && have > 0:
+		// Nothing after what is here: the sum says if it is the file.
+		resp.Body = http.NoBody
+	default:
+		return have, fmt.Errorf("%s: %s", url, resp.Status)
 	}
-	f, err := os.Create(path)
-	if err != nil {
-		return 0, err
-	}
-	h := sha256.New()
 	n, err := io.Copy(io.MultiWriter(f, h), resp.Body)
+	n += have
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
@@ -239,6 +333,7 @@ func fetchFile(ctx context.Context, url, path, sum string) (int64, error) {
 		return n, err
 	}
 	if got := hex.EncodeToString(h.Sum(nil)); got != sum {
+		_ = os.Remove(path)
 		return n, fmt.Errorf("%s does not match its sum", filepath.Base(path))
 	}
 	return n, nil
@@ -283,22 +378,36 @@ func (x *deployRun) download(ctx context.Context) (string, string) {
 	}
 
 	x.phase("Download")
-	// In the update folder: on its file system, so staging is a rename.
-	tmp := filepath.Join(imageUpdates, ".download")
-	_ = os.RemoveAll(tmp)
-	defer os.RemoveAll(tmp)
+	// In the update folder: on its file system, so staging is a rename. A
+	// version's folder stays when its download stops, for the next try;
+	// another version's is of no use any more.
+	all := filepath.Join(imageUpdates, ".download")
+	tmp := filepath.Join(all, v)
+	if entries, err := os.ReadDir(all); err == nil {
+		for _, e := range entries {
+			if e.Name() != v {
+				_ = os.RemoveAll(filepath.Join(all, e.Name()))
+			}
+		}
+	}
 	if err := os.MkdirAll(filepath.Join(tmp, "core"), 0o755); err != nil {
 		return DeployFailed, err.Error()
 	}
 	names := make([]string, 0, len(files))
+	local := map[string]string{}
 	for name := range files {
 		names = append(names, name)
+		local[base+"/"+v+"/"+name] = filepath.Join(tmp, filepath.FromSlash(name))
 	}
 	slices.Sort(names)
+	if err := roomFor(ctx, imageUpdates, local); err != nil {
+		return DeployFailed, "downloading " + v + ": " + err.Error()
+	}
 	for _, name := range names {
-		n, err := fetchFile(ctx, base+"/"+v+"/"+name, filepath.Join(tmp, filepath.FromSlash(name)), files[name])
+		url := base + "/" + v + "/" + name
+		n, err := fetchFile(ctx, url, local[url], files[name])
 		if err != nil {
-			return DeployFailed, "downloading " + v + ": " + err.Error()
+			return DeployFailed, "downloading " + v + ": " + err.Error() + "; the next download goes on from here"
 		}
 		x.logf("%s: %d MB, sum checked", name, n>>20)
 	}
@@ -307,6 +416,7 @@ func (x *deployRun) download(ctx context.Context) (string, string) {
 	if err := stageWith(tmp, v, moveFile); err != nil {
 		return DeployFailed, "staging the update: " + err.Error()
 	}
+	_ = os.RemoveAll(all)
 	x.phase("Downloaded " + v)
 	return DeployHealthy, ""
 }
@@ -382,6 +492,9 @@ func (m *Module) DownloadRelease(ctx context.Context) (CoreDeploy, error) {
 }
 
 func (m *Module) imageReleaseLoop(ctx context.Context) {
+	// What the boot check left is told at once: after a boot that failed
+	// it, the daemon starts when the operator has repaired it.
+	m.notifyBoot(ctx)
 	t := time.NewTimer(releaseDelay)
 	defer t.Stop()
 	for {
@@ -406,6 +519,8 @@ func (m *Module) releaseTick(ctx context.Context) {
 		}
 	}
 	m.notifyImageRelease(ctx)
+	m.notifyBoot(ctx)
+	m.autoInstall(ctx)
 }
 
 // notifyImageRelease tells the operator once that a release is downloaded

@@ -1,16 +1,79 @@
 #!/bin/sh
 # The boot counts as good once /var, /nix and the network are up and, when
-# the core extension is installed, the daemon answers. A boot that never gets
-# here is retried and then falls back to the slot before.
-set -e
-mountpoint -q /var
-mountpoint -q /nix
-systemctl is-active -q systemd-networkd.service
-if [ -e /var/lib/extensions/homelab-core.raw ]; then
-  for _ in $(seq 1 60); do
-    curl -sf --unix-socket /run/homelab-daemon/daemon.sock http://x/api/version >/dev/null && exit 0
+# the core extension is installed, the daemon answers.
+#
+# When the daemon does not answer, the core extension from before is tried:
+# a core that only breaks at boot must not take the host down. If that one
+# answers it stays, and the daemon says so.
+#
+# A boot that fails the check restarts only while the boot loader counts its
+# tries (a version on its first boots): the tries run out and the version
+# before boots. A version that was good before has no tries to count, and so
+# has the installer medium, so the host stays up, with this unit failed and
+# the reason on the console and in /run/homelab/boot-check-failed: a restart
+# would fail the same way, for ever.
+link=/var/lib/extensions/homelab-core.raw
+dir=/var/lib/extensions.d
+
+answers() {
+  for _ in $(seq 1 "$1"); do
+    curl -sf --unix-socket /run/homelab-daemon/daemon.sock http://x/api/version >/dev/null && return 0
     sleep 2
   done
+  return 1
+}
+
+# use FILE: merge that core extension and start the daemon and Caddy on it.
+use() {
+  ln -sfn "../extensions.d/$1" "$link"
+  systemd-sysext refresh || true
+  systemctl restart --no-block homelab-daemon.service caddy.service || true
+}
+
+# The installed core extension before the active one; the newest when the
+# active one is gone.
+before() {
+  cur=$(basename "$(readlink "$link")")
+  all=$(ls "$dir" 2>/dev/null | grep '^homelab-core_.*\.raw$' | sort -V)
+  if printf '%s\n' "$all" | grep -qFx "$cur"; then
+    printf '%s\n' "$all" | grep -B1 -Fx "$cur" | grep -vFx "$cur" | head -n1
+  else
+    printf '%s\n' "$all" | tail -n1
+  fi
+}
+
+version() { v=${1#homelab-core_}; echo "${v%.raw}"; }
+
+check() {
+  mountpoint -q /var || { echo "/var is not mounted"; return 1; }
+  mountpoint -q /nix || { echo "/nix is not mounted"; return 1; }
+  systemctl is-active -q systemd-networkd.service || { echo "the network (systemd-networkd) is not running"; return 1; }
+  [ -L "$link" ] || return 0
+  answers 60 && return 0
+  cur=$(basename "$(readlink "$link")")
+  prev=$(before)
+  if [ -n "$prev" ]; then
+    echo "the daemon does not answer on core $(version "$cur"): trying core $(version "$prev")" >&2
+    use "$prev"
+    if answers 30; then
+      printf '{"from":"%s","to":"%s"}\n' "$(version "$cur")" "$(version "$prev")" > /var/lib/homelab/core-fell-back
+      echo "core $(version "$cur") did not start: the host runs core $(version "$prev")" >&2
+      return 0
+    fi
+    use "$cur"
+  fi
   echo "the daemon does not answer"
-  exit 1
+  return 1
+}
+
+rm -f /run/homelab/boot-check-failed /run/issue.d/50-homelab-boot-check.issue
+reason=$(check) && exit 0
+echo "$reason"
+mkdir -p /run/homelab /run/issue.d
+echo "$reason" > /run/homelab/boot-check-failed
+printf 'This boot did not pass its check: %s.\n\n' "$reason" > /run/issue.d/50-homelab-boot-check.issue
+if [ "$(/usr/lib/systemd/systemd-bless-boot status 2>/dev/null)" = indeterminate ]; then
+  echo "this version is on its first boots: restarting, so the boot loader counts the try"
+  systemctl reboot --no-block
 fi
+exit 1
