@@ -58,6 +58,10 @@
 # boot entries the installs register are used. Where the stick has to start
 # next to an installed disk (steps 3 and 16) the firmware is told to try it
 # first, like a machine set to start from USB.
+# With two versions, steps 1 to 13 are the first one's (its installer, its
+# installs and the updates from it) and steps 14 on install the second from
+# its own installer medium: in the workflow the first is the release before,
+# and the second the build under test.
 # Steps 9-10 need two versions in image/out and step 11 three. The third is
 # only installed and broken, so a copy of the second does (image/variant.sh):
 #   make image VERSION=0.0.1 && make image VERSION=0.0.2 && make image-variant FROM=0.0.2 VERSION=0.0.3
@@ -80,6 +84,11 @@ version=${versions[$((n > 3 ? n - 3 : 0))]} next= broken=
 [ "$n" -ge 2 ] && next=${versions[$((n > 3 ? n - 2 : 1))]}
 [ "$n" -ge 3 ] && broken=${versions[-1]}
 core=$out/core/homelab-core_$version.raw
+# Steps 14 on install from a stick of their own and judge that version: the
+# one under test where its installer medium was built, not the release
+# before it, which is published and cannot be fixed.
+under=$version
+[ -n "$next" ] && [ -e "$out/homelab_$next.raw" ] && under=$next
 [ -e "$out/homelab_$version.raw" ] && [ -e "$core" ] || { echo "image $version is incomplete in $out: run make image again" >&2; exit 1; }
 domain=check.example.com
 
@@ -911,21 +920,30 @@ vssh 'ip -4 -o addr show' | grep -q 'inet 10.0.2.15/24 .* global' || die "the st
 vssh 'bootctl list' | grep -B1 'id: homelab_' | grep -q '(default)' || die "the system is not the boot menu's default"
 ok "boots alone with its static address, as the menu's default next to Windows Boot Manager; its loaders and partition untouched"
 
-step "14. a blank disk whose boot loader goes on another disk's ESP"
+step "14. $under: a blank disk whose boot loader goes on another disk's ESP"
 stop
 drop beside
+# From here on the stick is the version under test.
+if [ "$under" != "$version" ]; then
+  cp --sparse=always "$out/homelab_$under.raw" "$vm/stick.raw"
+  medium=$(sfdisk --disk-id "$vm/stick.raw" | tr A-F a-f)
+fi
 boot "$vm/stick.raw" "$vm/sys.raw" "$vm/win2.raw"
+booted "$under"
 install vdb true crossdisk "" vdc1
 # The stick stays in, now as a USB stick. The firmware's boot order has the
 # install first, as the installer left it.
 boot "$vm/sys.raw" "$vm/win2.raw" "usb:$vm/stick.raw"
-booted "$version"
+booted "$under"
 runs_from vda vdb
 ownid
 crossdisk=$id
+# Where this version keeps the store, for step 19.
+onvar=
+vssh 'test -e /usr/lib/systemd/system-generators/homelab-nix' && onvar=1
 [ "$(vssh cat /proc/sys/kernel/hostname)" = crossdisk ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
 vssh 'ls /boot/EFI/Linux/ >/dev/null; findmnt -no SOURCE /boot' | grep -q '^/dev/vdb1$' || die "/boot is not the other disk's ESP: $(vssh 'findmnt -no SOURCE /boot')"
-vssh 'ls /boot/EFI/Linux/' | grep -q "^homelab_$version.efi$" || die "the kernel is not on the other disk's ESP"
+vssh 'ls /boot/EFI/Linux/' | grep -q "^homelab_$under.efi$" || die "the kernel is not on the other disk's ESP"
 vssh 'lsblk -no PARTTYPENAME /dev/vda' | grep -q "EFI System" && die "the system disk got an ESP of its own"
 vssh 'bootctl list' | grep -q 'id: auto-windows' || die "the boot menu has no Windows entry"
 vssh 'bootctl list' | grep -B1 'id: homelab_' | grep -q '(default)' || die "the system is not the boot menu's default"
@@ -949,7 +967,7 @@ step "16. the stick boots next to that install, installs over it and restarts in
 stop
 drop win2
 boot --order --no-uuid "usb:$vm/stick.raw" "$vm/sys.raw"
-booted "$version"
+booted "$under"
 stick=$(stickname)
 [ -n "$stick" ] || die "the stick is not among the VM's disks"
 runs_from "$stick"
@@ -972,7 +990,7 @@ for _ in $(seq 1 60); do
 done
 [ -n "$now" ] && [ "$now" != "$was" ] || die "the machine did not restart (serial log in $vm)"
 kill -0 "$qemu" 2>/dev/null || die "the VM turned off instead of restarting"
-booted "$version"
+booted "$under"
 for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
 [ "$(api http://x/api/installer | jq -r .active)" = false ] || die "the restart started the installer again, not the new system"
 [ -n "$(stickname)" ] || die "the stick is not among the VM's disks"
@@ -994,11 +1012,11 @@ drop stick
 # is the first of them.
 ctl() {
   boot --order --no-uuid "$vm/esp.raw" "$1:$vm/sys.raw"
-  booted "$version"
+  booted "$under"
   runs_from sda vda
 }
 drivers=
-if inuki "$version" scsi/vmw_pvscsi && inuki "$version" scsi/megaraid/megaraid_sas && inuki "$version" usb/storage/uas; then
+if inuki "$under" scsi/vmw_pvscsi && inuki "$under" scsi/megaraid/megaraid_sas && inuki "$under" usb/storage/uas; then
   drivers=", its disk behind VMware's paravirtual SCSI"
   read -r espstart espsize < <(sfdisk -J "$vm/sys.raw" |
     jq -r '.partitiontable.partitions[] | select(.type == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B") | "\(.start) \(.size)"')
@@ -1008,7 +1026,7 @@ if inuki "$version" scsi/vmw_pvscsi && inuki "$version" scsi/megaraid/megaraid_s
   ctl pvscsi
 else
   boot --no-uuid "$vm/sys.raw"
-  booted "$version"
+  booted "$under"
 fi
 [ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "the machine ID changed over a boot: $(vssh 'cat /etc/machine-id'), was $id"
 [ "$(vssh 'cat /var/lib/homelab/machine-id')" = "$id" ] || die "the machine ID on /var changed over a boot"
@@ -1025,7 +1043,7 @@ if [ -n "$drivers" ]; then
   done
   ok "the same system with its disk behind a MegaRAID and USB UAS"
 else
-  ok "skipped: $version is from before the image named its storage drivers"
+  ok "skipped: $under is from before the image named its storage drivers"
 fi
 
 step "19. a disk with a nix partition keeps its store there"
@@ -1043,7 +1061,7 @@ if [ -n "$onvar" ]; then
   vssh "mkfs.ext4 -q /dev/$nixpart" || die "could not format /dev/$nixpart"
   stop
   boot --no-uuid "$vm/sys.raw"
-  booted "$version"
+  booted "$under"
   [ "$(vssh 'findmnt -no SOURCE -M /nix')" = "/dev/$nixpart" ] || die "/nix is not the nix partition: $(vssh 'findmnt -no SOURCE -M /nix')"
   [ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "another system booted"
   daemon || die "the daemon does not answer"
@@ -1051,7 +1069,7 @@ if [ -n "$onvar" ]; then
   vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
   ok "/nix is the disk's nix partition ($nixpart)"
 else
-  ok "skipped: $version has the store on a partition of its own already"
+  ok "skipped: $under has the store on a partition of its own already"
 fi
 
 # A run that passed needs none of its disks.
