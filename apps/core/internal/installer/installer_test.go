@@ -299,7 +299,8 @@ func TestLease(t *testing.T) {
 }
 
 // efibootmgr on a test machine after the first install: NixOS's systemd-boot
-// on the Samsung's ESP stayed in front of the new one on the Kingston.
+// on the Samsung's ESP stayed in front of the new one on the Kingston. The
+// fallback entry is what a newer bootctl adds next to its own.
 const listing = `BootCurrent: 0003
 Timeout: 1 seconds
 BootOrder: 0001,0000,0003,0004
@@ -307,6 +308,7 @@ Boot0000* Windows Boot Manager	HD(3,GPT,7b8341ba-dfeb-4cb2-a549-37d59fcafc57,0x7
 Boot0001* Linux Boot Manager	HD(3,GPT,7b8341ba-dfeb-4cb2-a549-37d59fcafc57,0x73ed8800,0x82e000)/\EFI\systemd\systemd-bootx64.efi
 Boot0003* Linux Boot Manager	HD(1,GPT,bca2e54c-c0ef-4bf3-8576-fa62deb9de4b,0x800,0x200000)/\EFI\systemd\systemd-bootx64.efi
 Boot0004* UEFI OS	HD(1,GPT,bca2e54c-c0ef-4bf3-8576-fa62deb9de4b,0x800,0x200000)/\EFI\BOOT\BOOTX64.EFI
+Boot0005* Fallback Linux Boot Manager	HD(1,GPT,bca2e54c-c0ef-4bf3-8576-fa62deb9de4b,0x800,0x200000)/\EFI\systemd\systemd-boot-fallbackx64.efi
 `
 
 func TestFirstInOrder(t *testing.T) {

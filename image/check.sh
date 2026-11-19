@@ -382,6 +382,10 @@ installto() {
     sleep 5
   done
   [ "$st" = installed ] || die "install onto $1: $st: $(api http://x/api/installer | jq -r '.error + "\n" + (.log[-15:] | join("\n"))')"
+  # Every install can be restarted into: the firmware has its boot entry,
+  # and the installer put it first.
+  [ "$(api http://x/api/installer | jq -r .can_restart)" = true ] ||
+    die "install onto $1: no boot entry found: $(api http://x/api/installer | jq -r '.log[-4:] | join("; ")')"
 }
 # install ...: installto, then turn the machine off from the page's button.
 install() {

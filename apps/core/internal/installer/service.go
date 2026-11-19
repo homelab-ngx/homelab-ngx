@@ -587,12 +587,18 @@ func (s *Service) fsType(ctx context.Context, dev string) (string, error) {
 // in the boot order: bootctl install adds its entry but can leave an older
 // one (another system's systemd-boot) in front of it. The entry is kept for
 // Restart, also when the order could not be changed.
+// blkid probes the partition itself (-p): its cache has no partition UUIDs.
+// bootctl also adds a fallback entry (systemd-boot-fallback…), which is not
+// the one to start.
 func (s *Service) bootFirst(ctx context.Context, esp string) error {
-	res, err := s.r.Run(ctx, cmdrunner.Cmd{Module: "installer", Name: "blkid", Args: []string{"-s", "PART_ENTRY_UUID", "-o", "value", esp}})
+	res, err := s.r.Run(ctx, cmdrunner.Cmd{Module: "installer", Name: "blkid", Args: []string{"-p", "-s", "PART_ENTRY_UUID", "-o", "value", esp}})
 	if err != nil {
 		return err
 	}
 	uuid := strings.TrimSpace(res.Stdout)
+	if uuid == "" {
+		return fmt.Errorf("no partition UUID for %s", esp)
+	}
 	res, err = s.r.Run(ctx, cmdrunner.Cmd{Module: "installer", Name: "efibootmgr"})
 	if err != nil {
 		return err
@@ -609,7 +615,7 @@ func (s *Service) bootFirst(ctx context.Context, esp string) error {
 
 var (
 	bootOrderRE = regexp.MustCompile(`(?m)^BootOrder: ([0-9A-Fa-f,]+)`)
-	bootEntryRE = regexp.MustCompile(`(?m)^Boot([0-9A-Fa-f]{4})\*? .*HD\(\d+,GPT,([0-9a-fA-F-]+),.*\\EFI\\systemd\\systemd-boot`)
+	bootEntryRE = regexp.MustCompile(`(?m)^Boot([0-9A-Fa-f]{4})\*? .*HD\(\d+,GPT,([0-9a-fA-F-]+),.*\\EFI\\systemd\\systemd-boot[a-z0-9]+\.efi`)
 )
 
 // firstInOrder reads efibootmgr's listing and returns the systemd-boot
