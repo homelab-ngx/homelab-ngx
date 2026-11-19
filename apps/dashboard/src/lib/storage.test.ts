@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Schema, Stack } from "./api/client.ts";
-import { browseDefault, browseHref, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, foldersOf, measuredAt, role, segments, systemDisk, usedBy } from "./storage.ts";
+import { browseDefault, browseHref, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, folderName, foldersOf, measuredAt, role, segments, systemDisk, usedBy } from "./storage.ts";
 
 type Pool = Schema<"Pool">;
 type Disk = Schema<"Disk">;
@@ -13,6 +13,7 @@ const pool = (over: Partial<Pool> = {}): Pool =>
     name: "pool",
     state: "mounted",
     mountdir: "/pool",
+    mount_name: "pool",
     data_replicas: 2,
     metadata_replicas: 2,
     foreground_target: "ssd",
@@ -102,6 +103,13 @@ describe("folders", () => {
       "2026-11-16T08:00:00Z",
     );
     expect(measuredAt([sub("/pool/a")])).toBeNull();
+  });
+
+  it("names a folder by its place on the pool", () => {
+    expect(folderName("/var/mnt/pool/media", "/var/mnt/pool")).toBe("media");
+    expect(folderName("/var/mnt/pool/media/films", "/var/mnt/pool")).toBe("media/films");
+    expect(folderName("/var/mnt/pooled/x", "/var/mnt/pool")).toBe("/var/mnt/pooled/x");
+    expect(folderName("/srv/x", "")).toBe("/srv/x");
   });
 });
 

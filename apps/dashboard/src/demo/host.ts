@@ -112,7 +112,7 @@ const SEEDS: StackSeed[] = [
       backup: { prepare: "immich-dump", folders: [{ label: "Library", variable: "LIBRARY" }, { label: "Database dump", path: "/var/backup" }] },
       health: { units: ["immich"], http: { path: "/api/server/ping", port: 2283 } },
     },
-    variables: [pathVar("LIBRARY", "/mnt/tank/photos", "Where the photo library is kept."), secretVar("DB_PASSWORD", "The database's password.")],
+    variables: [pathVar("LIBRARY", "/var/mnt/tank/photos", "Where the photo library is kept."), secretVar("DB_PASSWORD", "The database's password.")],
   },
   {
     name: "media",
@@ -126,7 +126,7 @@ const SEEDS: StackSeed[] = [
       gpu: true,
       health: { units: ["jellyfin"], http: { path: "/health", port: 8096 } },
     },
-    variables: [pathVar("MEDIA", "/mnt/tank/media", "Films, series and music.")],
+    variables: [pathVar("MEDIA", "/var/mnt/tank/media", "Films, series and music.")],
   },
   {
     name: "documents",
@@ -139,7 +139,7 @@ const SEEDS: StackSeed[] = [
       routes: [{ host: "documents", port: 8000 }],
       backup: { folders: [{ label: "Documents", variable: "DOCUMENTS" }] },
     },
-    variables: [pathVar("DOCUMENTS", "/mnt/tank/documents", "Scanned and archived documents."), secretVar("SECRET_KEY", "Signs sessions.")],
+    variables: [pathVar("DOCUMENTS", "/var/mnt/tank/documents", "Scanned and archived documents."), secretVar("SECRET_KEY", "Signs sessions.")],
   },
   {
     name: "home",
@@ -172,7 +172,7 @@ const SEEDS: StackSeed[] = [
       ],
       egress: [{ to: "0.0.0.0/0", port: 443, proto: "tcp" }],
     },
-    variables: [pathVar("MEDIA", "/mnt/tank/media", "Where finished downloads go.")],
+    variables: [pathVar("MEDIA", "/var/mnt/tank/media", "Where finished downloads go.")],
   },
   {
     name: "git",
@@ -333,10 +333,10 @@ function seedBackups(now: number): { backups: Backup[]; destinations: Schema<"De
   return {
     destinations,
     backups: [
-      make(1, "Photos", "0 2 * * *", [1, 2], [source("photos", "Library", "/mnt/tank/photos"), source("photos", "Database dump", "/var/backup")], 2.4 * GB, 9 * HOUR),
-      make(2, "Documents and git", "30 2 * * *", [1], [source("documents", "Documents", "/mnt/tank/documents"), source("git", "Repositories", "/var/lib/forgejo")], 310 * 1024 ** 2, 8.5 * HOUR),
+      make(1, "Photos", "0 2 * * *", [1, 2], [source("photos", "Library", "/var/mnt/tank/photos"), source("photos", "Database dump", "/var/backup")], 2.4 * GB, 9 * HOUR),
+      make(2, "Documents and git", "30 2 * * *", [1], [source("documents", "Documents", "/var/mnt/tank/documents"), source("git", "Repositories", "/var/lib/forgejo")], 310 * 1024 ** 2, 8.5 * HOUR),
       make(3, "Core", "0 3 * * *", [2], [core], 48 * 1024 ** 2, 8 * HOUR),
-      make(4, "Media, weekly", "0 4 * * 0", [2], [{ ...source("media", "Media", "/mnt/tank/media"), kind: "path", stack: "" }], 38 * GB, 3 * DAY, true),
+      make(4, "Media, weekly", "0 4 * * 0", [2], [{ ...source("media", "Media", "/var/mnt/tank/media"), kind: "path", stack: "" }], 38 * GB, 3 * DAY, true),
     ],
   };
 }
@@ -441,7 +441,8 @@ export function newHost(now: () => number = Date.now): Host {
           label: "tank",
           uuid: "5f0c1a52-7d3e-4b8a-9c61-2e4d8a7b1c90",
           state: "mounted",
-          mountdir: "/mnt/tank",
+          mountdir: "/var/mnt/tank",
+          mount_name: "tank",
           auto_mount: true,
           data_replicas: 2,
           metadata_replicas: 2,
@@ -454,10 +455,10 @@ export function newHost(now: () => number = Date.now): Host {
         },
       ],
       subvolumes: [
-        { id: "256", path: "/mnt/tank/photos", used_bytes: 1.1 * TB, measured_at: iso(t - HOUR) },
-        { id: "257", path: "/mnt/tank/media", used_bytes: 3.4 * TB, measured_at: iso(t - HOUR) },
-        { id: "258", path: "/mnt/tank/documents", used_bytes: 41 * GB, measured_at: iso(t - HOUR) },
-        { id: "259", path: "/mnt/tank/scratch", used_bytes: 220 * GB, measured_at: iso(t - HOUR) },
+        { id: "256", path: "/var/mnt/tank/photos", used_bytes: 1.1 * TB, measured_at: iso(t - HOUR) },
+        { id: "257", path: "/var/mnt/tank/media", used_bytes: 3.4 * TB, measured_at: iso(t - HOUR) },
+        { id: "258", path: "/var/mnt/tank/documents", used_bytes: 41 * GB, measured_at: iso(t - HOUR) },
+        { id: "259", path: "/var/mnt/tank/scratch", used_bytes: 220 * GB, measured_at: iso(t - HOUR) },
       ],
       unassigned: [],
     },

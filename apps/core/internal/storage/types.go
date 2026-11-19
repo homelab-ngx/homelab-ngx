@@ -73,6 +73,7 @@ type Pool struct {
 	MetadataReplicas int        `json:"metadata_replicas"`
 	MetadataTarget   string     `json:"metadata_target" doc:"Disk group metadata is kept on; empty = none."`
 	Mountdir         string     `json:"mountdir"`
+	MountName        string     `json:"mount_name" doc:"The name it mounts under when none is given: the one it had before, or pool."`
 	Name             string     `json:"name"`
 	PromoteTarget    string     `json:"promote_target" doc:"Disk group reads are cached on; empty = none."`
 	State            PoolState  `json:"state" enum:"mounted,unmounted"`
@@ -98,8 +99,9 @@ type StorageStatus struct {
 // MountRequest mounts a pool from its devices.
 type MountRequest struct {
 	Devices []string `json:"devices" minItems:"1"`
-	// Mountpoint: empty mounts at the host's pool directory.
-	Mountpoint string `json:"mountpoint,omitempty" doc:"Where to mount; empty is the host's pool directory."`
+	// Name: the pool mounts at MountRoot/<name>. Empty is the name it was
+	// last mounted under, or DefaultMountName.
+	Name string `json:"name,omitempty" pattern:"^[a-z0-9][a-z0-9-]{0,30}$" doc:"The pool mounts at /var/mnt/<name>. Empty is the name it had before, or pool."`
 }
 
 // UnmountRequest unmounts the pool at a mountpoint.

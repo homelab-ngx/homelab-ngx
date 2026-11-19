@@ -16,6 +16,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"homelab-ngx.com/core/internal/stacks"
+	"homelab-ngx.com/core/internal/storage"
 	"homelab-ngx.com/core/internal/store"
 )
 
@@ -108,7 +109,7 @@ func cleanSources(in []SourceInput) ([]store.InsertBackupSourceParams, error) {
 			}
 			row.Stack, row.Folder = src.Stack, src.Folder
 		case SourcePath:
-			p := filepath.Clean(strings.TrimSpace(src.Path))
+			p := storage.Canonical(filepath.Clean(strings.TrimSpace(src.Path)))
 			if !filepath.IsAbs(p) || p == "/" || hasControl(p) {
 				return nil, invalid("invalid_path", "%q is not an absolute folder", src.Path)
 			}

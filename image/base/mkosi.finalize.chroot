@@ -5,9 +5,11 @@ echo 'SYSEXT_LEVEL=1' >> /usr/lib/os-release
 # The product's name; ID and IMAGE_ID stay as they are.
 sed -i 's/^PRETTY_NAME=.*/PRETTY_NAME="Homelab-ngx"/' /usr/lib/os-release
 # Mount points: the root file system is read-only, so they exist in the
-# image. /nix is where the Nix store is mounted (system-generators/homelab-nix); /pool and /cache are where a host
-# mounts its storage pool and its cache disk when it has them.
-mkdir -p /nix /pool /cache
+# image. /nix is where the Nix store is mounted
+# (system-generators/homelab-nix). Storage pools mount under /var/mnt, which
+# the daemon makes directories in; /mnt is that directory, for typing.
+mkdir -p /nix
+rmdir /mnt && ln -s var/mnt /mnt
 # The initrd binds the machine ID from /var over /etc/machine-id
 # (mkosi.initrd.conf, homelab-machine-id.service): the file must be there to
 # bind over. mkosi leaves it as "uninitialized".

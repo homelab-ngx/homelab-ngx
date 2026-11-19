@@ -11,7 +11,7 @@
   import SystemDisk from "#lib/components/SystemDisk.svelte";
   import { ago, bytes } from "#lib/format.ts";
   import { stackTitles } from "#lib/stacks.ts";
-  import { browseHref, capacity, diskState, disksSummary, foldersOf, fullness, measuredAt, role, segments, usedBy } from "#lib/storage.ts";
+  import { browseHref, capacity, diskState, disksSummary, folderName, foldersOf, fullness, measuredAt, role, segments, usedBy } from "#lib/storage.ts";
 
   type Pool = Schema<"Pool">;
   type Disk = Schema<"Disk">;
@@ -64,9 +64,15 @@
     onSettled: () => client.invalidateQueries({ queryKey: key }),
   }));
 
+  /** The name typed for each unmounted pool, by uuid; none typed is the pool's own (mount_name). */
+  const mountNames = $state<Record<string, string>>({});
   const mount = (p: Pool) =>
     op.mutate(() =>
-      call(api.POST("/storage/mount", { body: { devices: p.disks.map((d) => d.path), mountpoint: p.mountdir || undefined } })),
+      call(
+        api.POST("/storage/mount", {
+          body: { devices: p.disks.map((d) => d.path), name: mountNames[p.uuid]?.trim() || undefined },
+        }),
+      ),
     );
   const autoMount = (p: Pool, on: boolean) =>
     op.mutate(() => call(api.PATCH("/storage/pools/{uuid}", { params: { path: { uuid: p.uuid } }, body: { auto_mount: on } })));
@@ -184,10 +190,29 @@
 
     <div class="card">
       {#if p.state !== "mounted"}
-        <div class="flex flex-wrap items-center gap-3">
+        <form
+          class="flex flex-wrap items-center gap-3"
+          onsubmit={(e) => {
+            e.preventDefault();
+            mount(p);
+          }}
+        >
           <Pill tone="idle">unmounted</Pill>
-          <button type="button" class="btn btn-primary ml-auto" disabled={op.isPending} onclick={() => mount(p)}>Mount</button>
-        </div>
+          <label class="ml-auto flex min-w-0 items-center gap-2">
+            <span class="text-muted">/var/mnt/</span>
+            <input
+              class="input w-40 min-w-0"
+              aria-label="Name"
+              autocomplete="off"
+              spellcheck="false"
+              pattern="[a-z0-9][a-z0-9-]*"
+              maxlength="31"
+              placeholder={p.mount_name}
+              bind:value={mountNames[p.uuid]}
+            />
+          </label>
+          <button type="submit" class="btn btn-primary" disabled={op.isPending}>Mount</button>
+        </form>
       {:else if cap}
         <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 tabular-nums">
           <p>
@@ -272,7 +297,7 @@
               {@const users = usedBy(f.path, stacks.data ?? [])}
               <tr class="border-b border-line last:border-0">
                 <td class="px-3 py-2">
-                  <a class="link [overflow-wrap:anywhere]" href={browseHref(f.path)}>{f.path}</a>
+                  <a class="link [overflow-wrap:anywhere]" href={browseHref(f.path)} title={f.path}>{folderName(f.path, p.mountdir)}</a>
                   {#if users.length > 0}
                     <span class="mt-1 flex flex-wrap gap-1 sm:hidden">{@render chips(users)}</span>
                   {/if}

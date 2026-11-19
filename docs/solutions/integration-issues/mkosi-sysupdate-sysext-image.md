@@ -483,7 +483,10 @@ value (stack variables, channel tokens, backup keys) fails with a bare 500.
 - Root's SSH key reaches a fresh image as the systemd credential
   `ssh.authorized_keys.root` (QEMU: `-smbios type=11,value=io.systemd.credential.binary:...`);
   nothing personal is baked in.
-- Top-level mount points (`/nix`, `/pool`, `/cache`) must exist in the image:
-  the root is read-only.
+- A top-level mount point (`/nix`) must exist in the image: the root is
+  read-only. Storage pools mount under `/var/mnt`, one directory each, which
+  the daemon makes; `/mnt` is a link to it. While a pool is not mounted its
+  directory is immutable, or what writes to the pool's paths would fill
+  `/var`.
 - Exclude GPU, wireless and sound from `KernelInitrdModules=`: their
   firmware took the UKI from 110 MB to 294 MB.

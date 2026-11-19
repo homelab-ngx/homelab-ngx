@@ -228,7 +228,7 @@
           aria-label={v.kind === "path" ? `Host path for ${v.name}` : v.kind === "address" ? `Addresses for ${v.name}` : `Value of ${v.name}`}
           aria-invalid={err ? "true" : undefined}
           placeholder={v.default ??
-            (v.kind === "path" ? "/pool/…" : v.kind === "address" ? "192.168.1.20, 192.168.1.0/24" : stackValue(v) ? "The stack's own value" : "Value")}
+            (v.kind === "path" ? "/var/mnt/pool/…" : v.kind === "address" ? "192.168.1.20, 192.168.1.0/24" : stackValue(v) ? "The stack's own value" : "Value")}
           autocomplete="off"
           spellcheck="false"
           value={draft ?? v.value ?? ""}

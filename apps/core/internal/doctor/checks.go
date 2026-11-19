@@ -19,6 +19,7 @@ import (
 	"homelab-ngx.com/core/internal/cloudflare"
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/config"
+	"homelab-ngx.com/core/internal/storage"
 )
 
 const (
@@ -225,17 +226,21 @@ func (d Deps) caddy(ctx context.Context) Result {
 // ── disk ─────────────────────────────────────────────────────────────────────
 
 // mounts are the filesystems the disk check inspects: Mounts, or /, the
-// cache directory and the pool when the host has one.
+// cache directory and the pools (the directories under storage.MountRoot).
 func (d Deps) mounts() []string {
 	if len(d.Mounts) > 0 {
 		return d.Mounts
 	}
 	out := []string{"/"}
 	if nix, err := d.Nix(); err == nil {
-		for _, dir := range []string{nix.Paths.Cache(), nix.Paths.PoolDir} {
-			if dir != "" && !slices.Contains(out, dir) {
-				out = append(out, dir)
-			}
+		if dir := nix.Paths.Cache(); !slices.Contains(out, dir) {
+			out = append(out, dir)
+		}
+	}
+	pools, _ := os.ReadDir(storage.MountRoot)
+	for _, e := range pools {
+		if e.IsDir() {
+			out = append(out, filepath.Join(storage.MountRoot, e.Name()))
 		}
 	}
 	return out

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"homelab-ngx.com/core/internal/storage"
 	"net/netip"
 	"path"
 	"regexp"
@@ -923,10 +924,17 @@ func validHostPath(p string) error {
 	if err := cleanAbs(p); err != nil {
 		return err
 	}
+	// The pools are under /var, which is otherwise the host's own.
+	if rest, ok := strings.CutPrefix(p, storage.MountRoot+"/"); ok {
+		if !strings.Contains(rest, "/") {
+			return fmt.Errorf("%q is a whole pool; name the directory the stack needs", p)
+		}
+		return nil
+	}
 	if r, ok := under(p, hostPathDenied()); ok {
 		return fmt.Errorf("%q is under %s, which no stack may be given", p, r)
 	}
-	// A whole top-level tree such as /pool is never the narrowest path.
+	// A whole top-level tree such as /srv is never the narrowest path.
 	if strings.Count(p, "/") < 2 {
 		return fmt.Errorf("%q is a whole top-level directory; name the directory the stack needs", p)
 	}

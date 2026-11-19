@@ -90,7 +90,6 @@ let
         db_backup_dir = "/var/lib/homelab/daemon/backups";
         backup_runner = "/usr/bin/homelab-backup-runner";
         cache_dir = "/var/lib/homelab";
-        pool_dir = "";
       };
       db = {
         snapshot_schedule = "45 2 * * *";

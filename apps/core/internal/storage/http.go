@@ -17,7 +17,7 @@ type HTTP struct{ svc *Service }
 func NewHTTP(svc *Service) *HTTP { return &HTTP{svc: svc} }
 
 // problem maps domain errors: 409 subvolume_not_empty, 404 unknown_pool,
-// 403 outside_roots, 404 not_found. Command failures carry their
+// 403 outside_roots, 404 not_found, 400 invalid_name, 409 name_taken. Command failures carry their
 // message to the client as storage_failed (the operator needs mount's stderr).
 func problem(err error) error {
 	switch {
@@ -29,8 +29,10 @@ func problem(err error) error {
 		return httpx.Forbidden("outside_roots", "%s", err)
 	case errors.Is(err, ErrNoSuchFolder):
 		return httpx.NotFound("not_found", "%s", err)
-	case errors.Is(err, ErrNoMountpoint):
-		return httpx.BadRequest("no_mountpoint", "%s", err)
+	case errors.Is(err, ErrMountName):
+		return httpx.BadRequest("invalid_name", "%s", err)
+	case errors.Is(err, ErrNameTaken):
+		return httpx.Conflict("name_taken", "%s", err)
 	}
 	return httpx.Internal("storage_failed", "%s", err)
 }
@@ -129,7 +131,7 @@ func (h *HTTP) getStorage(ctx context.Context, _ *struct{}) (*statusOut, error) 
 }
 
 func (h *HTTP) mountPool(ctx context.Context, in *mountIn) (*struct{}, error) {
-	if err := h.svc.Mount(ctx, in.Body.Devices, in.Body.Mountpoint); err != nil {
+	if err := h.svc.Mount(ctx, in.Body.Devices, in.Body.Name); err != nil {
 		return nil, problem(err)
 	}
 	return nil, nil

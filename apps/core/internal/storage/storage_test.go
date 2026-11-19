@@ -36,7 +36,7 @@ func (w testWriter) Write(p []byte) (int, error) { w.t.Log(string(p)); return le
 func lsblk(mounted bool) string {
 	mp := "null"
 	if mounted {
-		mp = `"/pool"`
+		mp = `"/var/mnt/pool"`
 	}
 	dev := func(n string, size int, mount string) string {
 		return fmt.Sprintf(`{"name":%q,"path":"/dev/%s","size":%d,"type":"disk","model":"M","serial":"s","fstype":"bcachefs","mountpoint":%s,"label":null}`, n, n, size, mount)
@@ -86,6 +86,7 @@ func newHarness(t *testing.T) *harness {
 	svc := New(bcachefs.New(fake), cfg,
 		slog.New(slog.NewTextHandler(testWriter{t}, nil)))
 	svc.discoverTimeout, svc.retryInterval = 40*time.Millisecond, 5*time.Millisecond
+	svc.mkdir = func(string) error { return nil }
 	return &harness{svc: svc, fake: fake, cfg: cfg}
 }
 
@@ -102,7 +103,7 @@ func TestStatusShapeNamesAndCache(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.fake.On("lsblk").Reply(lsblk(true))
-	h.fake.On("bcachefs", "subvolume", "list", "/pool").Reply("Path ID Created Flags Size\nmedia 2 2026-05-27 23:47 -\n")
+	h.fake.On("bcachefs", "subvolume", "list", "/var/mnt/pool").Reply("Path ID Created Flags Size\nmedia 2 2026-05-27 23:47 -\n")
 	ctx := context.Background()
 
 	st, err := h.svc.Status(ctx)
@@ -113,10 +114,10 @@ func TestStatusShapeNamesAndCache(t *testing.T) {
 		t.Fatalf("status = %+v", st)
 	}
 	p := st.Pools[0]
-	if p.Uuid != poolUUID || p.Name != "pool" || p.State != "mounted" || p.Mountdir != "/pool" || p.AutoMount || len(p.Disks) != 4 {
+	if p.Uuid != poolUUID || p.Name != "pool" || p.State != "mounted" || p.Mountdir != "/var/mnt/pool" || p.AutoMount || len(p.Disks) != 4 {
 		t.Fatalf("pool = %+v", p)
 	}
-	if len(st.Subvolumes) != 1 || st.Subvolumes[0].Path != "/pool/media" || st.Subvolumes[0].UsedBytes != -1 {
+	if len(st.Subvolumes) != 1 || st.Subvolumes[0].Path != "/var/mnt/pool/media" || st.Subvolumes[0].UsedBytes != -1 {
 		t.Fatalf("subvolumes = %+v", st.Subvolumes)
 	}
 
@@ -129,7 +130,7 @@ func TestStatusShapeNamesAndCache(t *testing.T) {
 		t.Fatalf("cached call ran lsblk again (%d -> %d)", before, got)
 	}
 	h.fake.On("bcachefs", "subvolume", "create").Reply("")
-	if err := h.svc.CreateSubvolume(ctx, "/pool/new"); err != nil {
+	if err := h.svc.CreateSubvolume(ctx, "/var/mnt/pool/new"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.svc.Status(ctx); err != nil {
@@ -273,13 +274,13 @@ func TestStatusInvalidateDuringComputeDropsStaleResult(t *testing.T) {
 	h := newHarness(t)
 	// The in-flight compute sees the pool unmounted; after the mount, it is.
 	started, release := blockingLsblk(h, cmdrunner.Result{Stdout: lsblk(false)}, nil, lsblk(true))
-	h.fake.On("bcachefs", "subvolume", "list", "/pool").Reply("")
+	h.fake.On("bcachefs", "subvolume", "list", "/var/mnt/pool").Reply("")
 	h.fake.On("mount").Reply("")
 	staleDone := make(chan struct{})
 	go func() { _, _ = h.svc.Status(context.Background()); close(staleDone) }()
 	<-started
 
-	if err := h.svc.Mount(context.Background(), []string{"/dev/sdb"}, "/pool"); err != nil {
+	if err := h.svc.Mount(context.Background(), []string{"/dev/sdb"}, "pool"); err != nil {
 		t.Fatal(err)
 	}
 	fresh, err := h.svc.Status(context.Background())
@@ -300,7 +301,7 @@ func TestStatusUsesStoredPoolName(t *testing.T) {
 	h := newHarness(t)
 	h.fake.On("lsblk").Reply(lsblk(false))
 	ctx := context.Background()
-	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/pool", Name: "Main Pool", AutoMount: true}); err != nil {
+	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/var/mnt/pool", Name: "Main Pool", AutoMount: true}); err != nil {
 		t.Fatal(err)
 	}
 	st, err := h.svc.Status(ctx)
@@ -327,11 +328,122 @@ func TestMountRemembersPool(t *testing.T) {
 	h.fake.On("lsblk").Reply(lsblk(true))
 	h.fake.On("mount").Reply("")
 	ctx := context.Background()
-	if err := h.svc.Mount(ctx, []string{"/dev/sdb", "/dev/sda"}, "/pool"); err != nil {
+	if err := h.svc.Mount(ctx, []string{"/dev/sdb", "/dev/sda"}, "pool"); err != nil {
 		t.Fatal(err)
 	}
-	if p := h.pool(t); !p.AutoMount || p.Mountpoint != "/pool" {
+	if p := h.pool(t); !p.AutoMount || p.Mountpoint != "/var/mnt/pool" {
 		t.Fatalf("pool = %+v", p)
+	}
+}
+
+// chattrs are the chattr calls the fake saw, as "flag path".
+func chattrs(h *harness) []string {
+	var out []string
+	for _, c := range h.fake.Calls() {
+		if c.Name == "chattr" {
+			out = append(out, strings.Join(c.Args, " "))
+		}
+	}
+	return out
+}
+
+func TestMountNames(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	t.Run("no name is pool, under the root", func(t *testing.T) {
+		h := newHarness(t)
+		h.fake.On("lsblk").Reply(lsblk(true))
+		h.fake.On("mount").Reply("")
+		if err := h.svc.Mount(ctx, []string{"/dev/sdb"}, ""); err != nil {
+			t.Fatal(err)
+		}
+		if p := h.pool(t); p.Mountpoint != "/var/mnt/pool" {
+			t.Fatalf("pool = %+v", p)
+		}
+	})
+	t.Run("no name is the name it had", func(t *testing.T) {
+		h := newHarness(t)
+		h.fake.On("lsblk").Reply(lsblk(false))
+		h.fake.On("mount").Reply("")
+		if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/var/mnt/tank"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.svc.Mount(ctx, []string{"/dev/sdb"}, ""); err != nil {
+			t.Fatal(err)
+		}
+		var mounts []string
+		for _, c := range h.fake.Calls() {
+			if c.Name == "mount" {
+				mounts = append(mounts, c.Args[len(c.Args)-1])
+			}
+		}
+		if !reflect.DeepEqual(mounts, []string{"/var/mnt/tank"}) {
+			t.Fatalf("mounted at %v", mounts)
+		}
+	})
+	t.Run("a name is one directory", func(t *testing.T) {
+		h := newHarness(t)
+		h.fake.On("lsblk").Reply(lsblk(false))
+		for _, name := range []string{"Pool", "a/b", "..", "-x", "/var/mnt/pool", strings.Repeat("a", 32)} {
+			if err := h.svc.Mount(ctx, []string{"/dev/sdb"}, name); !errors.Is(err, ErrMountName) {
+				t.Errorf("%q: err = %v", name, err)
+			}
+		}
+	})
+	t.Run("another pool's name is refused", func(t *testing.T) {
+		h := newHarness(t)
+		h.fake.On("lsblk").Reply(lsblk(false))
+		if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: "another", Mountpoint: "/var/mnt/pool"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.svc.Mount(ctx, []string{"/dev/sdb"}, "pool"); !errors.Is(err, ErrNameTaken) {
+			t.Fatalf("err = %v", err)
+		}
+	})
+}
+
+func TestUnmountedDirectoryIsGuarded(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	t.Run("a failed mount", func(t *testing.T) {
+		h := newHarness(t)
+		h.fake.On("lsblk").Reply(lsblk(false))
+		h.fake.On("chattr").Reply("")
+		h.fake.On("mount").Fail("wrong fs type")
+		if err := h.svc.Mount(ctx, []string{"/dev/sdb"}, "pool"); err == nil {
+			t.Fatal("expected error")
+		}
+		if got, want := chattrs(h), []string{"-i /var/mnt/pool", "+i /var/mnt/pool"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("chattr calls = %v, want %v", got, want)
+		}
+	})
+	t.Run("an unmount", func(t *testing.T) {
+		h := newHarness(t)
+		h.fake.On("chattr").Reply("")
+		h.fake.On("umount").Reply("")
+		if err := h.svc.Unmount(ctx, "/var/mnt/pool"); err != nil {
+			t.Fatal(err)
+		}
+		if got, want := chattrs(h), []string{"+i /var/mnt/pool"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("chattr calls = %v, want %v", got, want)
+		}
+	})
+}
+
+func TestAutoMountSkipsPoolOutsideRoot(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	ctx := context.Background()
+	h.fake.On("lsblk").Reply(lsblk(false))
+	h.fake.On("mount").Reply("")
+	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/pool", AutoMount: true}); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.AutoMount(ctx)
+	for _, c := range h.fake.Calls() {
+		if c.Name == "mount" {
+			t.Fatalf("mounted outside the root: %v", c.Args)
+		}
 	}
 }
 
@@ -339,7 +451,7 @@ func TestMountFailureLeavesConfigAlone(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.fake.On("mount").Fail("wrong fs type")
-	if err := h.svc.Mount(context.Background(), []string{"/dev/sdb"}, "/pool"); err == nil {
+	if err := h.svc.Mount(context.Background(), []string{"/dev/sdb"}, "pool"); err == nil {
 		t.Fatal("expected error")
 	}
 	if len(h.cfg.Current().Pools) != 0 {
@@ -351,11 +463,11 @@ func TestUnmountRecordsAutoMountFalse(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
-	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/pool", Name: "keep", AutoMount: true}); err != nil {
+	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/var/mnt/pool", Name: "keep", AutoMount: true}); err != nil {
 		t.Fatal(err)
 	}
 	h.fake.On("umount").Reply("")
-	if err := h.svc.Unmount(ctx, "/pool"); err != nil {
+	if err := h.svc.Unmount(ctx, "/var/mnt/pool"); err != nil {
 		t.Fatal(err)
 	}
 	if p := h.pool(t); p.AutoMount || p.Name != "keep" {
@@ -383,13 +495,13 @@ func TestSetAutoMount(t *testing.T) {
 	if err := h.svc.SetAutoMount(ctx, "nope", true); err == nil {
 		t.Fatal("unknown pool must error")
 	}
-	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/pool", AutoMount: false}); err != nil {
+	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/var/mnt/pool", AutoMount: false}); err != nil {
 		t.Fatal(err)
 	}
 	if err := h.svc.SetAutoMount(ctx, poolUUID, true); err != nil {
 		t.Fatal(err)
 	}
-	if p := h.pool(t); !p.AutoMount || p.Mountpoint != "/pool" {
+	if p := h.pool(t); !p.AutoMount || p.Mountpoint != "/var/mnt/pool" {
 		t.Fatalf("pool = %+v", p)
 	}
 }
@@ -398,7 +510,7 @@ func TestAutoMountMountsStoredPool(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
-	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/pool", AutoMount: true}); err != nil {
+	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/var/mnt/pool", AutoMount: true}); err != nil {
 		t.Fatal(err)
 	}
 	h.fake.On("lsblk").Reply(lsblk(false))
@@ -413,7 +525,7 @@ func TestAutoMountMountsStoredPool(t *testing.T) {
 			order = append(order, c.Name+" "+strings.Join(c.Args, " "))
 		}
 	}
-	want := []string{"chattr -i /pool", "mount -t bcachefs /dev/sda:/dev/sdb:/dev/sdc:/dev/sdd /pool"}
+	want := []string{"chattr -i /var/mnt/pool", "mount -t bcachefs /dev/sda:/dev/sdb:/dev/sdc:/dev/sdd /var/mnt/pool"}
 	if strings.Join(order, "|") != strings.Join(want, "|") {
 		// device order follows lsblk
 		t.Fatalf("calls = %v, want %v", order, want)
@@ -429,7 +541,7 @@ func TestAutoMountSkipsAlreadyMountedAndNoAutoPools(t *testing.T) {
 	if len(h.fake.Calls()) != 0 {
 		t.Fatalf("no pools stored but commands ran: %v", h.fake.Calls())
 	}
-	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/pool", AutoMount: true}); err != nil {
+	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/var/mnt/pool", AutoMount: true}); err != nil {
 		t.Fatal(err)
 	}
 	h.fake.On("mount").Reply("")
@@ -443,7 +555,7 @@ func TestAutoMountRetriesUntilDiscovered(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
-	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/pool", AutoMount: true}); err != nil {
+	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/var/mnt/pool", AutoMount: true}); err != nil {
 		t.Fatal(err)
 	}
 	var n atomic.Int32
@@ -465,7 +577,7 @@ func TestAutoMountGivesUpAfterDiscoveryTimeout(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	ctx := context.Background()
-	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/pool", AutoMount: true}); err != nil {
+	if _, err := h.cfg.UpsertPool(ctx, config.Pool{UUID: poolUUID, Mountpoint: "/var/mnt/pool", AutoMount: true}); err != nil {
 		t.Fatal(err)
 	}
 	h.fake.On("lsblk").Reply(`{"blockdevices":[]}`)
@@ -485,7 +597,7 @@ func TestAutoMountStopsOnContextCancel(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.svc.discoverTimeout = time.Hour
-	if _, err := h.cfg.UpsertPool(context.Background(), config.Pool{UUID: poolUUID, Mountpoint: "/pool", AutoMount: true}); err != nil {
+	if _, err := h.cfg.UpsertPool(context.Background(), config.Pool{UUID: poolUUID, Mountpoint: "/var/mnt/pool", AutoMount: true}); err != nil {
 		t.Fatal(err)
 	}
 	polled := make(chan struct{})
@@ -509,10 +621,10 @@ func TestAutoMountStopsOnContextCancel(t *testing.T) {
 func TestSubvolumeUsage(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
-	h.fake.On("ionice", "-c3", "nice", "-n19", "bcdu", "--json", "-d", "1", "/pool").
-		Reply(`{"folders":[{"path":"/pool","total":50},{"path":"/pool/a","total":42}]}`)
-	got := h.svc.SubvolumeUsage(context.Background(), []string{"/pool/a", "/pool/b"})
-	if got["/pool/a"] != 42 || got["/pool/b"] != -1 {
+	h.fake.On("ionice", "-c3", "nice", "-n19", "bcdu", "--json", "-d", "1", "/var/mnt/pool").
+		Reply(`{"folders":[{"path":"/var/mnt/pool","total":50},{"path":"/var/mnt/pool/a","total":42}]}`)
+	got := h.svc.SubvolumeUsage(context.Background(), []string{"/var/mnt/pool/a", "/var/mnt/pool/b"})
+	if got["/var/mnt/pool/a"] != 42 || got["/var/mnt/pool/b"] != -1 {
 		t.Fatalf("usage = %v", got)
 	}
 }
@@ -523,9 +635,9 @@ func TestFolderSizesPersistAndMerge(t *testing.T) {
 	st, _ := storetest.Open(t)
 	h.svc.UseStore(st)
 	h.fake.On("lsblk").Reply(lsblk(true))
-	h.fake.On("bcachefs", "subvolume", "list", "/pool").Reply("Path ID Created Flags Size\nmedia 2 2026-05-27 23:47 -\n")
-	h.fake.On("ionice", "-c3", "nice", "-n19", "bcdu", "--json", "-d", "0", "/pool/media").
-		Reply(`{"folders":[{"path":"/pool/media","total":42}]}`)
+	h.fake.On("bcachefs", "subvolume", "list", "/var/mnt/pool").Reply("Path ID Created Flags Size\nmedia 2 2026-05-27 23:47 -\n")
+	h.fake.On("ionice", "-c3", "nice", "-n19", "bcdu", "--json", "-d", "0", "/var/mnt/pool/media").
+		Reply(`{"folders":[{"path":"/var/mnt/pool/media","total":42}]}`)
 	ctx := context.Background()
 
 	h.svc.measureStale(ctx, sizeInterval)
@@ -546,7 +658,7 @@ func TestFolderSizesPersistAndMerge(t *testing.T) {
 	h2 := newHarness(t)
 	h2.svc.UseStore(st)
 	h2.fake.On("lsblk").Reply(lsblk(true))
-	h2.fake.On("bcachefs", "subvolume", "list", "/pool").Reply("Path ID Created Flags Size\nmedia 2 2026-05-27 23:47 -\n")
+	h2.fake.On("bcachefs", "subvolume", "list", "/var/mnt/pool").Reply("Path ID Created Flags Size\nmedia 2 2026-05-27 23:47 -\n")
 	h2.svc.loadSizes(ctx)
 	got, err = h2.svc.Status(ctx)
 	if err != nil {
@@ -620,9 +732,9 @@ func TestHTTPProblems(t *testing.T) {
 	}{
 		{"subvolume not empty", "DELETE", "/api/storage/subvolume?path=" + dir, "", http.StatusConflict, "subvolume_not_empty"},
 		{"unknown pool", "PATCH", "/api/storage/pools/nope", `{"auto_mount":true}`, http.StatusNotFound, "unknown_pool"},
-		{"command failure carries its message", "POST", "/api/storage/mount", `{"devices":["/dev/sdb"],"mountpoint":"/pool"}`, http.StatusInternalServerError, "storage_failed"},
+		{"command failure carries its message", "POST", "/api/storage/mount", `{"devices":["/dev/sdb"],"name":"pool"}`, http.StatusInternalServerError, "storage_failed"},
 		{"missing body", "POST", "/api/storage/mount", "", http.StatusBadRequest, "bad_request"},
-		{"no devices", "POST", "/api/storage/mount", `{"devices":[],"mountpoint":"/pool"}`, http.StatusUnprocessableEntity, "bad_request"},
+		{"no devices", "POST", "/api/storage/mount", `{"devices":[],"name":"pool"}`, http.StatusUnprocessableEntity, "bad_request"},
 		{"missing auto_mount", "PATCH", "/api/storage/pools/nope", `{}`, http.StatusUnprocessableEntity, "bad_request"},
 		{"missing path", "DELETE", "/api/storage/subvolume", "", http.StatusUnprocessableEntity, "bad_request"},
 	} {
@@ -631,7 +743,7 @@ func TestHTTPProblems(t *testing.T) {
 			t.Errorf("%s: got %d %v, want %d %s: %s", c.name, w.Code, m["code"], c.status, c.code, w.Body)
 		}
 	}
-	if _, m := do("POST", "/api/storage/mount", `{"devices":["/dev/sdb"],"mountpoint":"/pool"}`); !strings.Contains(fmt.Sprint(m["detail"]), "wrong fs type") {
+	if _, m := do("POST", "/api/storage/mount", `{"devices":["/dev/sdb"],"name":"pool"}`); !strings.Contains(fmt.Sprint(m["detail"]), "wrong fs type") {
 		t.Errorf("storage_failed lost mount's message: %v", m)
 	}
 }
@@ -644,7 +756,7 @@ func TestHTTPHappyPaths(t *testing.T) {
 	h.fake.On("mount").Reply("")
 	h.fake.On("umount").Reply("")
 	h.fake.On("bcachefs", "subvolume").Reply("")
-	h.fake.On("ionice").Reply(`{"folders":[{"path":"/pool/x","total":7}]}`)
+	h.fake.On("ionice").Reply(`{"folders":[{"path":"/var/mnt/pool/x","total":7}]}`)
 
 	w, _ := do("GET", "/api/storage", "")
 	var st StorageStatus
@@ -655,18 +767,18 @@ func TestHTTPHappyPaths(t *testing.T) {
 		method, path, body string
 		status             int
 	}{
-		{"POST", "/api/storage/mount", `{"devices":["/dev/sdb"],"mountpoint":"/pool"}`, http.StatusNoContent},
-		{"POST", "/api/storage/unmount", `{"mountpoint":"/pool"}`, http.StatusNoContent},
-		{"POST", "/api/storage/subvolume", `{"path":"/pool/x"}`, http.StatusCreated},
+		{"POST", "/api/storage/mount", `{"devices":["/dev/sdb"],"name":"pool"}`, http.StatusNoContent},
+		{"POST", "/api/storage/unmount", `{"mountpoint":"/var/mnt/pool"}`, http.StatusNoContent},
+		{"POST", "/api/storage/subvolume", `{"path":"/var/mnt/pool/x"}`, http.StatusCreated},
 		{"DELETE", "/api/storage/subvolume?path=" + t.TempDir(), "", http.StatusNoContent},
 	} {
 		if w, _ := do(c.method, c.path, c.body); w.Code != c.status {
 			t.Errorf("%s %s: %d %s", c.method, c.path, w.Code, w.Body)
 		}
 	}
-	w, _ = do("POST", "/api/storage/subvolume-usage", `{"paths":["/pool/x"]}`)
+	w, _ = do("POST", "/api/storage/subvolume-usage", `{"paths":["/var/mnt/pool/x"]}`)
 	var u SubvolumeUsage
-	if err := json.Unmarshal(w.Body.Bytes(), &u); w.Code != http.StatusOK || err != nil || u.Usage["/pool/x"] != 7 {
+	if err := json.Unmarshal(w.Body.Bytes(), &u); w.Code != http.StatusOK || err != nil || u.Usage["/var/mnt/pool/x"] != 7 {
 		t.Fatalf("usage: %d %s", w.Code, w.Body)
 	}
 }
@@ -688,5 +800,19 @@ func TestStatusCancelledCallerLeavesAHungCompute(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("cancelled caller stayed blocked on the shared compute")
+	}
+}
+
+func TestCanonicalWritesOutTheMntLink(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"/mnt/pool/media":     "/var/mnt/pool/media",
+		"/var/mnt/pool/media": "/var/mnt/pool/media",
+		"/mntx/pool":          "/mntx/pool",
+		"/srv/x":              "/srv/x",
+	} {
+		if got := Canonical(in); got != want {
+			t.Errorf("Canonical(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

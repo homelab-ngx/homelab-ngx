@@ -2968,8 +2968,8 @@ export interface components {
         };
         MountRequest: {
             devices: string[];
-            /** @description Where to mount; empty is the host's pool directory. */
-            mountpoint?: string;
+            /** @description The pool mounts at /var/mnt/<name>. Empty is the name it had before, or pool. */
+            name?: string;
         };
         Network: {
             /** @description The wired interfaces' IPv4 address: from DHCP, or static. */
@@ -3131,6 +3131,8 @@ export interface components {
             metadata_replicas: number;
             /** @description Disk group metadata is kept on; empty = none. */
             metadata_target: string;
+            /** @description The name it mounts under when none is given: the one it had before, or pool. */
+            mount_name: string;
             mountdir: string;
             name: string;
             /** @description Disk group reads are cached on; empty = none. */

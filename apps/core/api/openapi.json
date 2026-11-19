@@ -3455,8 +3455,9 @@
             "minItems": 1,
             "type": "array"
           },
-          "mountpoint": {
-            "description": "Where to mount; empty is the host's pool directory.",
+          "name": {
+            "description": "The pool mounts at /var/mnt/\u003cname\u003e. Empty is the name it had before, or pool.",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}$",
             "type": "string"
           }
         },
@@ -3918,6 +3919,10 @@
             "description": "Disk group metadata is kept on; empty = none.",
             "type": "string"
           },
+          "mount_name": {
+            "description": "The name it mounts under when none is given: the one it had before, or pool.",
+            "type": "string"
+          },
           "mountdir": {
             "type": "string"
           },
@@ -3952,6 +3957,7 @@
           "metadata_replicas",
           "metadata_target",
           "mountdir",
+          "mount_name",
           "name",
           "promote_target",
           "state",

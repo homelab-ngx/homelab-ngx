@@ -98,7 +98,7 @@ function listing(h: Host, path: string): Schema<"Listing"> {
   const rows = TREE[path.replace(/\/+$/, "") || "/"] ?? [];
   return {
     path: path || "/",
-    root: "/mnt/tank",
+    root: "/var/mnt/tank",
     total: rows.length,
     truncated: false,
     entries: rows.map(([name, type, size], i) => ({ name, type, size: type === "file" ? size : 0, disk_bytes: size, owner: "root", group: "users", mode: type === "dir" ? "drwxr-xr-x" : "-rw-r--r--", modified_at: iso(h.now() - (i + 1) * 3 * DAY) })),
@@ -174,7 +174,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
     return { logs: r ? `${r.started_at} ${b.name}: started (${r.trigger})\n${r.finished_at ?? ""} ${b.name}: ${r.result}${r.error ? `: ${r.error}` : ""}\n` : "" };
   },
   "/backups/{id}/runs": (h, c) => h.backups.find((x) => x.id === Number(c.path.id))?.recent_runs ?? [],
-  "/config": (h) => ({ core_services: ["homelab-daemon.service", "caddy.service"], generation: 42, loaded_at: iso(h.now() - 6 * DAY), pools: [{ name: "tank", uuid: h.storage.pools[0]!.uuid, mountpoint: "/mnt/tank", auto_mount: true, options: "" }] }),
+  "/config": (h) => ({ core_services: ["homelab-daemon.service", "caddy.service"], generation: 42, loaded_at: iso(h.now() - 6 * DAY), pools: [{ name: "tank", uuid: h.storage.pools[0]!.uuid, mountpoint: "/var/mnt/tank", auto_mount: true, options: "" }] }),
   "/core-services": (h) =>
     ["homelab-daemon", "caddy", "cloudflared", "tailscaled"].map((name) => ({ name, unit_name: `${name}.service`, description: name, type: "Native" as const, active_state: "active", sub_state: "running", started_at: iso(h.now() - 6 * DAY) })),
   "/drafts": () => [],

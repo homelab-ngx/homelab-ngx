@@ -183,7 +183,6 @@ func run(configPath string) error {
 	bk := backups.New(bkCfg, sd, r, st, stackBackups{stacksSvc}, notify, backups.NewHealthchecks(), logging.Logger("backups"))
 	stacksSvc.OnBackupFoldersAdded(bk.FoldersAdded)
 	stor := storage.New(bcachefs.New(r), cfg, nil)
-	stor.SetPoolDir(nix.Paths.PoolDir)
 	stor.UseStore(st)
 	stor.UseStackFolders(stacksSvc)
 	// metrics.db sits next to homelab.db but outside its snapshots: it is

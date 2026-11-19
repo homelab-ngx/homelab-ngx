@@ -16,15 +16,15 @@ func storageCmd() *cli.Command {
 		Name:  "storage",
 		Usage: "Show bcachefs pool status",
 		Subcommands: []*cli.Command{
-			{Name: "mount", Usage: "Mount a storage pool", ArgsUsage: "<mountpoint> <device> [device...]", Action: func(c *cli.Context) error {
-				if err := requireArgs(c, 2, "homelab storage mount <mountpoint> <device> [device...]"); err != nil {
+			{Name: "mount", Usage: "Mount a storage pool", ArgsUsage: "<name> <device> [device...]", Description: "The pool mounts at " + storage.MountRoot + "/<name>.", Action: func(c *cli.Context) error {
+				if err := requireArgs(c, 2, "homelab storage mount <name> <device> [device...]"); err != nil {
 					return err
 				}
-				mp := c.Args().Get(0)
-				if err := send(c.Context, http.MethodPost, "/storage/mount", storage.MountRequest{Mountpoint: mp, Devices: c.Args().Slice()[1:]}); err != nil {
+				name := c.Args().Get(0)
+				if err := send(c.Context, http.MethodPost, "/storage/mount", storage.MountRequest{Name: name, Devices: c.Args().Slice()[1:]}); err != nil {
 					return err
 				}
-				return emit(c, nil, "Mounted "+mp)
+				return emit(c, nil, "Mounted "+storage.Mountpoint(name))
 			}},
 			{Name: "unmount", Usage: "Safely unmount a storage pool", ArgsUsage: "<mountpoint>", Action: func(c *cli.Context) error {
 				if err := requireArgs(c, 1, "homelab storage unmount <mountpoint>"); err != nil {

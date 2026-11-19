@@ -20,6 +20,7 @@ import (
 
 	"homelab-ngx.com/core/internal/agefile"
 	"homelab-ngx.com/core/internal/httpx"
+	"homelab-ngx.com/core/internal/storage"
 	"homelab-ngx.com/core/internal/store"
 )
 
@@ -500,6 +501,7 @@ func (s *Service) SetVariable(ctx context.Context, name, varName string, in Stac
 		return Stack{}, httpx.Unprocessable("invalid_value", "%s must be one of %s", varName, strings.Join(d.Enum, ", "))
 	}
 	if declared && d.Kind == VarPath {
+		in.Value = storage.Canonical(in.Value)
 		if err := validHostPath(in.Value); err != nil {
 			return Stack{}, httpx.Unprocessable("invalid_path", "%s: %v", varName, err)
 		}

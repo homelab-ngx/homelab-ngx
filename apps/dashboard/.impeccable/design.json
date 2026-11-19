@@ -78,7 +78,7 @@
       "kind": "input",
       "refersTo": "input",
       "description": "Sunken mono field for values, search and selects.",
-      "html": "<input class=\"ds-input\" placeholder=\"/pool/…\">",
+      "html": "<input class=\"ds-input\" placeholder=\"/var/mnt/pool/…\">",
       "css": ".ds-input { width: 100%; border-radius: 6px; border: 1px solid var(--line, #d9dde3); background: var(--sunken, #eef0f3); color: var(--fg, #161b22); padding: 6px 10px; font: 400 13px/1.4 'Azeret Mono Variable', ui-monospace, monospace; } .ds-input::placeholder { color: color-mix(in oklab, var(--muted, #5d6773) 70%, transparent); } .ds-input:focus-visible { outline: 2px solid var(--accent, #0f6e8c); }"
     },
     {

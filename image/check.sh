@@ -17,7 +17,8 @@
 #   4. that disk boots alone with the core merged, the installer's host name
 #      and a machine ID of its own, asking for a login; a domain set through
 #      the host settings serves the dashboard over HTTPS
-#   5. a bcachefs pool is formatted and mounted through the daemon
+#   5. a bcachefs pool is formatted and mounted through the daemon, at
+#      /var/mnt/pool; unmounted, its directory takes no writes
 #   6. a stack (the drafts template) is built by Nix and serves a page from
 #      the pool at its route under the domain
 #   7. host settings: a VPN device, a tunnel route, the firewall, host name
@@ -661,19 +662,38 @@ ok "daemon $(api http://x/api/version | jq -r .version), dashboard over HTTP and
 
 step "5. a bcachefs pool through the daemon"
 vssh 'bcachefs format -q --replicas=2 /dev/vdb /dev/vdc >/dev/null'
-api -X POST http://x/api/storage/mount -d "'{\"devices\":[\"/dev/vdb\",\"/dev/vdc\"],\"mountpoint\":\"/pool\"}'" >/dev/null || die "mount refused"
-vssh 'findmnt -no FSTYPE /pool' | grep -q bcachefs || die "/pool is not mounted"
-ok "pool mounted at /pool ($(vssh 'bcachefs version'))"
+# Pools mount under /var/mnt, by name. A release from before that (0.2.5,
+# the first version of a check that updates from it) has /pool in its image
+# and takes a path.
+pool=/var/mnt/pool guarded=
+if vssh 'test -L /mnt'; then
+  api -X POST http://x/api/storage/mount -d "'{\"devices\":[\"/dev/vdb\",\"/dev/vdc\"]}'" >/dev/null || die "mount refused"
+  vssh "findmnt -no FSTYPE $pool" | grep -q bcachefs || die "$pool is not mounted"
+  vssh 'touch /mnt/pool/.check && rm /var/mnt/pool/.check' || die "/mnt/pool is not the pool"
+  code=$(vssh "curl -s -o /dev/null -w '%{http_code}' --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json' -X POST http://x/api/storage/mount -d '{\"devices\":[\"/dev/vdb\"],\"name\":\"../x\"}'")
+  [ "$code" = 422 ] || [ "$code" = 400 ] || die "a pool name with a path in it answered $code"
+  # Unmounted, its directory takes no writes: they would land on /var.
+  api -X POST http://x/api/storage/unmount -d "'{\"mountpoint\":\"$pool\"}'" >/dev/null || die "unmount refused"
+  vssh "! touch $pool/x 2>/dev/null" || die "the unmounted $pool can be written to"
+  api -X POST http://x/api/storage/mount -d "'{\"devices\":[\"/dev/vdb\",\"/dev/vdc\"]}'" >/dev/null || die "the second mount was refused"
+  vssh "findmnt -no FSTYPE $pool" | grep -q bcachefs || die "$pool is not mounted again under the name it had"
+  guarded="; unmounted, its directory takes no writes"
+else
+  pool=/pool
+  api -X POST http://x/api/storage/mount -d "'{\"devices\":[\"/dev/vdb\",\"/dev/vdc\"],\"mountpoint\":\"/pool\"}'" >/dev/null || die "mount refused"
+  vssh 'findmnt -no FSTYPE /pool' | grep -q bcachefs || die "/pool is not mounted"
+fi
+ok "pool mounted at $pool ($(vssh 'bcachefs version'))$guarded"
 
 step "6. a stack from the drafts template"
-vssh 'mkdir -p /pool/site /var/lib/stack-src/site && echo "<p>image-check</p>" > /pool/site/index.html'
+vssh "mkdir -p $pool/site /var/lib/stack-src/site && echo '<p>image-check</p>' > $pool/site/index.html"
 for f in homelab-stack.json flake.nix; do
   sed 's/NAME/site/g' "$root/apps/core/internal/drafts/template/$f" | vssh "cat > /var/lib/stack-src/site/$f"
 done
 vssh 'cd /var/lib/stack-src/site && git init -q && git add -A && git -c user.name=check -c user.email=check@example.com commit -qm site'
 rev=$(vssh 'git -C /var/lib/stack-src/site rev-parse HEAD')
 api -X POST http://x/api/stacks -d "'{\"name\":\"site\",\"source\":\"git+file:///var/lib/stack-src/site\"}'" >/dev/null || die "install refused"
-api -X PUT http://x/api/stacks/site/variables/SITE_DIR -d "'{\"value\":\"/pool/site\"}'" >/dev/null || die "variable refused"
+api -X PUT http://x/api/stacks/site/variables/SITE_DIR -d "'{\"value\":\"$pool/site\"}'" >/dev/null || die "variable refused"
 api -X POST http://x/api/stacks/site/approve -d "'{\"rev\":\"$rev\"}'" >/dev/null || die "approve refused"
 api -X POST http://x/api/stacks/site/start >/dev/null || die "start refused"
 for _ in $(seq 1 120); do
@@ -755,6 +775,16 @@ if [ -n "$next" ]; then
   for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
   booted "$next"
   vssh 'systemd-sysext status --no-legend' | grep -q homelab-core || die "the core extension is not merged on $next"
+  # $next has no /pool: a pool the first version mounted there is mounted
+  # again by hand, under its name, and the stack is given its new path.
+  if [ "$pool" = /pool ] && vssh 'test -L /mnt'; then
+    pool=/var/mnt/pool
+    api -X POST http://x/api/storage/mount -d "'{\"devices\":[\"/dev/vdb\",\"/dev/vdc\"]}'" >/dev/null || die "mount refused on $next"
+    api -X PUT http://x/api/stacks/site/variables/SITE_DIR -d "'{\"value\":\"$pool/site\"}'" >/dev/null || die "variable refused on $next"
+    api -X POST http://x/api/stacks/site/stop >/dev/null 2>&1 || true
+    for _ in $(seq 1 30); do [ "$(api http://x/api/stacks/site | jq -r '.operation.running // false')" = false ] && break; sleep 2; done
+    api -X POST http://x/api/stacks/site/start >/dev/null || die "start refused on $next"
+  fi
   hostcheck
   ok "booted $next with everything in place"
   # The way back by hand: the version before is still in its slot.

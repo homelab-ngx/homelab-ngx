@@ -66,9 +66,6 @@ type Paths struct {
 	// CacheDir holds what the host keeps outside the daemon's state: stack
 	// state and DB snapshots. Empty is DefaultCacheDir.
 	CacheDir string `json:"cache_dir"`
-	// PoolDir is where the storage pool mounts; empty means the host has no
-	// pool.
-	PoolDir string `json:"pool_dir"`
 }
 
 // DefaultCacheDir is the cache directory of a config that names none.
@@ -150,10 +147,8 @@ func (n *Nix) validate() error {
 	if _, err := cron.ParseStandard(n.DB.SnapshotSchedule); err != nil {
 		return fmt.Errorf("db.snapshot_schedule %q: %w", n.DB.SnapshotSchedule, err)
 	}
-	for field, dir := range map[string]string{"paths.cache_dir": n.Paths.CacheDir, "paths.pool_dir": n.Paths.PoolDir} {
-		if dir != "" && (!filepath.IsAbs(dir) || filepath.Clean(dir) != dir || dir == "/") {
-			return fmt.Errorf("%s: %q is not a clean absolute directory", field, dir)
-		}
+	if dir := n.Paths.CacheDir; dir != "" && (!filepath.IsAbs(dir) || filepath.Clean(dir) != dir || dir == "/") {
+		return fmt.Errorf("paths.cache_dir: %q is not a clean absolute directory", dir)
 	}
 	return n.Stacks.validate()
 }

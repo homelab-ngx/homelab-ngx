@@ -339,3 +339,24 @@ func TestParseManifestVersion7(t *testing.T) {
 		}
 	}
 }
+
+// A pool is under /var, which no stack is otherwise given.
+func TestHostPathUnderMountRoot(t *testing.T) {
+	t.Parallel()
+	for _, p := range []string{"/var/mnt/pool/media", "/var/mnt/tank/a/b", "/srv/media"} {
+		if err := validHostPath(p); err != nil {
+			t.Errorf("%s: %v", p, err)
+		}
+	}
+	for p, want := range map[string]string{
+		"/var/mnt/pool":       "whole pool",
+		"/var/mnt":            "under /var",
+		"/var/lib/x":          "under /var",
+		"/var/mnt/pool/../x":  "plain path",
+		"/var/mntx/pool/data": "under /var",
+	} {
+		if err := validHostPath(p); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: err = %v, want %q", p, err, want)
+		}
+	}
+}

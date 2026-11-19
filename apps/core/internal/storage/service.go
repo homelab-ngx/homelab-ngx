@@ -10,7 +10,11 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -57,9 +61,39 @@ type folderSize struct {
 // ErrUnknownPool means the uuid is not a stored pool.
 var ErrUnknownPool = errors.New("unknown pool")
 
-// ErrNoMountpoint is a mount with no mountpoint on a host with no pool
-// directory.
-var ErrNoMountpoint = errors.New("give a mountpoint: this host has no pool directory")
+// MountRoot is the one directory pools mount under, each at
+// MountRoot/<name>. It is on /var: the root file system is read-only.
+const MountRoot = "/var/mnt"
+
+// DefaultMountName is the name of a pool mounted without one.
+const DefaultMountName = "pool"
+
+var mountNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
+
+// ErrMountName is a pool name that cannot be a directory under MountRoot.
+var ErrMountName = errors.New("a pool's name is up to 31 lowercase letters, digits and dashes, and starts with a letter or a digit")
+
+// ErrNameTaken is a mount under a name another pool has.
+var ErrNameTaken = errors.New("another pool has that name")
+
+// Canonical is path with the image's /mnt link (to MountRoot) written out,
+// so a path typed either way is stored one way.
+func Canonical(path string) string {
+	if rest, ok := strings.CutPrefix(path, "/mnt/"); ok {
+		return MountRoot + "/" + rest
+	}
+	return path
+}
+
+// Mountpoint is where the pool named name mounts.
+func Mountpoint(name string) string { return MountRoot + "/" + name }
+
+// MountName is the name of a pool mounted at mountpoint; false when
+// mountpoint is not a directory directly under MountRoot.
+func MountName(mountpoint string) (string, bool) {
+	name, ok := strings.CutPrefix(mountpoint, MountRoot+"/")
+	return name, ok && mountNameRE.MatchString(name)
+}
 
 // ErrSubvolumeNotEmpty is returned when deleting a subvolume that still holds
 // data.
@@ -70,8 +104,6 @@ type Service struct {
 	bc  *bcachefs.Client
 	cfg *config.Manager
 	log *slog.Logger
-	// poolDir is where a pool mounts when no mountpoint is given.
-	poolDir string
 
 	mu       sync.Mutex
 	cache    *StorageStatus
@@ -94,6 +126,7 @@ type Service struct {
 	discoverTimeout time.Duration
 	retryInterval   time.Duration
 	onBcachefs      func(path string) bool
+	mkdir           func(path string) error
 }
 
 // New wires a Service.
@@ -105,6 +138,7 @@ func New(bc *bcachefs.Client, cfg *config.Manager, log *slog.Logger) *Service {
 		bc: bc, cfg: cfg, log: log,
 		health: map[string]DiskHealth{}, sizes: map[string]folderSize{}, trees: map[string]folderTree{},
 		now: time.Now, ttl: statusTTL, onBcachefs: bc.OnBcachefs,
+		mkdir:           func(path string) error { return os.MkdirAll(path, 0o755) },
 		discoverTimeout: 2 * time.Minute, retryInterval: 5 * time.Second,
 	}
 }
@@ -243,7 +277,11 @@ func (s *Service) compute(ctx context.Context) (StorageStatus, error) {
 		Subvolumes: subvolumes,
 	}
 	for _, p := range pools {
-		out.Pools = append(out.Pools, toPool(p, stored[p.UUID].AutoMount))
+		pool := toPool(p, stored[p.UUID].AutoMount)
+		if pool.MountName, _ = MountName(stored[p.UUID].Mountpoint); pool.MountName == "" {
+			pool.MountName = DefaultMountName
+		}
+		out.Pools = append(out.Pools, pool)
 	}
 	for _, d := range unassigned {
 		out.Unassigned = append(out.Unassigned, toDisk(d))
@@ -439,24 +477,78 @@ func toPool(p bcachefs.Pool, autoMount bool) Pool {
 // poweroff or power loss doesn't touch it, so AutoMount at startup re-mounts
 // exactly the pools that were mounted before.
 
-// Mount mounts a pool from its devices and remembers it for auto-mount.
-// SetPoolDir is where a pool mounts when no mountpoint is given; empty
-// means the host has no pool directory.
-func (s *Service) SetPoolDir(dir string) { s.poolDir = dir }
-
-func (s *Service) Mount(ctx context.Context, devices []string, mountpoint string) error {
-	if mountpoint == "" {
-		mountpoint = s.poolDir
+// Mount mounts a pool from its devices at MountRoot/<name> and remembers it
+// for auto-mount. An empty name is the one the pool was last mounted under,
+// or DefaultMountName.
+func (s *Service) Mount(ctx context.Context, devices []string, name string) error {
+	pools, err := s.bc.DiscoverPools(ctx)
+	if err != nil {
+		s.log.Warn("mount: pool discovery failed, the name is not checked against other pools", "error", err)
 	}
-	if mountpoint == "" {
-		return ErrNoMountpoint
+	uuid := ""
+	for _, p := range pools {
+		for _, d := range p.Disks {
+			if slices.Contains(devices, d.Path) {
+				uuid = p.UUID
+			}
+		}
+	}
+	snap := s.cfg.Current()
+	if name == "" {
+		if pc, ok := snap.Pool(uuid); ok && uuid != "" {
+			name, _ = MountName(pc.Mountpoint)
+		}
+		if name == "" {
+			name = DefaultMountName
+		}
+	}
+	if !mountNameRE.MatchString(name) {
+		return ErrMountName
+	}
+	mountpoint := Mountpoint(name)
+	for _, p := range snap.Pools {
+		if p.UUID != uuid && p.Mountpoint == mountpoint {
+			return fmt.Errorf("%w: %s", ErrNameTaken, name)
+		}
+	}
+	for _, p := range pools {
+		if p.UUID != uuid && p.Mountdir == mountpoint {
+			return fmt.Errorf("%w: %s", ErrNameTaken, name)
+		}
 	}
 	s.invalidate()
+	if err := s.open(ctx, mountpoint); err != nil {
+		return err
+	}
 	if err := s.bc.Mount(ctx, devices, mountpoint); err != nil {
+		s.guard(ctx, mountpoint)
 		return err
 	}
 	s.rememberMount(ctx, mountpoint)
 	return nil
+}
+
+// open makes a mountpoint's directory and lifts the flag guard put on it.
+func (s *Service) open(ctx context.Context, mountpoint string) error {
+	if err := s.mkdir(mountpoint); err != nil {
+		return fmt.Errorf("make %s: %w", mountpoint, err)
+	}
+	if err := s.bc.ClearImmutable(ctx, mountpoint); err != nil {
+		s.log.Debug("chattr -i failed (directory may not be immutable)", "mountpoint", mountpoint, "error", err)
+	}
+	return nil
+}
+
+// guard makes the empty directory of a pool that is not mounted immutable.
+// It is on /var: without the flag, whatever writes to the pool's paths would
+// fill the system disk instead.
+func (s *Service) guard(ctx context.Context, mountpoint string) {
+	if _, ok := MountName(mountpoint); !ok {
+		return
+	}
+	if err := s.bc.SetImmutable(ctx, mountpoint); err != nil {
+		s.log.Warn("chattr +i failed: the unmounted directory can be written to", "mountpoint", mountpoint, "error", err)
+	}
 }
 
 // rememberMount stores auto_mount=true for the pool now mounted at
@@ -487,6 +579,7 @@ func (s *Service) Unmount(ctx context.Context, mountpoint string) error {
 	if err := s.bc.Unmount(ctx, mountpoint); err != nil {
 		return err
 	}
+	s.guard(ctx, mountpoint)
 	for _, p := range snap.Pools {
 		if p.Mountpoint == mountpoint {
 			if _, err := s.cfg.SetPoolAutoMount(ctx, p.UUID, mountpoint, false); err != nil {
@@ -516,9 +609,14 @@ func (s *Service) SetAutoMount(ctx context.Context, uuid string, auto bool) erro
 func (s *Service) AutoMount(ctx context.Context) {
 	pending := make(map[string]config.Pool)
 	for _, p := range s.cfg.Current().Pools {
-		if p.AutoMount {
-			pending[p.UUID] = p
+		if !p.AutoMount {
+			continue
 		}
+		if _, ok := MountName(p.Mountpoint); !ok {
+			s.log.Error("pool not mounted: it is remembered outside "+MountRoot+"; mount it again under a name", "uuid", p.UUID, "mountpoint", p.Mountpoint)
+			continue
+		}
+		pending[p.UUID] = p
 	}
 	if len(pending) == 0 {
 		return
@@ -544,21 +642,25 @@ func (s *Service) AutoMount(ctx context.Context) {
 				devices = append(devices, d.Path)
 			}
 			s.log.Info("auto-mounting pool", "uuid", pc.UUID, "mountpoint", pc.Mountpoint)
-			// /pool is set +i at boot to prevent writes to the bare
-			// directory while the pool is not mounted.
-			if err := s.bc.ClearImmutable(ctx, pc.Mountpoint); err != nil {
-				s.log.Debug("chattr -i failed (directory may not be immutable)", "mountpoint", pc.Mountpoint, "error", err)
+			if err := s.open(ctx, pc.Mountpoint); err != nil {
+				s.log.Error("failed to auto-mount pool", "uuid", pc.UUID, "error", err)
+				continue
 			}
 			if err := s.bc.Mount(ctx, devices, pc.Mountpoint); err != nil {
 				s.log.Error("failed to auto-mount pool", "uuid", pc.UUID, "error", err)
+				s.guard(ctx, pc.Mountpoint)
 			}
 		}
 		if len(pending) == 0 {
 			return
 		}
 		if s.now().After(deadline) {
-			for uuid := range pending {
+			for uuid, p := range pending {
 				s.log.Error("auto-mount pool not found", "uuid", uuid)
+				// Its directory must not take the writes meant for it.
+				if err := s.mkdir(p.Mountpoint); err == nil {
+					s.guard(ctx, p.Mountpoint)
+				}
 			}
 			return
 		}

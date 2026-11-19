@@ -107,10 +107,15 @@ export interface Segment {
  * and sizes are before compression: together they can exceed what the pool
  * reports as used, and the bar is then scaled down to the used share.
  */
+/** A pool folder's name on its pool: /var/mnt/pool/media is "media". The pool is named once, above its folders. */
+export function folderName(path: string, mountdir: string): string {
+  return (mountdir && path.startsWith(`${mountdir}/`) && path.slice(mountdir.length + 1)) || path;
+}
+
 export function segments(folders: Subvolume[], total: number, mountdir: string, used = total, named = 3): Segment[] {
   if (total <= 0) return [];
   const measured = folders.filter((f) => f.used_bytes > 0).sort((a, b) => b.used_bytes - a.used_bytes);
-  const name = (path: string) => path.slice(mountdir.length + 1) || path;
+  const name = (path: string) => folderName(path, mountdir);
   const seg = (label: string, bytes: number, other = false): Segment => ({
     label,
     bytes,

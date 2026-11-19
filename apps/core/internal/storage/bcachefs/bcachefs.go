@@ -1033,9 +1033,16 @@ func (c *Client) friendlyName(ctx context.Context, path string, defaultModel str
 	return modelName
 }
 
+// SetImmutable runs `chattr +i` on path: the empty mountpoint directory of a
+// pool that is not mounted, so nothing can write to it.
+func (c *Client) SetImmutable(ctx context.Context, path string) error {
+	_, err := c.run(ctx, "chattr", "+i", path)
+	return err
+}
+
 // ClearImmutable runs `chattr -i` on path. The empty mountpoint directory is
-// kept +i at boot so nothing can write to it while the pool is not mounted;
-// the flag has to go before mounting over it. Errors are returned for the
+// kept +i while the pool is not mounted (SetImmutable); the flag goes before
+// mounting over it. Errors are returned for the
 // caller to log: a directory that was never immutable is fine.
 func (c *Client) ClearImmutable(ctx context.Context, path string) error {
 	_, err := c.run(ctx, "chattr", "-i", path)
