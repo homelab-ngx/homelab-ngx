@@ -4,26 +4,45 @@
 # Markdown between two marker lines of README.md. The rest of the README is
 # left as it is.
 #
-#   stack-readme [--check] [DIR]
+#   stack-readme [--check | --commit] [DIR]
 #
 # DIR is the stack's repo (default: the current folder). --check writes
 # nothing and fails when the README differs from what the manifest gives.
+# --commit commits a changed README as github-actions[bot] and pushes it.
 # The README needs both marker lines, each on a line of its own:
 #
 #   <!-- manifest:start -->
 #   <!-- manifest:end -->
 #
-# Needs bash, jq and awk.
+# A stack's repo runs it on each push, in .github/workflows/readme.yml:
+#
+#   on:
+#     push:
+#       branches: [main]
+#       paths: [homelab-stack.json, README.md]
+#     workflow_dispatch:
+#   permissions:
+#     contents: write
+#   jobs:
+#     readme:
+#       runs-on: ubuntu-latest
+#       steps:
+#         - uses: actions/checkout@v4
+#         - run: curl -fsSL https://raw.githubusercontent.com/homelab-ngx/homelab-ngx/main/scripts/stack-readme | bash -s -- --commit
+#
+# A push made with the workflow's own token starts no workflow, so that
+# commit does not run it again. Needs bash, jq and awk, and git for --commit.
 set -euo pipefail
 
 start='<!-- manifest:start -->'
 end='<!-- manifest:end -->'
 project_url=${PROJECT_URL:-https://github.com/homelab-ngx/homelab-ngx}
 
-check='' dir=.
+check='' commit='' dir=.
 while [ $# -gt 0 ]; do
   case $1 in
     --check) check=1; shift ;;
+    --commit) commit=1; shift ;;
     -*) echo "stack-readme: unknown option $1" >&2; exit 2 ;;
     *) dir=$1; shift ;;
   esac
@@ -156,3 +175,9 @@ if [ -n "$check" ]; then
 fi
 cat "$tmp/README.md" > "$readme"
 echo "stack-readme: wrote the manifest into $readme"
+if [ -n "$commit" ]; then
+  git -C "$dir" -c user.name='github-actions[bot]' \
+    -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+    commit -q -m 'docs: the README repeats the manifest as it is now' -- README.md
+  git -C "$dir" push -q
+fi

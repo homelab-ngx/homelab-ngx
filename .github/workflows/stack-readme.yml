@@ -1,13 +1,14 @@
-# The stack-readme action (.github/actions/stack-readme), which stack repos
-# use to keep their README's manifest section current. Its test folder holds
-# a manifest that uses every field and the README it gives.
+# scripts/stack-readme, which stack repos run to keep their README's manifest
+# section current. scripts/testdata/stack-readme holds a manifest that uses
+# every field and the README it gives.
 name: stack readme
 
 on:
   push:
     branches: [main]
     paths:
-      - .github/actions/stack-readme/**
+      - scripts/stack-readme
+      - scripts/testdata/stack-readme/**
       - .github/workflows/stack-readme.yml
 
 permissions:
@@ -20,4 +21,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: The test README matches its manifest
-        run: .github/actions/stack-readme/stack-readme --check .github/actions/stack-readme/test
+        run: scripts/stack-readme --check scripts/testdata/stack-readme
