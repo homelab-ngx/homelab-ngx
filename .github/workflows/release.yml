@@ -1,7 +1,7 @@
 # Release: a tag vX.Y.Z on main builds the installer and update images, checks
 # them in a VM, signs SHA256SUMS and publishes to B2 behind dl.homelab-ngx.com.
-# The GitHub Release holds only the notes. (#2; the hosted runner was proven by
-# the image spike, run 44339328373.)
+# The GitHub Release holds only the notes. The image builds and boots on the
+# hosted runner (the image spike workflow proved it).
 #
 # The check here boots this version alone: the installer, the installs and the
 # installed disk (image/check.sh steps 1-8, 13-18). The update from the
