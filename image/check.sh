@@ -243,10 +243,29 @@ up() {
   done
   die "no SSH after 3 minutes (serial log in $vm)"
 }
-reboot_vm() {
+# A reboot stops the stacks and unmounts the pools first, and logind lets
+# that hold it for up to five minutes. So a host that answers SSH may still
+# be the boot that was told to go: the boot id says which one it is. mark
+# notes the running boot, and newboot waits for another one to answer
+# (TRIES, 3 s apart: 8 minutes unless given). restart is both around a
+# plain reboot.
+mark() { lastboot=$(vssh 'cat /proc/sys/kernel/random/boot_id') || die "no boot id before the reboot (serial log in $vm)"; }
+newboot() {
+  local now
+  for _ in $(seq 1 "${1:-160}"); do
+    now=$(vssh 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) || now=
+    if [ -n "$now" ] && [ "$now" != "$lastboot" ]; then return 0; fi
+    sleep 3
+  done
+  die "the VM did not start again (serial log in $vm)"
+}
+restart() {
+  mark
   vssh 'systemctl reboot' || true
-  for _ in $(seq 1 30); do vssh true 2>/dev/null || break; sleep 1; done
-  up
+  newboot "$@"
+}
+reboot_vm() {
+  restart
   # The daemon applies the host settings and mounts the pool after start.
   for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
 }
@@ -405,8 +424,6 @@ pool_lifecycle() {
   lifecycle=1
   ok "a pool made on vde and vdf, grown with vdg (erased by name), shrunk by vde with its file kept, and deleted; the stack's pool refused"
 }
-# gone: wait for the VM to stop answering, as a reboot it started itself does.
-gone() { for _ in $(seq 1 60); do vssh true 2>/dev/null || break; sleep 2; done; }
 # daemon: wait for the daemon's API.
 daemon() { for _ in $(seq 1 ${1:-30}); do api http://x/api/version >/dev/null 2>&1 && return 0; sleep 2; done; return 1; }
 # stage_image V: put version V's image files in the host's update folder, as
@@ -900,10 +917,10 @@ if [ -n "$next" ]; then
   ok "core $next active, no reboot, the stack's container untouched$signed"
 
   step "10. an image update to $next through the API"
+  mark
   op system-updates/image/install '{"reboot":"now"}' >/dev/null || true
-  # The install reboots the host: wait for it to go, then come back.
-  for _ in $(seq 1 60); do vssh true 2>/dev/null || break; sleep 2; done
-  up
+  # The install reboots the host: wait for the next boot.
+  newboot
   for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
   booted "$next"
   vssh 'systemd-sysext status --no-legend' | grep -q homelab-core || die "the core extension is not merged on $next"
@@ -926,10 +943,10 @@ if [ -n "$next" ]; then
   st=$(post system-updates/image/boot '{"version":"","mode":"default"}') || die "clearing the default was refused: $st"
   [ "$(jq -r '.default // ""' <<<"$st")" = "" ] || die "the default is still set: $(jq -c '{default, oneshot}' <<<"$st")"
   [ "$(post system-updates/image/boot '{"version":"0.0.0.1","mode":"once"}' | jq -r .code)" = no_such_version ] || die "a version that is not installed was accepted"
+  mark
   st=$(post system-updates/image/boot "{\"version\":\"$version\",\"mode\":\"once\",\"reboot\":true}") || die "booting $version once was refused: $st"
   [ "$(jq -r .oneshot <<<"$st")" = "$version" ] || die "$version is not set to boot once: $(jq -c '{default, oneshot}' <<<"$st")"
-  gone
-  up
+  newboot
   daemon || die "the daemon does not answer on $version"
   booted "$version"
   reboot_vm
@@ -990,11 +1007,8 @@ done
 test -n "$root"
 dd if=/dev/urandom of="$root" bs=1M count=8 conv=notrunc,fsync status=none
 EOS
-  vssh 'systemctl reboot' || true
-  for _ in $(seq 1 30); do vssh true 2>/dev/null || break; sleep 1; done
   # Three failed tries of the broken version, then the one before.
-  for _ in $(seq 1 120); do vssh true 2>/dev/null && break; sleep 3; done
-  up
+  restart 280
   for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
   booted "$next"
   [ "$(api http://x/api/system-updates/image | jq -r .fell_back_from)" = "$broken" ] || die "the daemon does not say it fell back from $broken"
@@ -1005,9 +1019,7 @@ EOS
   # version that was good before: the boot check tries the core before,
   # fails, and leaves the host up.
   vssh 'systemctl stop homelab-daemon && mv /var/lib/homelab-daemon /var/lib/homelab-daemon.keep && touch /var/lib/homelab-daemon'
-  vssh 'systemctl reboot' || true
-  for _ in $(seq 1 30); do vssh true 2>/dev/null || break; sleep 1; done
-  up
+  restart
   bootid=$(vssh 'cat /proc/sys/kernel/random/boot_id')
   for _ in $(seq 1 120); do [ "$(vssh 'systemctl is-failed homelab-boot-check.service' 2>/dev/null)" = failed ] && break; sleep 5; done
   [ "$(vssh 'systemctl is-failed homelab-boot-check.service')" = failed ] || die "the boot check did not fail with the daemon broken: $(vssh 'systemctl is-active homelab-boot-check.service')"
@@ -1024,9 +1036,7 @@ EOS
   # A core extension that does not start (its file overwritten): the boot
   # check merges the one before.
   vssh "dd if=/dev/urandom of=/var/lib/extensions.d/homelab-core_$broken.raw bs=1M count=4 conv=notrunc,fsync status=none"
-  vssh 'systemctl reboot' || true
-  for _ in $(seq 1 30); do vssh true 2>/dev/null || break; sleep 1; done
-  up
+  restart
   daemon 150 || die "the daemon does not answer on the core before"
   booted "$next"
   api http://x/api/system-updates/image | jq -e --arg b "$broken" --arg n "$next" '.core.fell_back_from == $b and .core.active == $n and (.boot_check // "") == ""' >/dev/null ||
