@@ -27,13 +27,17 @@
 #      the stack uses is not
 #   7. host settings: a VPN device, a tunnel route, the firewall, host name
 #      and time zone take effect without a rebuild
-#   8. all of it holds after a reboot
+#   8. all of it holds after a reboot. The stack is checked layer by
+#      layer each time: the daemon has it running, its link has the host's
+#      address, it answers on its own address, its route is served
 #   9. the next version is published on a release server (signed with a key
 #      of the check's own): a copy whose SHA256SUMS changed after signing is
 #      refused, the real one downloads and is staged; then a core update to
 #      it through the API, without a reboot, the stack untouched
 #  10. an image update to the downloaded version through the API, with a
-#      reboot; everything holds. The version before boots once more when the
+#      reboot; everything holds, and the stack's link keeps its address
+#      when systemd-networkd reloads, also while the stack starts. The
+#      version before boots once more when the
 #      API is asked, and the newest again after it
 #  11. a third version installs in one operation, image and core; its root
 #      is corrupted on purpose, so it falls back to the one before by itself,
@@ -538,16 +542,93 @@ devicekeys() {
   vpndevices=2 made=" (one with keys the host made)"
 }
 
+# The stack after a boot, an update or a change to the network, checked from
+# the inside out so that a failure names the layer that broke:
+#   - the daemon has the stack running;
+#   - the host end of its link, ve-site, has the gateway address (the
+#     stack's own address with .1);
+#   - nginx in the stack answers on the stack's address;
+#   - the page comes through Caddy at its route.
+# stackfault prints the first layer that does not hold, or nothing. A
+# version from before the daemon reported a stack's address is checked at
+# its route only.
+stackfault() {
+  local s addr gw
+  s=$(api http://x/api/stacks/site 2>/dev/null) || { echo "the daemon does not answer for the stack"; return; }
+  [ "$(jq -r .running <<<"$s")" = true ] || { echo "the daemon does not have the stack running"; return; }
+  addr=$(jq -r '.address // empty' <<<"$s")
+  if [ -n "$addr" ]; then
+    gw=${addr%.*}.1
+    vssh 'ip -4 -o addr show dev ve-site' 2>/dev/null | grep -qF " $gw/" || { echo "ve-site does not have the host's address $gw"; return; }
+    vssh "curl -sf -m 5 http://$addr:8080/" 2>/dev/null | grep -q image-check || { echo "the stack does not answer at $addr:8080"; return; }
+  fi
+  https site / 2>/dev/null | grep -q image-check || echo "the stack's route is not served at site.$domain"
+}
+# stackevidence: what each layer looks like, for the log of a failed run.
+stackevidence() {
+  echo "  the stack, layer by layer:" >&2
+  {
+    api http://x/api/stacks/site | jq -c '{running, want_running, generation, address, operation}'
+    vssh 'ip -4 -o addr show dev ve-site
+      systemctl status homelab-stack-site.service --no-pager -n 0
+      journalctl -b -u systemd-networkd -o short-precise --no-pager | grep -iE "ve-site|reconfigur" | tail -15
+      journalctl -b -u homelab-daemon -o cat --no-pager | grep -E "\"module\":\"(stacks|hostcfg)\"" | grep -vF "\"kind\":\"cmd\"" | tail -15'
+  } 2>&1 | sed 's/^/    /' >&2 || true
+}
+# stackrunning LIMIT: the daemon has the stack running within LIMIT seconds.
+# After a boot it answers before it has started the stacks again, so this is
+# the wait that may be long.
+stackrunning() {
+  local s w=0
+  until s=$(api http://x/api/stacks/site 2>/dev/null) && [ "$(jq -r .running <<<"$s")" = true ]; do
+    if jq -e '.operation.error // empty' <<<"$s" >/dev/null 2>&1; then
+      stackevidence
+      die "the stack failed to start: $(jq -r .operation.error <<<"$s")"
+    fi
+    [ "$w" -lt "$1" ] || { stackevidence; die "the daemon did not have the stack running within $1 s"; }
+    sleep 2
+    w=$((w + 2))
+  done
+  sitewait=$w
+}
+# stackup LIMIT [WHEN]: every layer holds within LIMIT seconds. A running
+# stack is reachable at once, so the limit is short.
+stackup() {
+  local fault w=0
+  while fault=$(stackfault) && [ -n "$fault" ]; do
+    [ "$w" -lt "$1" ] || { stackevidence; die "$fault${2:+ $2}"; }
+    sleep 2
+    w=$((w + 2))
+  done
+}
+# stackrace: systemd-networkd reading its configuration again leaves the
+# stack's link alone. The daemon gives ve-site its address, and networkd
+# also has a file for ve-* links, so a reload or a reconfigure can take the
+# address off: every change to the host's network settings does one. Checked
+# with the stack running, and with reloads going on while it starts. Only on
+# the version under test: a release before cannot be fixed by this run.
+stackrace() {
+  local racer
+  vssh 'networkctl reload && networkctl reconfigure ve-site' || die "networkctl reload and reconfigure refused"
+  sleep 3
+  stackup 0 "after systemd-networkd reconfigured the link"
+  api -X POST http://x/api/stacks/site/stop >/dev/null || die "stop refused"
+  for _ in $(seq 1 60); do [ "$(api http://x/api/stacks/site | jq -r .running)" = false ] && break; sleep 2; done
+  [ "$(api http://x/api/stacks/site | jq -r .running)" = false ] || die "the stack did not stop in 2 minutes"
+  vssh 'for _ in $(seq 1 60); do networkctl reload; networkctl reconfigure ve-site 2>/dev/null; sleep 0.5; done' &
+  racer=$!
+  api -X POST http://x/api/stacks/site/start >/dev/null || die "start refused"
+  stackrunning 300
+  wait "$racer" || true
+  sleep 3
+  stackup 0 "after systemd-networkd reloads during its start"
+}
+
 # hostcheck: everything the host settings asked for is in place.
 hostcheck() {
   served || die "the dashboard is not served at homelab.$domain"
-  # After a boot the daemon answers before it has started the stacks again.
-  sitewait=0
-  until https site / 2>/dev/null | grep -q image-check; do
-    [ "$sitewait" -lt 120 ] || die "the stack's route is not served at site.$domain"
-    sleep 2
-    sitewait=$((sitewait + 2))
-  done
+  stackrunning 300
+  stackup 20
   [ "$(vssh 'wg show wg-homelab peers' | wc -l)" -eq "$vpndevices" ] || die "the VPN does not have its $vpndevices devices: $(vssh 'wg show wg-homelab peers' | wc -l)"
   vssh 'ip -4 -o addr show wg-homelab' | grep -q 10.10.0.1/24 || die "the VPN interface has no address"
   vssh 'grep -q "originServerName: site.'"$domain"'" /var/lib/homelab/cloudflared/config.yml' || die "the tunnel route is not in cloudflared's config"
@@ -894,7 +975,8 @@ booted "$version"
 hostcheck
 [ -z "$part" ] || [ "$(vssh "cat $part/file")" = kept ] || die "the partition is not mounted at $part after a reboot"
 [ "$(vssh 'cat /etc/machine-id')" = "$installed" ] || die "the machine ID changed over a reboot"
-ok "everything still in place, the machine ID too (the stack's route ${sitewait}s after the daemon)"
+stackup 0 "at the end of the step"
+ok "everything still in place, the machine ID too (the stack running ${sitewait}s after the daemon answered)"
 
 if [ -n "$next" ]; then
   step "9. $next downloads from a release server, then a core update to it through the API"
@@ -951,8 +1033,6 @@ if [ -n "$next" ]; then
   fi
   hostcheck
   # A release before the VPN device's keys left that part of step 7 to $next.
-  # As in step 7 it waits for the stack to serve: a networkd reload while a
-  # stack's veth is still being set up takes the host's address off it.
   later=
   if [ "$vpndevices" = 1 ]; then
     hasdevicekeys || die "$next does not make a VPN device's keys"
@@ -960,7 +1040,8 @@ if [ -n "$next" ]; then
     hostcheck
     later=", and a VPN device with keys it made"
   fi
-  ok "booted $next with everything in place$later"
+  stackrace
+  ok "booted $next with everything in place$later; the stack's link kept its address through network reloads"
   # The way back by hand: the version before is still in its slot.
   st=$(post system-updates/image/boot "{\"version\":\"$version\",\"mode\":\"default\"}") || die "making $version the default was refused: $st"
   [ "$(jq -r .default <<<"$st")" = "$version" ] || die "$version is not the default: $(jq -c '{default, oneshot}' <<<"$st")"
