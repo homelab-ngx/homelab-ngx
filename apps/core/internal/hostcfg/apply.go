@@ -330,11 +330,32 @@ func (a *ImageApplier) etc(ctx context.Context, s Snapshot) error {
 	// Every time: at boot the kernel's name is set from the image's
 	// /etc/hostname before the confext is merged.
 	if s.Host.Hostname != "" {
-		if err := a.run(ctx, "hostnamectl", "--transient", "hostname", s.Host.Hostname); err != nil {
+		if err := a.setHostname(s.Host.Hostname); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// setHostname sets the kernel's host name by writing it to /proc.
+// hostnamectl --transient does not: hostnamed ignores a transient name while
+// /etc/hostname holds a static one, and it cannot write the static one, as
+// /etc is the read-only confext. hostnamed reads the static name from the
+// merged /etc/hostname, and resolved's mDNS follows the kernel's name.
+func (a *ImageApplier) setHostname(name string) error {
+	p := a.path("/proc/sys/kernel/hostname")
+	if old, err := os.ReadFile(p); err == nil && strings.TrimSpace(string(old)) == name {
+		return nil
+	}
+	if a.Root != "" {
+		if err := a.mkdir(filepath.Dir(p)); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(p, []byte(name), 0o644); err != nil {
+		return fmt.Errorf("setting the host name: %w", err)
+	}
+	return nil
 }
 
 // ── firewall ─────────────────────────────────────────────────────────────

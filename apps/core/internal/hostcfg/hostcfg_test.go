@@ -211,7 +211,7 @@ func TestImageApplier(t *testing.T) {
 	defer syscall.Umask(old)
 	root := t.TempDir()
 	f := cmdrunnertest.NewFake()
-	for _, p := range [][]string{{"systemctl"}, {"systemd-confext"}, {"networkctl"}, {"hostnamectl"}, {"nft"}, {"tailscale"}, {"ip"}} {
+	for _, p := range [][]string{{"systemctl"}, {"systemd-confext"}, {"networkctl"}, {"nft"}, {"tailscale"}, {"ip"}} {
 		f.On(p...).Reply("")
 	}
 	a := &ImageApplier{Runner: f, Root: root}
@@ -248,8 +248,21 @@ func TestImageApplier(t *testing.T) {
 			t.Errorf("reloaded with nothing changed: %v", c)
 		}
 	}
-	if len(f.CallsMatching("hostnamectl")) != 2 || len(f.CallsMatching("nft", "-f")) != 2 {
-		t.Error("the firewall or the host name was not applied again")
+	if len(f.CallsMatching("nft", "-f")) != 2 {
+		t.Error("the firewall was not applied again")
+	}
+	// The kernel's name is the setting's, and is set again after a boot
+	// put the image's name back.
+	kernel := filepath.Join(root, "/proc/sys/kernel/hostname")
+	if b, _ := os.ReadFile(kernel); string(b) != s.Host.Hostname {
+		t.Errorf("kernel host name = %q, want %q", b, s.Host.Hostname)
+	}
+	if err := os.WriteFile(kernel, []byte("homelab"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a.Apply(ctx, s)
+	if b, _ := os.ReadFile(kernel); string(b) != s.Host.Hostname {
+		t.Errorf("kernel host name after a boot = %q, want %q", b, s.Host.Hostname)
 	}
 	// Domain, VPN and tunnel off: their files go.
 	s.Domain, s.WireGuard, s.Tunnel = Domain{}, WireGuard{}, Tunnel{}

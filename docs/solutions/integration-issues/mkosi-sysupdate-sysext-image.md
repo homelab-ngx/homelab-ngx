@@ -227,8 +227,12 @@ is root-owned.
   would shut every other user out of `/etc`). The applier makes its
   directories 0755 explicitly; its test runs under that umask.
 - The kernel's host name is set from the image's `/etc/hostname` before the
-  confext merges, so the daemon sets it (`hostnamectl --transient hostname`)
-  on every start, not only when the setting changes.
+  confext merges, so the daemon sets it on every start, not only when the
+  setting changes. It writes `/proc/sys/kernel/hostname` itself:
+  `hostnamectl --transient hostname` does nothing while `/etc/hostname`
+  holds a static name ("static hostname is already set, so the specified
+  transient hostname will not be used"), and hostnamed cannot write a static
+  name into the read-only confext.
 - Arch's base has no `hostname` command; read `/proc/sys/kernel/hostname`.
 - A new daemon module needs its name in both `internal/logging` and
   `internal/cmdrunner` (each keeps a list; cmdrunner panics on an unknown
