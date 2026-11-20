@@ -7,11 +7,11 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/cmdrunner/cmdrunnertest"
+	"homelab-ngx.com/core/internal/power"
 )
 
 // newRun returns an update whose commands answer from f. The daemon answers
@@ -170,23 +170,23 @@ func TestStartStartsTheUnitAndInterruptedIsClosed(t *testing.T) {
 	}
 }
 
-func TestRebootRunsSystemctl(t *testing.T) {
+type fakePower struct{ asked []power.PowerAction }
+
+func (f *fakePower) Request(_ context.Context, a power.PowerAction, force bool) error {
+	if !force {
+		return errors.New("a reboot the operator asked for is forced")
+	}
+	f.asked = append(f.asked, a)
+	return nil
+}
+
+func TestRebootGoesThroughPower(t *testing.T) {
 	t.Parallel()
-	synctest.Test(t, func(t *testing.T) {
-		f := cmdrunnertest.NewFake()
-		m := New(f, t.TempDir())
-		ran := make(chan time.Time, 1)
-		f.On("systemctl", "reboot").Do(func(cmdrunner.Cmd) (cmdrunner.Result, error) { ran <- time.Now(); return cmdrunner.Result{}, nil })
-		start := time.Now()
-		m.Reboot()
-		synctest.Wait()
-		select {
-		case <-ran:
-			t.Fatal("reboot ran before the response could go out")
-		default:
-		}
-		if at := <-ran; at.Sub(start) != rebootDelay {
-			t.Fatalf("systemctl reboot ran after %v, want %v", at.Sub(start), rebootDelay)
-		}
-	})
+	f := cmdrunnertest.NewFake()
+	m := New(f, t.TempDir())
+	p := &fakePower{}
+	m.SetPower(p)
+	if err := m.reboot(context.Background()); err != nil || len(p.asked) != 1 || p.asked[0] != power.Reboot {
+		t.Fatalf("err=%v asked=%v", err, p.asked)
+	}
 }

@@ -11,6 +11,7 @@ import (
 	"homelab-ngx.com/core/internal/cmdrunner"
 	logging "homelab-ngx.com/core/internal/logging"
 	"homelab-ngx.com/core/internal/notifications"
+	"homelab-ngx.com/core/internal/power"
 )
 
 var log = logging.Logger("sysupdates")
@@ -18,9 +19,6 @@ var log = logging.Logger("sysupdates")
 // releaseDelay is how long after start the first release check waits: the
 // boot settles first.
 const releaseDelay = 2 * time.Minute
-
-// rebootDelay lets the 202 go out before the reboot; a var for tests.
-var rebootDelay = 3 * time.Second
 
 type Module struct {
 	dir string           // the daemon's state: the update records and the release check
@@ -36,7 +34,18 @@ type Module struct {
 	rel   imageRelease // the release check (fetch.go)
 
 	now func() time.Time // seam for tests
+
+	power Power // reboots after bootImage; nil: systemctl
 }
+
+// Power reboots the host the way every shutdown goes: the stacks stop and
+// the pools unmount first (*power.Service).
+type Power interface {
+	Request(ctx context.Context, a power.PowerAction, force bool) error
+}
+
+// SetPower makes bootImage's reboot go through p.
+func (m *Module) SetPower(p Power) { m.power = p }
 
 // Notifier keeps the release and boot check notifications in line with
 // what the host found (*notifications.Notifier).
@@ -61,15 +70,13 @@ func (m *Module) Start(ctx context.Context) {
 	}
 }
 
-// Reboot reboots the host a few seconds from now.
-func (m *Module) Reboot() {
+// reboot reboots the host into the boot entry just set. Nothing the
+// operator started is running: they asked for this reboot.
+func (m *Module) reboot(ctx context.Context) error {
 	log.Warn("reboot requested")
-	go func() {
-		time.Sleep(rebootDelay)
-		bg, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if _, err := m.r.Run(bg, cmdrunner.Cmd{Module: "sysupdates", Name: "systemctl", Args: []string{"reboot"}}); err != nil {
-			log.Error("reboot failed", "error", err)
-		}
-	}()
+	if m.power != nil {
+		return m.power.Request(context.WithoutCancel(ctx), power.Reboot, true)
+	}
+	_, err := m.r.Run(ctx, cmdrunner.Cmd{Module: "sysupdates", Name: "systemctl", Args: []string{"reboot"}})
+	return err
 }

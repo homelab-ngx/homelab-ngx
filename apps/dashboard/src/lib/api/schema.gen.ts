@@ -1905,7 +1905,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/system-updates/reboot": {
+    "/system/power": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The reboot or poweroff under way, and one scheduled.
+         * @description While a shutdown runs, the steps show each stack stopping and then each pool and partition unmounting. A page waiting through a reboot polls this until boot_id changes.
+         */
+        get: operations["getPower"];
+        put?: never;
+        /**
+         * Reboot or power off the host.
+         * @description Stops the running stacks, unmounts the pools and partitions, then reboots or powers off. Nothing is recorded: the next boot starts the same stacks and mounts the same pools. Refused while a stack operation, an update or a backup runs, unless force. Follow it in getPower.
+         */
+        post: operations["requestPower"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system/power/scheduled": {
         parameters: {
             query?: never;
             header?: never;
@@ -1914,12 +1938,9 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Reboot the host.
-         * @description The reboot starts a few seconds after the response.
-         */
-        post: operations["rebootSystem"];
-        delete?: never;
+        post?: never;
+        /** Call off the scheduled reboot or poweroff. */
+        delete: operations["cancelScheduledPower"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3315,6 +3336,54 @@ export interface components {
             used_bytes: number;
             /** Format: double */
             used_percent: number;
+        };
+        PowerRequest: {
+            /** @enum {string} */
+            action: "reboot" | "poweroff";
+            /** @description Go ahead even when it interrupts stack operations, an update or backups. */
+            force?: boolean;
+        };
+        PowerScheduled: {
+            /** @enum {string} */
+            action: "reboot" | "poweroff";
+            /** Format: date-time */
+            at: string;
+        };
+        PowerStatus: {
+            /**
+             * @description The shutdown under way; empty when none is.
+             * @enum {string}
+             */
+            action?: "reboot" | "poweroff";
+            /** @description This boot's id. A page waiting through a reboot knows the host is back when it changes. */
+            boot_id: string;
+            /** @description Work a shutdown would interrupt now: stack operations, an update, backups. Only while idle. */
+            busy: string[];
+            /** @description Why the shutdown did not start (phase failed). */
+            error?: string;
+            /**
+             * Format: int64
+             * @description How long the last reboot took, from the shutdown to the daemon answering again; 120 before one was measured.
+             */
+            expected_seconds: number;
+            /** @enum {string} */
+            phase: "idle" | "stopping_stacks" | "unmounting" | "going_down" | "failed";
+            /** @description A reboot or poweroff planned for later; it stops the stacks first like any other. */
+            scheduled?: components["schemas"]["PowerScheduled"];
+            /** Format: date-time */
+            started_at?: string;
+            /** @description The stacks stopped, then the pools and partitions unmounted, in order. */
+            steps: components["schemas"]["PowerStep"][];
+        };
+        PowerStep: {
+            /** @description Why a step failed. A stack that did not halt was killed; a mount still in use is unmounted last, as the host goes down. */
+            detail?: string;
+            /** @enum {string} */
+            kind: "stack" | "mount";
+            /** @description The stack name, or the mountpoint. */
+            name: string;
+            /** @enum {string} */
+            state: "waiting" | "working" | "done" | "failed";
         };
         Progress: {
             /**
@@ -12196,7 +12265,7 @@ export interface operations {
             };
         };
     };
-    rebootSystem: {
+    getPower: {
         parameters: {
             query?: never;
             header?: never;
@@ -12205,15 +12274,175 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PowerStatus"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    requestPower: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PowerRequest"];
+            };
+        };
+        responses: {
             /** @description Accepted */
             202: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["PowerStatus"];
+                };
             };
-            /** @description Error */
-            default: {
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    cancelScheduledPower: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PowerStatus"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

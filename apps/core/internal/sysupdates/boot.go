@@ -104,7 +104,7 @@ func (m *Module) BootImage(ctx context.Context, version, mode string, reboot boo
 	log.Info("boot entry set", "mode", mode, "version", version, "reboot", reboot)
 	st, err := m.ImageStatus(ctx)
 	if err == nil && reboot {
-		m.Reboot()
+		err = m.reboot(ctx)
 	}
 	return st, err
 }

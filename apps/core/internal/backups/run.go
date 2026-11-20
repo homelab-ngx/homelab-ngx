@@ -654,3 +654,18 @@ func (s *Service) RunDetail(ctx context.Context, runID int64) (BackupRunDetail, 
 	}
 	return out, nil
 }
+
+// Busy names the backups running now, for the operator to see before a
+// reboot interrupts them.
+func (s *Service) Busy(ctx context.Context) []string {
+	rows, err := s.q.RunningBackupRuns(ctx)
+	if err != nil {
+		s.log.Warn("read running backup runs", "error", err)
+		return nil
+	}
+	var out []string
+	for _, r := range rows {
+		out = append(out, "backup "+r.BackupName)
+	}
+	return out
+}

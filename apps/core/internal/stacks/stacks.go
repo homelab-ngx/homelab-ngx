@@ -56,6 +56,9 @@ type Service struct {
 	unitsAt time.Time
 	usageFn func(key string) *services.Usage // the metrics sampler's latest figures
 	ctx     context.Context                  // lifetime of background operations
+	// frozen: the host is shutting down. No operation begins and no
+	// container boots (power.go).
+	frozen bool
 
 	auth apiAuth // the stack listener's callers
 
@@ -562,7 +565,7 @@ func (s *Service) restartNeeded(r store.Stack, gens []store.StackGeneration, var
 		if err != nil {
 			return false
 		}
-		return !slices.Equal(booted, nspawnArgs(r.Name, s.stateDir(r.Name), s.profileDir(r.Name), s.varsDir(r.Name), m, binds))
+		return !sameBoot(booted, nspawnArgs(r.Name, s.stateDir(r.Name), s.profileDir(r.Name), s.varsDir(r.Name), m, binds))
 	}
 	return false
 }

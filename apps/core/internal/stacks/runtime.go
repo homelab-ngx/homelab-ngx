@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"slices"
 	"time"
 
 	"homelab-ngx.com/core/internal/httpx"
@@ -50,12 +49,18 @@ type operation struct {
 	attempt int64
 	result  string
 	log     attemptLog
+	// check: the monitor holds the slot for a health check, not for work
+	// the operator would miss.
+	check bool
 }
 
 // begin registers an operation on the stack, or refuses when one is running.
 func (s *Service) begin(name, kind string) (*operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.frozen {
+		return nil, errShuttingDown
+	}
 	if o := s.ops[name]; o != nil && o.finished.IsZero() {
 		return nil, httpx.Conflict("busy", "stack %q is busy with a %s (%s)", name, o.kind, o.phase)
 	}
@@ -570,7 +575,7 @@ func (s *Service) activate(ctx context.Context, o *operation, r store.Stack, fro
 			return fmt.Errorf("delivering the stack's variables: %w", err)
 		}
 	}
-	restart := !slices.Equal(booted, next)
+	restart := !sameBoot(booted, next)
 	if !restart {
 		s.phase(o, "switching to generation %d", g.ID)
 		// A switch that fails leaves the system between two generations.
@@ -904,6 +909,9 @@ func (s *Service) monitorOnce(ctx context.Context, fails map[string]int) {
 		if err != nil {
 			continue // an operation is running; it reports its own outcome
 		}
+		s.mu.Lock()
+		o.check = true
+		s.mu.Unlock()
 		giveBack := func() {
 			s.mu.Lock()
 			if last != nil {
@@ -924,6 +932,9 @@ func (s *Service) monitorOnce(ctx context.Context, fails map[string]int) {
 		}
 		if !s.isRunning(ctx, name) {
 			s.log.Warn("stack is not running; starting it", "stack", name)
+			s.mu.Lock()
+			o.check = false
+			s.mu.Unlock()
 			err = s.start(ctx, o, name)
 			s.finish(name, o, err)
 		} else {

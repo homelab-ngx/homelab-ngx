@@ -84,11 +84,6 @@ func (h *HTTP) Register(a httpx.APIs) {
 		Description: "At that time a staged release is installed as installRelease does, with a reboot at once when it brings a new image. Each release is tried once.",
 		Errors:      []int{http.StatusBadRequest, http.StatusConflict},
 	}, h.autoInstall)
-	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
-		OperationID: "rebootSystem", Method: http.MethodPost, Path: "/system-updates/reboot", Tags: tags,
-		Summary: "Reboot the host.", Description: "The reboot starts a few seconds after the response.",
-		DefaultStatus: http.StatusAccepted,
-	}, h.reboot)
 }
 
 func (h *HTTP) getDeploys(ctx context.Context, _ *struct{}) (*deploysOut, error) {
@@ -169,9 +164,4 @@ func startOut(d CoreDeploy, err error) (*deployOut, error) {
 		return nil, err
 	}
 	return &deployOut{Body: d}, nil
-}
-
-func (h *HTTP) reboot(context.Context, *struct{}) (*struct{}, error) {
-	h.mod.Reboot()
-	return nil, nil
 }

@@ -19,6 +19,7 @@ import (
 	"homelab-ngx.com/core/internal/llm"
 	"homelab-ngx.com/core/internal/metrics"
 	"homelab-ngx.com/core/internal/notifications"
+	"homelab-ngx.com/core/internal/power"
 	"homelab-ngx.com/core/internal/services"
 	"homelab-ngx.com/core/internal/stacks"
 	"homelab-ngx.com/core/internal/storage"
@@ -50,6 +51,7 @@ type deps struct {
 	audit         *audit.Service
 	installer     *installer.Service // nil: only the installer stick runs it
 	auth          *auth.Service
+	power         *power.Service
 }
 
 func features(d deps) []feature {
@@ -69,6 +71,7 @@ func features(d deps) []feature {
 		audit.NewHTTP(d.audit),
 		installer.NewHTTP(d.installer),
 		auth.NewHTTP(d.auth),
+		power.NewHTTP(d.power),
 	}
 }
 

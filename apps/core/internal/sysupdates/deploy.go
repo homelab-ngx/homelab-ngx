@@ -201,3 +201,15 @@ func (m *Module) Deploys(ctx context.Context) []CoreDeploy {
 	}
 	return list
 }
+
+// Busy names the update running now, for the operator to see before a
+// reboot interrupts it.
+func (m *Module) Busy(ctx context.Context) []string {
+	if !m.deployActive(ctx) {
+		return nil
+	}
+	if list := m.deploys().load(); len(list) > 0 && list[0].Result == DeployRunning {
+		return []string{"update: " + list[0].Kind + " (" + list[0].Phase + ")"}
+	}
+	return []string{"update"}
+}

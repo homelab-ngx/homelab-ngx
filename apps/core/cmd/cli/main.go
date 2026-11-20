@@ -11,6 +11,7 @@ import (
 
 	"github.com/urfave/cli/v2"
 	"homelab-ngx.com/core/internal/logging"
+	"homelab-ngx.com/core/internal/power"
 	"homelab-ngx.com/core/internal/sysupdates"
 )
 
@@ -125,6 +126,9 @@ func updateCmd() *cli.Command {
 					fmt.Printf("core %s\n", st.Core.Active)
 					if len(st.Core.Available) > 0 {
 						fmt.Printf("  staged: %s\n", strings.Join(st.Core.Available, ", "))
+					}
+					if p, err := call[power.PowerStatus](c.Context, http.MethodGet, "/system/power", nil); err == nil && p.Scheduled != nil {
+						fmt.Printf("%s scheduled at %s (homelab system cancel calls it off)\n", p.Scheduled.Action, p.Scheduled.At.Local().Format("2006-01-02 15:04"))
 					}
 					return nil
 				},

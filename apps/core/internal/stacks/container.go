@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -80,10 +81,13 @@ func DefaultHost(r cmdrunner.Runner) Host {
 }
 
 const (
-	buildTimeout  = 2 * time.Hour
-	startTimeout  = 5 * time.Minute
-	linkPoll      = 200 * time.Millisecond // how often a booting stack's veth is looked for
-	stopTimeout   = 5 * time.Minute
+	buildTimeout = 2 * time.Hour
+	startTimeout = 5 * time.Minute
+	linkPoll     = 200 * time.Millisecond // how often a booting stack's veth is looked for
+	stopTimeout  = 5 * time.Minute
+	// haltTimeout is how long systemd gives a container to halt before it
+	// kills it, at a stop and at a shutdown.
+	haltTimeout   = 2 * time.Minute
 	switchTimeout = 15 * time.Minute
 
 	// Paths inside a stack.
@@ -162,13 +166,23 @@ func nspawnArgs(name, stateDir, profileDir, varsDir string, m Manifest, binds []
 		"--description=Stack " + name,
 		"-p", "Type=notify", "-p", "NotifyAccess=all", "-p", "KillMode=mixed", "-p", "Delegate=yes",
 		"-p", fmt.Sprintf("TimeoutStartSec=%d", int(startTimeout.Seconds())),
+		"-p", fmt.Sprintf("TimeoutStopSec=%d", int(haltTimeout.Seconds())),
+	}
+	// At a shutdown systemd stops units in the reverse of their start
+	// order: a bound path's mount (a pool under /var/mnt) is unmounted
+	// only once the container is down. Wants, not Requires: unmounting a
+	// pool by hand must not stop the stack.
+	for _, b := range binds {
+		a = append(a, "-p", "WantsMountsFor="+b.Host)
+	}
+	a = append(a,
 		"systemd-nspawn", "-M", name, "-D", filepath.Join(stateDir, "root"),
 		"--notify-ready=yes", "--kill-signal=SIGRTMIN+3",
 		"--private-users=pick", "--private-users-ownership=auto", "--network-veth",
 		"--bind-ro=/nix/store",
-		"--bind-ro=" + profileDir + ":" + stackProfile,
-		"--bind-ro=" + filepath.Join(stateDir, netFileName) + ":" + stackNetFile,
-	}
+		"--bind-ro="+profileDir+":"+stackProfile,
+		"--bind-ro="+filepath.Join(stateDir, netFileName)+":"+stackNetFile,
+	)
 	if m.Version >= 4 {
 		a = append(a, "--bind-ro="+varsDir+":"+stackVarsDir+":idmap")
 	}
@@ -192,6 +206,21 @@ func nspawnArgs(name, stateDir, profileDir, varsDir string, m Manifest, binds []
 	// /var/log/journal/<id> to a temporary path that is gone after the
 	// stop. `journalctl -M <name>` reads the stack's journal without it.
 	return append(a, "--link-journal=no", stackProfile+"/system/init")
+}
+
+// sameBoot reports whether two boot command lines boot the same container.
+// Only the arguments from systemd-nspawn on count: the unit's properties
+// before them (timeouts, ordering) change no container, and a stack is not
+// restarted for them.
+func sameBoot(a, b []string) bool {
+	return slices.Equal(nspawnPart(a), nspawnPart(b))
+}
+
+func nspawnPart(args []string) []string {
+	if i := slices.Index(args, "systemd-nspawn"); i >= 0 {
+		return args[i:]
+	}
+	return args
 }
 
 // bootArgs is the command line the stack boots m with under the values
@@ -332,6 +361,12 @@ func (s *Service) reap(ctx context.Context, name string) error {
 
 // boot starts the stack's container and returns when its system is up.
 func (s *Service) boot(ctx context.Context, name, subnet string, m Manifest) error {
+	s.mu.Lock()
+	frozen := s.frozen
+	s.mu.Unlock()
+	if frozen {
+		return errShuttingDown
+	}
 	if err := s.reap(ctx, name); err != nil {
 		return err
 	}
