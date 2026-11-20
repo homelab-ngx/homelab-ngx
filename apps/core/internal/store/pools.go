@@ -31,3 +31,6 @@ func (s *Store) UpsertPool(ctx context.Context, p PoolRecord) error {
 		Name: p.Name, Options: p.Options, UpdatedAt: s.nowMS(),
 	})
 }
+
+// DeletePool removes a pool's row; a uuid with no row is not an error.
+func (s *Store) DeletePool(ctx context.Context, uuid string) error { return s.q.DeletePool(ctx, uuid) }

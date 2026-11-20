@@ -76,6 +76,7 @@ type lsblkCandidate struct {
 	Label       string           `json:"label"`
 	Rota        bool             `json:"rota"`
 	RO          bool             `json:"ro"`
+	Mountpoint  string           `json:"mountpoint"`
 	Mountpoints []string         `json:"mountpoints"`
 	Children    []lsblkCandidate `json:"children"`
 }
@@ -121,20 +122,14 @@ func (c *Client) Candidates(ctx context.Context) ([]Candidate, error) {
 				if ch.Type != "part" || depth > 0 {
 					busy = true
 				}
-				for _, m := range ch.Mountpoints {
-					if m != "" {
-						busy = true
-					}
+				if mounted(ch) {
+					busy = true
 				}
 				parts = append(parts, ch.Path)
 				walk(ch.Children, depth+1)
 			}
 		}
-		for _, m := range d.Mountpoints {
-			if m != "" {
-				busy = true
-			}
-		}
+		busy = mounted(d)
 		walk(d.Children, 0)
 		if busy {
 			continue
@@ -173,6 +168,18 @@ func (c *Client) Candidates(ctx context.Context) ([]Candidate, error) {
 		list = append(list, cand)
 	}
 	return list, nil
+}
+
+func mounted(d lsblkCandidate) bool {
+	if d.Mountpoint != "" {
+		return true
+	}
+	for _, m := range d.Mountpoints {
+		if m != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func named(fstype, label string) string {
@@ -393,6 +400,9 @@ func (c *Client) Wipe(ctx context.Context, disk string, parts []string) error {
 	}
 	return nil
 }
+
+// StubZero replaces the write to the device, for tests of code that wipes.
+func (c *Client) StubZero(fn func(path string, n int) error) { c.zeroHead = fn }
 
 // zeroHead writes n zero bytes at the start of a block device, opened
 // exclusively: the kernel refuses that for a device that is mounted or held.

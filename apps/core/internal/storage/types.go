@@ -33,15 +33,17 @@ type PoolUsage struct {
 	UsedPercent    float64 `json:"used_percent"`
 }
 
-// Disk is one physical device inside a pool, or unassigned.
+// Disk is one physical device inside a pool, or one a pool can be made from.
 type Disk struct {
 	BcachefsLabel  string       `json:"bcachefs_label"`
+	Contents       string       `json:"contents" doc:"What a spare disk holds, such as ext4 \"Data\" or 2 partitions; empty for a blank one. A pool erases it."`
 	DataTarget     string       `json:"data_target"`
 	FriendlyName   string       `json:"friendly_name"`
 	Fstype         string       `json:"fstype"`
 	HasChildren    bool         `json:"has_children,omitempty"`
 	Health         *DiskHealth  `json:"health,omitempty" doc:"Last SMART reading; absent until the first check or when the disk has no SMART."`
 	Io             *DiskIOStats `json:"io,omitempty"`
+	Kind           string       `json:"kind" enum:"ssd,hdd" doc:"In a pool with both, SSDs take new writes and HDDs keep the data."`
 	Label          string       `json:"label"`
 	MetadataTarget string       `json:"metadata_target"`
 	Model          string       `json:"model"`
@@ -50,6 +52,7 @@ type Disk struct {
 	Path           string       `json:"path"`
 	Serial         string       `json:"serial"`
 	Size           int64        `json:"size"`
+	State          string       `json:"state" doc:"A pool member's state: rw, ro, evacuating. Empty for a spare disk."`
 	Type           string       `json:"type"`
 }
 
@@ -64,21 +67,49 @@ const (
 
 // Pool is one bcachefs pool with its member disks.
 type Pool struct {
-	AutoMount        bool       `json:"auto_mount"`
-	BackgroundTarget string     `json:"background_target" doc:"Disk group data is moved to; empty = none."`
-	DataReplicas     int        `json:"data_replicas"`
-	Disks            []Disk     `json:"disks"`
-	ForegroundTarget string     `json:"foreground_target" doc:"Disk group new writes land on; empty = none."`
-	Label            string     `json:"label"`
-	MetadataReplicas int        `json:"metadata_replicas"`
-	MetadataTarget   string     `json:"metadata_target" doc:"Disk group metadata is kept on; empty = none."`
-	Mountdir         string     `json:"mountdir"`
-	MountName        string     `json:"mount_name" doc:"The name it mounts under when none is given: the one it had before, or pool."`
-	Name             string     `json:"name"`
-	PromoteTarget    string     `json:"promote_target" doc:"Disk group reads are cached on; empty = none."`
-	State            PoolState  `json:"state" enum:"mounted,unmounted"`
-	Usage            *PoolUsage `json:"usage,omitempty"`
-	Uuid             string     `json:"uuid"`
+	AutoMount        bool           `json:"auto_mount"`
+	BackgroundTarget string         `json:"background_target" doc:"Disk group data is moved to; empty = none."`
+	DataReplicas     int            `json:"data_replicas"`
+	Disks            []Disk         `json:"disks"`
+	ForegroundTarget string         `json:"foreground_target" doc:"Disk group new writes land on; empty = none."`
+	Label            string         `json:"label"`
+	MetadataReplicas int            `json:"metadata_replicas"`
+	MetadataTarget   string         `json:"metadata_target" doc:"Disk group metadata is kept on; empty = none."`
+	Mountdir         string         `json:"mountdir"`
+	MountName        string         `json:"mount_name" doc:"The name it mounts under when none is given: the one it had before, or pool."`
+	Name             string         `json:"name"`
+	Operation        *PoolOperation `json:"operation,omitempty" doc:"The removal of a disk that runs or last ran."`
+	PromoteTarget    string         `json:"promote_target" doc:"Disk group reads are cached on; empty = none."`
+	State            PoolState      `json:"state" enum:"mounted,unmounted"`
+	Usage            *PoolUsage     `json:"usage,omitempty"`
+	Uuid             string         `json:"uuid"`
+}
+
+// PoolOperation is the removal of a disk from a pool. It runs in the
+// background: poll the storage status for it.
+type PoolOperation struct {
+	Kind       string     `json:"kind" enum:"remove"`
+	Disk       string     `json:"disk" doc:"The device that leaves, such as /dev/sdc."`
+	Phase      string     `json:"phase" enum:"moving,removing,erasing,done,failed"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	Error      string     `json:"error,omitempty"`
+	TotalBytes int64      `json:"total_bytes" doc:"What the disk held when the removal started."`
+	LeftBytes  int64      `json:"left_bytes" doc:"What is still to move to the other disks."`
+}
+
+// PoolCreateRequest makes a pool.
+type PoolCreateRequest struct {
+	Name    string   `json:"name" pattern:"^[a-z0-9][a-z0-9-]{0,30}$" doc:"The pool mounts at /var/mnt/<name>."`
+	Disks   []string `json:"disks" minItems:"1" doc:"Devices from the status's unassigned list, such as /dev/sdb."`
+	Copies  int      `json:"copies" minimum:"1" maximum:"3" doc:"How many disks hold each file. Not more than there are disks."`
+	Confirm string   `json:"confirm,omitempty" doc:"The pool's name again, required when a disk has contents: they are erased."`
+}
+
+// PoolDiskRequest adds a disk to a pool.
+type PoolDiskRequest struct {
+	Disk    string `json:"disk" minLength:"1" doc:"A device from the status's unassigned list."`
+	Confirm string `json:"confirm,omitempty" doc:"The pool's name, required when the disk has contents: they are erased."`
 }
 
 // Subvolume is one bcachefs subvolume on a mounted pool.

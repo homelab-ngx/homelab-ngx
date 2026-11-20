@@ -259,6 +259,32 @@ func (s *Service) backupFoldersAdded(ctx context.Context, name string, prev *sto
 	}
 }
 
+// FolderUsers lists, per installed stack, the host directories bound into
+// it: storage grants and path variables with a value.
+func (s *Service) FolderUsers(ctx context.Context) (map[string][]string, error) {
+	rows, err := s.st.Queries().ListStacks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string][]string{}
+	for _, r := range rows {
+		m, err := s.runningManifest(ctx, r)
+		if err != nil {
+			continue
+		}
+		s.varsMu.Lock()
+		vars, err := s.loadVars(r.Name)
+		s.varsMu.Unlock()
+		if err != nil {
+			continue
+		}
+		for _, b := range lenientBinds(m, vars) {
+			out[r.Name] = append(out[r.Name], b.Host)
+		}
+	}
+	return out, nil
+}
+
 // HostFolders lists the host directories bound into the installed stacks:
 // storage grants and path variables with a value. A stack whose manifest or
 // variables cannot be read is skipped.

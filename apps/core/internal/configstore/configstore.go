@@ -30,3 +30,5 @@ func (a adapter) Pools(ctx context.Context) ([]config.Pool, error) {
 func (a adapter) UpsertPool(ctx context.Context, p config.Pool) error {
 	return a.s.UpsertPool(ctx, store.PoolRecord{UUID: p.UUID, Mountpoint: p.Mountpoint, Name: p.Name, Options: p.Options, AutoMount: p.AutoMount})
 }
+
+func (a adapter) DeletePool(ctx context.Context, uuid string) error { return a.s.DeletePool(ctx, uuid) }

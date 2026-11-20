@@ -122,7 +122,7 @@ func runApp(t *testing.T, args ...string) error {
 	t.Helper()
 	app := &cli.App{Name: "homelab", Writer: io.Discard, ErrWriter: io.Discard,
 		Flags:    []cli.Flag{&cli.BoolFlag{Name: "json"}},
-		Commands: []*cli.Command{servicesCmd(), backupCmd(), stacksCmd(), systemCmd()}}
+		Commands: []*cli.Command{servicesCmd(), backupCmd(), stacksCmd(), systemCmd(), storageCmd()}}
 	return app.Run(append([]string{"homelab"}, args...))
 }
 

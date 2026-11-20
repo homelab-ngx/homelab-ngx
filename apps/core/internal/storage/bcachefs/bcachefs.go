@@ -524,57 +524,6 @@ func determineDiskTargets(diskLabel, fgTarget, metaTarget, bgTarget string) (str
 	return dataTarget, metadataTarget
 }
 
-func extractField(output, prefix string) string {
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if strings.Contains(line, prefix) {
-			parts := strings.SplitN(line, prefix, 2)
-			if len(parts) == 2 {
-				val := strings.TrimSpace(parts[1])
-				if idx := strings.Index(val, "\x1b"); idx != -1 {
-					val = val[:idx]
-				}
-				return strings.TrimSpace(val)
-			}
-		}
-	}
-	return ""
-}
-
-// GetUnassignedDisks returns disks that are not part of any filesystem and not partitions of mounted disks.
-func (c *Client) GetUnassignedDisks(ctx context.Context) ([]Disk, error) {
-	log.Debug("Scanning for unassigned disks...")
-	disks, err := c.GetDisks(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	var unassigned []Disk
-	for _, d := range disks {
-		if d.Type != "disk" {
-			continue
-		}
-		if d.HasChildren {
-			continue
-		}
-		if d.FSType != "" || d.Mountpoint != "" {
-			continue
-		}
-		out, err := c.showSuper(ctx, d.Path)
-		if err == nil && extractField(out, "External UUID:") != "" {
-			log.Debug("disk belongs to bcachefs pool, not unassigned", "device", d.Path)
-			continue
-		} else if err != nil {
-			log.Debug("unassigned disk check bcachefs probe failed (expected for empty disks)", "device", d.Path, "error", err)
-		}
-
-		log.Debug("found unassigned disk", "device", d.Path, "size", d.Size)
-		unassigned = append(unassigned, d)
-	}
-	log.Debug("unassigned disks scan complete", "count", len(unassigned))
-	return unassigned, nil
-}
-
 // Mount mounts a bcachefs pool by passing all its devices to the mount command.
 func (c *Client) Mount(ctx context.Context, devices []string, mountpoint string) error {
 	log.Info("Mounting bcachefs pool", "devices", devices, "mountpoint", mountpoint)

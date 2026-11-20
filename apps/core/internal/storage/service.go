@@ -134,6 +134,16 @@ type Service struct {
 
 	// parts remembers the mounted partitions; nil: partitions are not offered.
 	parts PartitionStore
+
+	// Pool changes (pools.go, operation.go).
+	poolMu     sync.Mutex // one create, add, remove or delete at a time
+	users      Users      // who uses a pool's folders; may be nil
+	bg         context.Context
+	opMu       sync.Mutex
+	ops        map[string]*poolOp // by pool uuid
+	rmdir      func(path string) error
+	usageEvery time.Duration // how often a removal reads its progress
+	stallAfter time.Duration // a removal with no progress for this long fails
 }
 
 // New wires a Service.
@@ -148,6 +158,8 @@ func New(bc *bcachefs.Client, cfg *config.Manager, log *slog.Logger) *Service {
 		mkdir:           func(path string) error { return os.MkdirAll(path, 0o755) },
 		statfs:          statfs,
 		discoverTimeout: 2 * time.Minute, retryInterval: 5 * time.Second,
+		bg: context.Background(), ops: map[string]*poolOp{}, rmdir: os.Remove,
+		usageEvery: 5 * time.Second, stallAfter: 15 * time.Minute,
 	}
 }
 
@@ -262,9 +274,9 @@ func (s *Service) compute(ctx context.Context) (StorageStatus, error) {
 		}
 	}
 
-	unassigned, err := s.bc.GetUnassignedDisks(ctx)
+	spare, err := s.spareDisks(ctx, pools)
 	if err != nil {
-		s.log.Error("GetUnassignedDisks failed", "error", err)
+		s.log.Error("listing spare disks failed", "error", err)
 		return StorageStatus{}, err
 	}
 
@@ -281,7 +293,7 @@ func (s *Service) compute(ctx context.Context) (StorageStatus, error) {
 
 	out := StorageStatus{
 		Pools:      make([]Pool, 0, len(pools)),
-		Unassigned: make([]Disk, 0, len(unassigned)),
+		Unassigned: make([]Disk, 0, len(spare)),
 		Subvolumes: subvolumes,
 	}
 	for _, p := range pools {
@@ -289,14 +301,17 @@ func (s *Service) compute(ctx context.Context) (StorageStatus, error) {
 		if pool.MountName, _ = MountName(stored[p.UUID].Mountpoint); pool.MountName == "" {
 			pool.MountName = DefaultMountName
 		}
+		pool.Operation = s.operation(p.UUID)
 		out.Pools = append(out.Pools, pool)
 	}
 	if out.Partitions, err = s.listPartitions(ctx); err != nil {
 		s.log.Error("failed to list partitions", "error", err)
 		out.Partitions = []Partition{}
 	}
-	for _, d := range unassigned {
-		out.Unassigned = append(out.Unassigned, toDisk(d))
+	for _, c := range spare {
+		d := toDisk(c.Disk)
+		d.Contents = c.Contents
+		out.Unassigned = append(out.Unassigned, d)
 	}
 	s.decorate(&out)
 	return out, nil
@@ -450,7 +465,7 @@ func toDisk(d bcachefs.Disk) Disk {
 		Name: d.Name, Path: d.Path, Size: int64(d.Size), Type: d.Type, Model: d.Model, Serial: d.Serial,
 		Fstype: d.FSType, Mountpoint: d.Mountpoint, Label: d.Label, HasChildren: d.HasChildren,
 		BcachefsLabel: d.BcachefsLabel, DataTarget: d.DataTarget, MetadataTarget: d.MetadataTarget,
-		FriendlyName: d.FriendlyName,
+		FriendlyName: d.FriendlyName, State: d.State, Kind: diskKind(d),
 	}
 	if d.IO != nil {
 		out.Io = &DiskIOStats{
@@ -593,6 +608,9 @@ func (s *Service) rememberMount(ctx context.Context, mountpoint string) {
 
 // Unmount unmounts a pool and records auto_mount=false for it.
 func (s *Service) Unmount(ctx context.Context, mountpoint string) error {
+	if s.busyAt(mountpoint) {
+		return ErrBusy
+	}
 	snap := s.cfg.Current()
 	s.invalidate()
 	if err := s.bc.Unmount(ctx, mountpoint); err != nil {

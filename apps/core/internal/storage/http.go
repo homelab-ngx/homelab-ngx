@@ -8,6 +8,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 
 	"homelab-ngx.com/core/internal/httpx"
+	"homelab-ngx.com/core/internal/storage/bcachefs"
 )
 
 // HTTP is the storage API adapter.
@@ -37,6 +38,28 @@ func problem(err error) error {
 		return httpx.BadRequest("invalid_name", "%s", err)
 	case errors.Is(err, ErrNameTaken):
 		return httpx.Conflict("name_taken", "%s", err)
+	case errors.Is(err, ErrBusy):
+		return httpx.Conflict("busy", "%s", err)
+	case errors.Is(err, ErrPoolInUse):
+		return httpx.Conflict("pool_in_use", "%s", err)
+	case errors.Is(err, ErrDiskNotEligible), errors.Is(err, bcachefs.ErrDeviceBusy):
+		return httpx.Conflict("disk_not_eligible", "%s", err)
+	case errors.Is(err, ErrUnknownDisk):
+		return httpx.NotFound("unknown_disk", "%s", err)
+	case errors.Is(err, ErrPoolState):
+		return httpx.Conflict("pool_state", "%s", err)
+	case errors.Is(err, ErrTooFewDisks):
+		return httpx.Conflict("too_few_disks", "%s", err)
+	case errors.Is(err, ErrLastOfRole):
+		return httpx.Conflict("last_of_role", "%s", err)
+	case errors.Is(err, ErrNoRoom):
+		return httpx.Conflict("not_enough_room", "%s", err)
+	case errors.Is(err, ErrPoolDegraded):
+		return httpx.Conflict("pool_degraded", "%s", err)
+	case errors.Is(err, ErrImageTooOld):
+		return httpx.Conflict("image_too_old", "%s", err)
+	case errors.Is(err, ErrConfirm):
+		return httpx.Unprocessable("confirm", "%s", err)
 	}
 	return httpx.Internal("storage_failed", "%s", err)
 }
@@ -48,6 +71,20 @@ type (
 	updatePoolIn struct {
 		Uuid string `path:"uuid"`
 		Body PoolPatch
+	}
+	createPoolIn struct{ Body PoolCreateRequest }
+	poolOut      struct{ Body Pool }
+	deletePoolIn struct {
+		Uuid    string `path:"uuid"`
+		Confirm string `query:"confirm" doc:"The pool's name. Every disk in the pool is erased."`
+	}
+	addDiskIn struct {
+		Uuid string `path:"uuid"`
+		Body PoolDiskRequest
+	}
+	removeDiskIn struct {
+		Uuid string `path:"uuid"`
+		Disk string `query:"disk" required:"true" minLength:"1" doc:"The member's device, such as /dev/sdc."`
 	}
 	partitionIn struct {
 		Uuid string `path:"uuid"`
@@ -89,6 +126,42 @@ func (h *HTTP) Register(a httpx.APIs) {
 		OperationID: "updatePool", Method: http.MethodPatch, Path: "/storage/pools/{uuid}", Tags: tags,
 		Summary: "Change whether a pool is mounted automatically at boot.", DefaultStatus: http.StatusNoContent,
 	}, h.updatePool)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "createPool", Method: http.MethodPost, Path: "/storage/pools", Tags: tags,
+		Summary: "Make a pool from spare disks and mount it.",
+		Description: "The disks come from the status's `unassigned` list. With SSDs and HDDs together the SSDs take new " +
+			"writes and the data moves to the HDDs. `422 confirm` when a disk has contents and `confirm` is not the name, " +
+			"`409 disk_not_eligible`, `409 too_few_disks`, `409 name_taken`.",
+		DefaultStatus: http.StatusCreated,
+	}, h.createPool)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "deletePool", Method: http.MethodDelete, Path: "/storage/pools/{uuid}", Tags: tags,
+		Summary: "Unmount a pool, erase its disks and forget it.",
+		Description: "`409 pool_in_use` while a stack or a backup keeps a folder on it, `422 confirm` without its name, " +
+			"`409 busy` while a disk is being removed.",
+		DefaultStatus: http.StatusNoContent,
+	}, h.deletePool)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "addPoolDisk", Method: http.MethodPost, Path: "/storage/pools/{uuid}/disks", Tags: tags,
+		Summary: "Add a spare disk to a mounted pool.",
+		Description: "`422 confirm` when the disk has contents and `confirm` is not the pool's name, " +
+			"`409 pool_state` when the pool is not mounted, `409 pool_degraded`, `409 busy`.",
+		DefaultStatus: http.StatusNoContent,
+	}, h.addPoolDisk)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "removePoolDisk", Method: http.MethodDelete, Path: "/storage/pools/{uuid}/disks", Tags: tags,
+		Summary: "Start removing a disk from a mounted pool.",
+		Description: "The disk's data moves to the others first, which can take hours; then the disk is erased. " +
+			"The pool's `operation` in the storage status shows how far it is. `409 too_few_disks`, " +
+			"`409 last_of_role`, `409 not_enough_room`, `409 pool_degraded`, `409 busy`.",
+		DefaultStatus: http.StatusAccepted,
+	}, h.removePoolDisk)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "cancelPoolOperation", Method: http.MethodDelete, Path: "/storage/pools/{uuid}/operation", Tags: tags,
+		Summary:       "Stop the removal of a disk, or clear one that ended.",
+		Description:   "The disk goes back to the pool; data already moved stays on the other disks.",
+		DefaultStatus: http.StatusNoContent,
+	}, h.cancelPoolOperation)
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "mountPartition", Method: http.MethodPost, Path: "/storage/partitions/{uuid}/mount", Tags: tags,
 		Summary:       "Mount a partition under /var/mnt and remember it for the next boot.",
@@ -210,6 +283,43 @@ func (h *HTTP) unmountPartition(ctx context.Context, in *partitionIn) (*struct{}
 
 func (h *HTTP) updatePartition(ctx context.Context, in *updatePoolIn) (*struct{}, error) {
 	if err := h.svc.SetPartitionAutoMount(ctx, in.Uuid, in.Body.AutoMount); err != nil {
+		return nil, problem(err)
+	}
+	return nil, nil
+}
+
+func (h *HTTP) createPool(ctx context.Context, in *createPoolIn) (*poolOut, error) {
+	p, err := h.svc.CreatePool(ctx, in.Body.Name, in.Body.Disks, in.Body.Copies, in.Body.Confirm)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &poolOut{Body: p}, nil
+}
+
+func (h *HTTP) deletePool(ctx context.Context, in *deletePoolIn) (*struct{}, error) {
+	if err := h.svc.DeletePool(ctx, in.Uuid, in.Confirm); err != nil {
+		return nil, problem(err)
+	}
+	return nil, nil
+}
+
+func (h *HTTP) addPoolDisk(ctx context.Context, in *addDiskIn) (*struct{}, error) {
+	if err := h.svc.AddDisk(ctx, in.Uuid, in.Body.Disk, in.Body.Confirm); err != nil {
+		return nil, problem(err)
+	}
+	return nil, nil
+}
+
+func (h *HTTP) removePoolDisk(ctx context.Context, in *removeDiskIn) (*poolOut, error) {
+	p, err := h.svc.RemoveDisk(ctx, in.Uuid, in.Disk)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &poolOut{Body: p}, nil
+}
+
+func (h *HTTP) cancelPoolOperation(_ context.Context, in *deletePoolIn) (*struct{}, error) {
+	if err := h.svc.CancelRemoval(in.Uuid); err != nil {
 		return nil, problem(err)
 	}
 	return nil, nil

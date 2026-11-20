@@ -33,6 +33,10 @@ func (a storeAdapter) UpsertPool(ctx context.Context, p config.Pool) error {
 	return a.s.UpsertPool(ctx, store.PoolRecord{UUID: p.UUID, Mountpoint: p.Mountpoint, Name: p.Name, Options: p.Options, AutoMount: p.AutoMount})
 }
 
+func (a storeAdapter) DeletePool(ctx context.Context, uuid string) error {
+	return a.s.DeletePool(ctx, uuid)
+}
+
 func writeNix(t *testing.T) string {
 	t.Helper()
 	doc := map[string]any{
@@ -127,6 +131,13 @@ func (m *memStore) UpsertPool(_ context.Context, p config.Pool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.pools[p.UUID] = p
+	return nil
+}
+
+func (m *memStore) DeletePool(_ context.Context, uuid string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.pools, uuid)
 	return nil
 }
 

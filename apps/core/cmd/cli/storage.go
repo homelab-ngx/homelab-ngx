@@ -12,6 +12,12 @@ import (
 )
 
 func storageCmd() *cli.Command {
+	cmd := storageBaseCmd()
+	cmd.Subcommands = append(cmd.Subcommands, poolCmds()...)
+	return cmd
+}
+
+func storageBaseCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "storage",
 		Usage: "Show bcachefs pool status",
@@ -150,8 +156,14 @@ func printStorageStatus(c *cli.Context, st *storage.StorageStatus) error {
 	if jsonFlag(c) {
 		return printJSON(st)
 	}
-	if st == nil || len(st.Pools) == 0 {
+	if st == nil {
+		st = &storage.StorageStatus{}
+	}
+	if len(st.Pools) == 0 {
 		fmt.Println("No storage pools found.")
+	}
+	defer printSpareDisks(st)
+	if len(st.Pools) == 0 {
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
@@ -173,7 +185,49 @@ func printStorageStatus(c *cli.Context, st *storage.StorageStatus) error {
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", name, p.Mountdir, p.State, used, total, pct)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	for _, p := range st.Pools {
+		fmt.Printf("\n%s: %d copies\n", p.Name, max(p.DataReplicas, 1))
+		d := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+		fmt.Fprintln(d, "  DISK\tKIND\tSIZE\tSTATE\tMODEL")
+		for _, disk := range p.Disks {
+			fmt.Fprintf(d, "  %s\t%s\t%s\t%s\t%s\n", disk.Path, disk.Kind, fmtStorageBytes(uint64(disk.Size)), disk.State, disk.FriendlyName)
+		}
+		if err := d.Flush(); err != nil {
+			return err
+		}
+		if op := p.Operation; op != nil {
+			line := fmt.Sprintf("  removing %s: %s", op.Disk, op.Phase)
+			if op.Phase == "moving" {
+				line += fmt.Sprintf(", %s of %s left", fmtStorageBytes(uint64(max(op.LeftBytes, 0))), fmtStorageBytes(uint64(max(op.TotalBytes, 0))))
+			}
+			if op.Error != "" {
+				line += ": " + op.Error
+			}
+			fmt.Println(line)
+		}
+	}
+	return nil
+}
+
+// printSpareDisks lists the disks a pool can be made from or grown with.
+func printSpareDisks(st *storage.StorageStatus) {
+	if len(st.Unassigned) == 0 {
+		return
+	}
+	fmt.Println("\nSpare disks")
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "  DISK\tKIND\tSIZE\tCONTENTS\tMODEL")
+	for _, d := range st.Unassigned {
+		contents := d.Contents
+		if contents == "" {
+			contents = "blank"
+		}
+		fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\n", d.Path, d.Kind, fmtStorageBytes(uint64(d.Size)), contents, d.FriendlyName)
+	}
+	_ = w.Flush()
 }
 
 func fmtStorageBytes(b uint64) string {

@@ -15,6 +15,7 @@ import (
 type OverrideStore interface {
 	Pools(ctx context.Context) ([]Pool, error)
 	UpsertPool(ctx context.Context, p Pool) error
+	DeletePool(ctx context.Context, uuid string) error
 }
 
 // Manager owns the current Snapshot. Invariant: snapshots are immutable;
@@ -110,6 +111,19 @@ func (m *Manager) UpsertPool(ctx context.Context, p Pool) (*Snapshot, error) {
 	}
 	if err := m.ov.UpsertPool(ctx, p); err != nil {
 		return nil, fmt.Errorf("persist pool: %w", err)
+	}
+	return m.rebuildLocked(ctx)
+}
+
+// DeletePool forgets a pool.
+func (m *Manager) DeletePool(ctx context.Context, uuid string) (*Snapshot, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.requireLoaded(); err != nil {
+		return nil, err
+	}
+	if err := m.ov.DeletePool(ctx, uuid); err != nil {
+		return nil, fmt.Errorf("delete pool: %w", err)
 	}
 	return m.rebuildLocked(ctx)
 }

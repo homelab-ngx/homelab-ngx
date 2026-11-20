@@ -13,7 +13,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -188,6 +190,7 @@ func run(configPath string) error {
 	stor.UseStore(st)
 	stor.UsePartitions(st)
 	stor.UseStackFolders(stacksSvc)
+	stor.UseUsers(poolUsers{stacksSvc, bk})
 	stacksSvc.UsePlaces(stor)
 	// metrics.db sits next to homelab.db but outside its snapshots: it is
 	// throwaway telemetry. Without it the live charts still work.
@@ -303,6 +306,7 @@ func run(configPath string) error {
 
 	g.Go(func() error {
 		stor.AutoMount(gctx)
+		stor.ResumeRemovals(gctx)
 		// Stacks bind paths on the pools, so they start after the mount; on
 		// their own goroutine, because a stack can take minutes to be healthy.
 		g.Go(func() error {
@@ -404,6 +408,43 @@ func (a stackUnits) Units(ctx context.Context) []services.StackUnit {
 		out[i] = services.StackUnit{Stack: u.Stack, Unit: u.Unit, Name: u.Name, ActiveState: u.ActiveState, SubState: u.SubState, StartedAt: u.StartedAt, Usage: u.Usage}
 	}
 	return out
+}
+
+// poolUsers tells the storage which stacks and backups keep folders on a
+// pool: one with users is not deleted.
+type poolUsers struct {
+	stacks  *stacks.Service
+	backups *backups.Service
+}
+
+func (u poolUsers) PoolUsers(ctx context.Context, mountpoint string) ([]string, error) {
+	under := func(path string) bool {
+		path = storage.Canonical(path)
+		return path == mountpoint || strings.HasPrefix(path, mountpoint+"/")
+	}
+	var out []string
+	folders, err := u.stacks.FolderUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for stack, paths := range folders {
+		if slices.ContainsFunc(paths, under) {
+			out = append(out, "the stack "+stack)
+		}
+	}
+	list, err := u.backups.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range list {
+		if slices.ContainsFunc(b.Sources, func(src backups.Source) bool {
+			return (src.HostPath != "" && under(src.HostPath)) || (src.Path != "" && under(src.Path))
+		}) {
+			out = append(out, "the backup "+b.Name)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 // stackBackups adapts the stacks service to the backups: the folders the

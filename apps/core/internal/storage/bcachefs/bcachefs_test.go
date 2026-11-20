@@ -204,26 +204,6 @@ func TestDiscoverPoolsUnmounted(t *testing.T) {
 	}
 }
 
-func TestGetUnassignedDisks(t *testing.T) {
-	f := cmdrunnertest.NewFake()
-	f.On("lsblk").Reply(`{"blockdevices":[
-	 {"name":"sde","path":"/dev/sde","size":"1000","type":"disk","model":"Blank ","serial":"x","fstype":null,"mountpoint":null,"label":null},
-	 {"name":"sdf","path":"/dev/sdf","size":2000,"type":"disk","model":"Member","serial":"y","fstype":null,"mountpoint":null,"label":null},
-	 {"name":"sdg","path":"/dev/sdg","size":3000,"type":"disk","model":"InUse","serial":"z","fstype":"ext4","mountpoint":"/x","label":null},
-	 {"name":"sr0","path":"/dev/sr0","size":4000,"type":"rom","model":"DVD","serial":null,"fstype":null,"mountpoint":null,"label":null}
-	]}`)
-	f.On("bcachefs", "show-super", "/dev/sde").Fail("not a bcachefs superblock")
-	f.On("bcachefs", "show-super", "/dev/sdf").Reply("External UUID:   abc-123 (blah)\n")
-	f.On("smartctl").Fail("no")
-	got, err := New(f).GetUnassignedDisks(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0].Name != "sde" || got[0].Size != 1000 || got[0].Model != "Blank" {
-		t.Fatalf("unassigned = %+v", got)
-	}
-}
-
 func TestMountUnmount(t *testing.T) {
 	f := cmdrunnertest.NewFake()
 	f.On("mount").Reply("")

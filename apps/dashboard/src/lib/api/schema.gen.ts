@@ -1811,6 +1811,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/storage/pools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Make a pool from spare disks and mount it.
+         * @description The disks come from the status's `unassigned` list. With SSDs and HDDs together the SSDs take new writes and the data moves to the HDDs. `422 confirm` when a disk has contents and `confirm` is not the name, `409 disk_not_eligible`, `409 too_few_disks`, `409 name_taken`.
+         */
+        post: operations["createPool"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/storage/pools/{uuid}": {
         parameters: {
             query?: never;
@@ -1821,11 +1841,59 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Unmount a pool, erase its disks and forget it.
+         * @description `409 pool_in_use` while a stack or a backup keeps a folder on it, `422 confirm` without its name, `409 busy` while a disk is being removed.
+         */
+        delete: operations["deletePool"];
         options?: never;
         head?: never;
         /** Change whether a pool is mounted automatically at boot. */
         patch: operations["updatePool"];
+        trace?: never;
+    };
+    "/storage/pools/{uuid}/disks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a spare disk to a mounted pool.
+         * @description `422 confirm` when the disk has contents and `confirm` is not the pool's name, `409 pool_state` when the pool is not mounted, `409 pool_degraded`, `409 busy`.
+         */
+        post: operations["addPoolDisk"];
+        /**
+         * Start removing a disk from a mounted pool.
+         * @description The disk's data moves to the others first, which can take hours; then the disk is erased. The pool's `operation` in the storage status shows how far it is. `409 too_few_disks`, `409 last_of_role`, `409 not_enough_room`, `409 pool_degraded`, `409 busy`.
+         */
+        delete: operations["removePoolDisk"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/pools/{uuid}/operation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Stop the removal of a disk, or clear one that ended.
+         * @description The disk goes back to the pool; data already moved stays on the other disks.
+         */
+        delete: operations["cancelPoolOperation"];
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/storage/subvolume": {
@@ -2654,6 +2722,8 @@ export interface components {
         };
         Disk: {
             bcachefs_label: string;
+            /** @description What a spare disk holds, such as ext4 "Data" or 2 partitions; empty for a blank one. A pool erases it. */
+            contents: string;
             data_target: string;
             friendly_name: string;
             fstype: string;
@@ -2661,6 +2731,11 @@ export interface components {
             /** @description Last SMART reading; absent until the first check or when the disk has no SMART. */
             health?: components["schemas"]["DiskHealth"];
             io?: components["schemas"]["DiskIOStats"];
+            /**
+             * @description In a pool with both, SSDs take new writes and HDDs keep the data.
+             * @enum {string}
+             */
+            kind: "ssd" | "hdd";
             label: string;
             metadata_target: string;
             model: string;
@@ -2670,6 +2745,8 @@ export interface components {
             serial: string;
             /** Format: int64 */
             size: number;
+            /** @description A pool member's state: rw, ro, evacuating. Empty for a spare disk. */
+            state: string;
             type: string;
         };
         DiskHealth: {
@@ -3509,6 +3586,8 @@ export interface components {
             mount_name: string;
             mountdir: string;
             name: string;
+            /** @description The removal of a disk that runs or last ran. */
+            operation?: components["schemas"]["PoolOperation"];
             /** @description Disk group reads are cached on; empty = none. */
             promote_target: string;
             /** @enum {string} */
@@ -3522,6 +3601,48 @@ export interface components {
             name: string;
             options: string;
             uuid: string;
+        };
+        PoolCreateRequest: {
+            /** @description The pool's name again, required when a disk has contents: they are erased. */
+            confirm?: string;
+            /**
+             * Format: int64
+             * @description How many disks hold each file. Not more than there are disks.
+             */
+            copies: number;
+            /** @description Devices from the status's unassigned list, such as /dev/sdb. */
+            disks: string[];
+            /** @description The pool mounts at /var/mnt/<name>. */
+            name: string;
+        };
+        PoolDiskRequest: {
+            /** @description The pool's name, required when the disk has contents: they are erased. */
+            confirm?: string;
+            /** @description A device from the status's unassigned list. */
+            disk: string;
+        };
+        PoolOperation: {
+            /** @description The device that leaves, such as /dev/sdc. */
+            disk: string;
+            error?: string;
+            /** Format: date-time */
+            finished_at?: string;
+            /** @enum {string} */
+            kind: "remove";
+            /**
+             * Format: int64
+             * @description What is still to move to the other disks.
+             */
+            left_bytes: number;
+            /** @enum {string} */
+            phase: "moving" | "removing" | "erasing" | "done" | "failed";
+            /** Format: date-time */
+            started_at: string;
+            /**
+             * Format: int64
+             * @description What the disk held when the removal started.
+             */
+            total_bytes: number;
         };
         PoolPatch: {
             auto_mount: boolean;
@@ -12175,6 +12296,91 @@ export interface operations {
             };
         };
     };
+    createPool: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoolCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Pool"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    deletePool: {
+        parameters: {
+            query?: {
+                /** @description The pool's name. Every disk in the pool is erased. */
+                confirm?: string;
+            };
+            header?: never;
+            path: {
+                uuid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     updatePool: {
         parameters: {
             query?: never;
@@ -12189,6 +12395,135 @@ export interface operations {
                 "application/json": components["schemas"]["PoolPatch"];
             };
         };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    addPoolDisk: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                uuid: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PoolDiskRequest"];
+            };
+        };
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    removePoolDisk: {
+        parameters: {
+            query: {
+                /** @description The member's device, such as /dev/sdc. */
+                disk: string;
+            };
+            header?: never;
+            path: {
+                uuid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Pool"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    cancelPoolOperation: {
+        parameters: {
+            query?: {
+                /** @description The pool's name. Every disk in the pool is erased. */
+                confirm?: string;
+            };
+            header?: never;
+            path: {
+                uuid: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description No Content */
             204: {

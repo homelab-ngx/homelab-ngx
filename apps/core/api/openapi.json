@@ -1647,6 +1647,10 @@
           "bcachefs_label": {
             "type": "string"
           },
+          "contents": {
+            "description": "What a spare disk holds, such as ext4 \"Data\" or 2 partitions; empty for a blank one. A pool erases it.",
+            "type": "string"
+          },
           "data_target": {
             "type": "string"
           },
@@ -1665,6 +1669,14 @@
           },
           "io": {
             "$ref": "#/components/schemas/DiskIOStats"
+          },
+          "kind": {
+            "description": "In a pool with both, SSDs take new writes and HDDs keep the data.",
+            "enum": [
+              "ssd",
+              "hdd"
+            ],
+            "type": "string"
           },
           "label": {
             "type": "string"
@@ -1691,15 +1703,21 @@
             "format": "int64",
             "type": "integer"
           },
+          "state": {
+            "description": "A pool member's state: rw, ro, evacuating. Empty for a spare disk.",
+            "type": "string"
+          },
           "type": {
             "type": "string"
           }
         },
         "required": [
           "bcachefs_label",
+          "contents",
           "data_target",
           "friendly_name",
           "fstype",
+          "kind",
           "label",
           "metadata_target",
           "model",
@@ -1708,6 +1726,7 @@
           "path",
           "serial",
           "size",
+          "state",
           "type"
         ],
         "type": "object"
@@ -4164,6 +4183,10 @@
           "name": {
             "type": "string"
           },
+          "operation": {
+            "$ref": "#/components/schemas/PoolOperation",
+            "description": "The removal of a disk that runs or last ran."
+          },
           "promote_target": {
             "description": "Disk group reads are cached on; empty = none.",
             "type": "string"
@@ -4225,6 +4248,114 @@
           "name",
           "options",
           "uuid"
+        ],
+        "type": "object"
+      },
+      "PoolCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "description": "The pool's name again, required when a disk has contents: they are erased.",
+            "type": "string"
+          },
+          "copies": {
+            "description": "How many disks hold each file. Not more than there are disks.",
+            "format": "int64",
+            "maximum": 3,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "disks": {
+            "description": "Devices from the status's unassigned list, such as /dev/sdb.",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "name": {
+            "description": "The pool mounts at /var/mnt/\u003cname\u003e.",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,30}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "disks",
+          "copies"
+        ],
+        "type": "object"
+      },
+      "PoolDiskRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm": {
+            "description": "The pool's name, required when the disk has contents: they are erased.",
+            "type": "string"
+          },
+          "disk": {
+            "description": "A device from the status's unassigned list.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "disk"
+        ],
+        "type": "object"
+      },
+      "PoolOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "disk": {
+            "description": "The device that leaves, such as /dev/sdc.",
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "remove"
+            ],
+            "type": "string"
+          },
+          "left_bytes": {
+            "description": "What is still to move to the other disks.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "phase": {
+            "enum": [
+              "moving",
+              "removing",
+              "erasing",
+              "done",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "total_bytes": {
+            "description": "What the disk held when the removal started.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "disk",
+          "phase",
+          "started_at",
+          "total_bytes",
+          "left_bytes"
         ],
         "type": "object"
       },
@@ -20671,7 +20802,148 @@
         ]
       }
     },
+    "/storage/pools": {
+      "post": {
+        "description": "The disks come from the status's `unassigned` list. With SSDs and HDDs together the SSDs take new writes and the data moves to the HDDs. `422 confirm` when a disk has contents and `confirm` is not the name, `409 disk_not_eligible`, `409 too_few_disks`, `409 name_taken`.",
+        "operationId": "createPool",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoolCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pool"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Make a pool from spare disks and mount it.",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
     "/storage/pools/{uuid}": {
+      "delete": {
+        "description": "`409 pool_in_use` while a stack or a backup keeps a folder on it, `422 confirm` without its name, `409 busy` while a disk is being removed.",
+        "operationId": "deletePool",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "The pool's name. Every disk in the pool is erased.",
+            "explode": false,
+            "in": "query",
+            "name": "confirm",
+            "schema": {
+              "description": "The pool's name. Every disk in the pool is erased.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Unmount a pool, erase its disks and forget it.",
+        "tags": [
+          "storage"
+        ]
+      },
       "patch": {
         "operationId": "updatePool",
         "parameters": [
@@ -20738,6 +21010,232 @@
           }
         },
         "summary": "Change whether a pool is mounted automatically at boot.",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
+    "/storage/pools/{uuid}/disks": {
+      "delete": {
+        "description": "The disk's data moves to the others first, which can take hours; then the disk is erased. The pool's `operation` in the storage status shows how far it is. `409 too_few_disks`, `409 last_of_role`, `409 not_enough_room`, `409 pool_degraded`, `409 busy`.",
+        "operationId": "removePoolDisk",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "The member's device, such as /dev/sdc.",
+            "explode": false,
+            "in": "query",
+            "name": "disk",
+            "required": true,
+            "schema": {
+              "description": "The member's device, such as /dev/sdc.",
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Pool"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Start removing a disk from a mounted pool.",
+        "tags": [
+          "storage"
+        ]
+      },
+      "post": {
+        "description": "`422 confirm` when the disk has contents and `confirm` is not the pool's name, `409 pool_state` when the pool is not mounted, `409 pool_degraded`, `409 busy`.",
+        "operationId": "addPoolDisk",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PoolDiskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Add a spare disk to a mounted pool.",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
+    "/storage/pools/{uuid}/operation": {
+      "delete": {
+        "description": "The disk goes back to the pool; data already moved stays on the other disks.",
+        "operationId": "cancelPoolOperation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "uuid",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "The pool's name. Every disk in the pool is erased.",
+            "explode": false,
+            "in": "query",
+            "name": "confirm",
+            "schema": {
+              "description": "The pool's name. Every disk in the pool is erased.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Stop the removal of a disk, or clear one that ended.",
         "tags": [
           "storage"
         ]
