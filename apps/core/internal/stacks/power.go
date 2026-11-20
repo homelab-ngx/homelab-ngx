@@ -8,9 +8,9 @@ import (
 	"homelab-ngx.com/core/internal/httpx"
 )
 
-// errShuttingDown refuses an operation or a boot while the host reboots or
-// powers off.
-var errShuttingDown = httpx.Conflict("shutting_down", "the host is shutting down")
+// shuttingDown refuses an operation or a boot while the host reboots or
+// powers off. A new problem each time: httpx fills in the request's path.
+func shuttingDown() error { return httpx.Conflict("shutting_down", "the host is shutting down") }
 
 // Freeze stops the stacks from changing while the host shuts down: no
 // operation begins, no container boots and the monitor restarts nothing.

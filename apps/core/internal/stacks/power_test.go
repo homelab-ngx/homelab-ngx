@@ -47,7 +47,7 @@ func TestAFrozenServiceStartsNothing(t *testing.T) {
 	if !errors.As(err, &p) || p.Code != "shutting_down" {
 		t.Fatalf("start while frozen: %v", err)
 	}
-	if err := svc.boot(ctx, "immich", "", Manifest{}); !errors.Is(err, errShuttingDown) {
+	if err := svc.boot(ctx, "immich", "", Manifest{}); !errors.As(err, &p) || p.Code != "shutting_down" {
 		t.Fatalf("boot while frozen: %v", err)
 	}
 	svc.Thaw()

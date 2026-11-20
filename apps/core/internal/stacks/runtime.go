@@ -59,7 +59,7 @@ func (s *Service) begin(name, kind string) (*operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.frozen {
-		return nil, errShuttingDown
+		return nil, shuttingDown()
 	}
 	if o := s.ops[name]; o != nil && o.finished.IsZero() {
 		return nil, httpx.Conflict("busy", "stack %q is busy with a %s (%s)", name, o.kind, o.phase)

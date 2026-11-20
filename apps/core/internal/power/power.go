@@ -80,9 +80,10 @@ type Service struct {
 	bootID string
 
 	mu       sync.Mutex
-	st       PowerStatus // Steps, Phase, Action, StartedAt, Error
-	running  bool        // a sequence is under way or done
-	release  func()      // the delay lock; nil when not held
+	st       PowerStatus   // Steps, Phase, Action, StartedAt, Error
+	running  bool          // a sequence is under way or done
+	seqDone  chan struct{} // closed when the sequence under way has finished
+	release  func()        // the delay lock; nil when not held
 	expected time.Duration
 	ctx      context.Context // the daemon's lifetime, for the sequence
 }
@@ -170,12 +171,18 @@ func (s *Service) prepare(ctx context.Context, start bool, a PowerAction) {
 		return
 	}
 	s.mu.Lock()
-	already := s.running
+	already, done := s.running, s.seqDone
 	s.running = true
 	s.mu.Unlock()
 	if !already {
 		s.log.Warn("the host is shutting down", "action", a)
 		s.sequence(ctx, a)
+	} else if done != nil {
+		// One the API started: the lock goes once it has finished.
+		select {
+		case <-done:
+		case <-ctx.Done():
+		}
 	}
 	s.mu.Lock()
 	rel := s.release
@@ -191,7 +198,7 @@ func (s *Service) prepare(ctx context.Context, start bool, a PowerAction) {
 func (s *Service) callOff(ctx context.Context) {
 	s.mu.Lock()
 	was := s.running
-	s.running = false
+	s.running, s.seqDone = false, nil
 	s.st = PowerStatus{Phase: PhaseIdle, Steps: []PowerStep{}}
 	s.mu.Unlock()
 	if was {
@@ -224,6 +231,8 @@ func (s *Service) Request(ctx context.Context, a PowerAction, force bool) error 
 		return httpx.Conflict("shutting_down", "the host is already shutting down")
 	}
 	s.running = true
+	done := make(chan struct{})
+	s.seqDone = done
 	bg := s.ctx
 	s.mu.Unlock()
 	s.log.Warn("shutdown requested", "action", a, "force", force)
@@ -231,7 +240,9 @@ func (s *Service) Request(ctx context.Context, a PowerAction, force bool) error 
 		// The sequence runs here, before logind is asked: it holds even
 		// when the delay lock could not be taken. When logind then
 		// signals the shutdown, the lock goes at once.
-		if !s.sequence(bg, a) {
+		ok := s.sequence(bg, a)
+		close(done)
+		if !ok {
 			return
 		}
 		if err := s.logind.Shutdown(bg, a); err != nil {

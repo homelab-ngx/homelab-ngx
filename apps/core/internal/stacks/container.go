@@ -365,7 +365,7 @@ func (s *Service) boot(ctx context.Context, name, subnet string, m Manifest) err
 	frozen := s.frozen
 	s.mu.Unlock()
 	if frozen {
-		return errShuttingDown
+		return shuttingDown()
 	}
 	if err := s.reap(ctx, name); err != nil {
 		return err

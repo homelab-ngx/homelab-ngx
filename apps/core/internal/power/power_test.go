@@ -37,6 +37,7 @@ type fakeStacks struct {
 	j       *journal
 	running []string
 	failing string
+	gate    chan struct{} // when set, a halt waits for it
 }
 
 func (f *fakeStacks) Freeze() { f.j.add("freeze") }
@@ -45,6 +46,9 @@ func (f *fakeStacks) Running(context.Context) ([]string, error) {
 	return f.running, nil
 }
 func (f *fakeStacks) Halt(_ context.Context, name string) error {
+	if f.gate != nil {
+		<-f.gate
+	}
 	f.j.add("halt " + name)
 	if name == f.failing {
 		return errors.New("killed after 120s")
@@ -349,5 +353,34 @@ func TestActionOfLogindTypes(t *testing.T) {
 		if got := actionOf(in); got != want {
 			t.Errorf("actionOf(%q) = %s, want %s", in, got, want)
 		}
+	}
+}
+
+func TestTheLockWaitsForASequenceTheAPIStarted(t *testing.T) {
+	r := newRig(t)
+	ctx := context.Background()
+	r.svc.inhibit(ctx)
+	gate := make(chan struct{})
+	r.stacks.gate = gate
+	if err := r.svc.Request(ctx, Reboot, false); err != nil {
+		t.Fatal(err)
+	}
+	released := make(chan struct{})
+	go func() {
+		// The power button, while the API's sequence still stops the stacks.
+		r.svc.prepare(ctx, true, Reboot)
+		close(released)
+	}()
+	select {
+	case <-released:
+		t.Fatal("the lock went while the stacks were still stopping")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(gate)
+	r.wait(t)
+	<-released
+	got := r.j.list()
+	if slices.Index(got, "release lock") < slices.Index(got, "unmount /var/mnt/media") {
+		t.Fatalf("journal %v", got)
 	}
 }
