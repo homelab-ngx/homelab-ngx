@@ -550,9 +550,9 @@ func (c *Client) Mount(ctx context.Context, devices []string, mountpoint string)
 	return err
 }
 
-// Unmount unmounts a bcachefs pool.
+// Unmount unmounts what is mounted at mountpoint: a pool or a partition.
 func (c *Client) Unmount(ctx context.Context, mountpoint string) error {
-	log.Info("Unmounting bcachefs pool", "mountpoint", mountpoint)
+	log.Info("unmounting", "mountpoint", mountpoint)
 	_, err := c.run(ctx, "umount", mountpoint)
 	if err != nil {
 		log.Error("unmount failed", "error", err)
