@@ -519,6 +519,25 @@ fixedids() {
   [ "$got" = "956:956 957 955" ] || die "the image's accounts have other ids than the ones it fixes: caddy, homelab-daemon, homelab-nixd are $got"
 }
 
+# hasdevicekeys: the booted version makes a VPN device's keys: it answers an
+# add without a name with 422; an older release, booted first in a release's
+# check, has no such route (404).
+hasdevicekeys() {
+  [ "$(vssh "curl -s -o /dev/null -w '%{http_code}' --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json' -X POST -d '{}' http://x/api/host-settings/wireguard/peers")" = 422 ]
+}
+# devicekeys: a VPN device whose keys the host makes. Its config holds the
+# next address, the endpoint and the private key of the public key the VPN
+# now has. vpndevices is how many devices hostcheck expects.
+vpndevices=1 made=
+devicekeys() {
+  local dev devpub
+  dev=$(post host-settings/wireguard/peers '{"name":"phone"}') || die "adding a VPN device refused: $dev"
+  jq -e '.config | test("Address = 10.10.0.3/32") and test("Endpoint = vpn.example.net:51820")' <<<"$dev" >/dev/null || die "the new device's config: $dev"
+  devpub=$(jq -r '.config | capture("PrivateKey = (?<k>[^\n]+)").k' <<<"$dev" | vssh wg pubkey)
+  jq -e --arg k "$devpub" '.settings.wireguard.peers | any(.public_key == $k)' <<<"$dev" >/dev/null || die "the new device's private key is not its peer's"
+  vpndevices=2 made=" (one with keys the host made)"
+}
+
 # hostcheck: everything the host settings asked for is in place.
 hostcheck() {
   served || die "the dashboard is not served at homelab.$domain"
@@ -529,7 +548,7 @@ hostcheck() {
     sleep 2
     sitewait=$((sitewait + 2))
   done
-  [ "$(vssh 'wg show wg-homelab peers' | wc -l)" -eq 2 ] || die "the VPN does not have its two devices"
+  [ "$(vssh 'wg show wg-homelab peers' | wc -l)" -eq "$vpndevices" ] || die "the VPN does not have its $vpndevices devices: $(vssh 'wg show wg-homelab peers' | wc -l)"
   vssh 'ip -4 -o addr show wg-homelab' | grep -q 10.10.0.1/24 || die "the VPN interface has no address"
   vssh 'grep -q "originServerName: site.'"$domain"'" /var/lib/homelab/cloudflared/config.yml' || die "the tunnel route is not in cloudflared's config"
   vssh 'systemctl is-enabled homelab-cloudflared' | grep -q runtime || die "the tunnel is not turned on"
@@ -858,12 +877,7 @@ step "7. host settings: VPN, tunnel, firewall, name and time zone"
 peer=$(vssh 'wg genkey | wg pubkey')
 put host-settings/wireguard "$(jq -n --arg k "$peer" '{enabled: true, address: "10.10.0.1/24", endpoint: "vpn.example.net:51820",
   peers: [{name: "laptop", public_key: $k, address: "10.10.0.2"}]}')" || die "VPN refused"
-# A device whose keys the host makes: its config holds the private key that
-# belongs to the public key the VPN now has.
-dev=$(post host-settings/wireguard/peers '{"name":"phone"}') || die "adding a VPN device refused: $dev"
-jq -e '.config | test("Address = 10.10.0.3/32") and test("Endpoint = vpn.example.net:51820")' <<<"$dev" >/dev/null || die "the new device's config: $dev"
-devpub=$(jq -r '.config | capture("PrivateKey = (?<k>[^\n]+)").k' <<<"$dev" | vssh wg pubkey)
-jq -e --arg k "$devpub" '.settings.wireguard.peers | any(.public_key == $k)' <<<"$dev" >/dev/null || die "the new device's private key is not its peer's"
+hasdevicekeys && devicekeys
 creds='{"AccountTag":"acc","TunnelID":"0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","TunnelSecret":"c2VjcmV0"}'
 put host-settings/tunnel "$(jq -n --arg c "$creds" '{enabled: true, credentials: $c, routes: [{hostname: "site.example.net", target: "site"}]}')" || die "tunnel refused"
 put host-settings/firewall '{"openings":[{"port":8443,"proto":"tcp","from":["10.0.2.0/24"]}]}' || die "firewall refused"
@@ -872,7 +886,7 @@ errs=$(api http://x/api/host-settings | jq -r '.applied.errors | join("; ")')
 [ -z "$errs" ] || die "not applied: $errs"
 sleep 2
 hostcheck
-ok "VPN devices (one with keys the host made), tunnel route, firewall, host name and time zone in place"
+ok "VPN devices$made, tunnel route, firewall, host name and time zone in place"
 
 step "8. after a reboot"
 reboot_vm
@@ -936,7 +950,17 @@ if [ -n "$next" ]; then
     api -X POST http://x/api/stacks/site/start >/dev/null || die "start refused on $next"
   fi
   hostcheck
-  ok "booted $next with everything in place"
+  # A release before the VPN device's keys left that part of step 7 to $next.
+  # As in step 7 it waits for the stack to serve: a networkd reload while a
+  # stack's veth is still being set up takes the host's address off it.
+  later=
+  if [ "$vpndevices" = 1 ]; then
+    hasdevicekeys || die "$next does not make a VPN device's keys"
+    devicekeys
+    hostcheck
+    later=", and a VPN device with keys it made"
+  fi
+  ok "booted $next with everything in place$later"
   # The way back by hand: the version before is still in its slot.
   st=$(post system-updates/image/boot "{\"version\":\"$version\",\"mode\":\"default\"}") || die "making $version the default was refused: $st"
   [ "$(jq -r .default <<<"$st")" = "$version" ] || die "$version is not the default: $(jq -c '{default, oneshot}' <<<"$st")"
