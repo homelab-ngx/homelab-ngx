@@ -64,7 +64,7 @@
   >(null);
   /** The names taken under /var/mnt. */
   const taken = $derived([
-    ...pools.map((p) => p.mountdir.replace("/var/mnt/", "")),
+    ...pools.filter((p) => p.state === "mounted" || p.auto_mount).map((p) => p.mount_name),
     ...mountedParts.map((p) => p.mount_name),
   ]);
   /** Stops a removal, or clears one that ended. */
