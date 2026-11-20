@@ -238,3 +238,55 @@ export function systemDisk(s: Schema<"NixStore">): SystemDisk | null {
         ];
   return { own: s.own_partition, total, used, free: s.free_bytes, percent: of(used), parts };
 }
+
+type PoolOperation = Schema<"PoolOperation">;
+
+/** A spare disk's kind, as the page says it. */
+export const kindWord = (d: Disk): string => (d.kind === "ssd" ? "SSD" : "HDD");
+
+/** The most copies a pool of n disks can keep: one per disk, three at most. */
+export const maxCopies = (n: number): number => Math.max(1, Math.min(3, n));
+
+/** What the picked disks do together: SSDs cache for HDDs when both are there. */
+export function tiering(disks: Disk[]): string {
+  const ssd = disks.filter((d) => d.kind === "ssd").length;
+  const hdd = disks.length - ssd;
+  if (ssd === 0 || hdd === 0) return "";
+  const n = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+  return `${n(ssd, "SSD")} ${ssd === 1 ? "caches" : "cache"} for ${n(hdd, "HDD")}`;
+}
+
+/** The picked disks that hold something: a pool erases them. */
+export const withContents = (disks: Disk[]): Disk[] => disks.filter((d) => d.contents);
+
+/** A removal that still runs. */
+export const running = (op: PoolOperation | null | undefined): boolean => !!op && !op.finished_at;
+
+/** Why a disk cannot leave its pool, as the daemon would answer; empty when it can. */
+export function removeBlocked(p: Pool, d: Disk): string {
+  const copies = Math.max(1, p.data_replicas, p.metadata_replicas);
+  if (p.disks.length - 1 < copies) {
+    return copies === 1 ? "It is the pool's only disk." : `The pool keeps ${copies} copies and needs ${copies} disks.`;
+  }
+  const r = role(p, d);
+  if (r && !p.disks.some((o) => o.path !== d.path && role(p, o) === r)) return `It is the pool's only ${r} disk.`;
+  return "";
+}
+
+export interface Removal {
+  percent: number;
+  /** One line: the disk and how far it is. */
+  text: string;
+}
+
+/** How far the removal of a disk is. */
+export function removal(op: PoolOperation, size: (n: number) => string): Removal {
+  const disk = op.disk.replace("/dev/", "");
+  const total = Math.max(op.total_bytes, 0);
+  const moved = Math.min(total, Math.max(0, total - op.left_bytes));
+  const percent = op.phase === "moving" ? (total > 0 ? Math.floor((moved / total) * 100) : 0) : 100;
+  if (op.phase === "moving") return { percent, text: `Removing ${disk} · ${size(moved)} of ${size(total)} moved · ${percent}%` };
+  if (op.phase === "failed") return { percent, text: `Removing ${disk} failed` };
+  if (op.phase === "done") return { percent, text: `${disk} removed` };
+  return { percent, text: `Removing ${disk} · ${op.phase}…` };
+}

@@ -44,6 +44,50 @@ describe("the demo's API", () => {
     expect((await d.get<Schema<"Stack">[]>("/stacks")).length).toBe(6);
   });
 
+  it("makes a pool from the spare disks, removes a disk from it and deletes it", async () => {
+    const d = demo();
+    type Status = Schema<"StorageStatus">;
+    const pool = async (name: string) => (await d.get<Status>("/storage")).pools.find((p) => p.name === name);
+    expect((await d.get<Status>("/storage")).unassigned.map((x) => [x.name, x.kind, x.contents])).toEqual([["sdc", "hdd", ""], ["sdd", "ssd", "2 partitions"]]);
+
+    const body = { name: "fast", disks: ["/dev/sdc", "/dev/sdd"], copies: 1 };
+    expect([(await d.post<{ code: string }>("/storage/pools", body)).body.code]).toEqual(["confirm"]);
+    expect((await d.post("/storage/pools", { ...body, confirm: "fast" })).status).toBe(201);
+    const made = (await pool("fast"))!;
+    expect([made.mountdir, made.background_target, made.disks.map((x) => x.bcachefs_label)]).toEqual(["/var/mnt/fast", "hdd", ["hdd.hdd1", "ssd.ssd1"]]);
+    expect((await d.get<Status>("/storage")).unassigned).toEqual([]);
+
+    // The only SSD of a pool that uses both stays.
+    expect((await d.send<{ code: string }>("DELETE", `/storage/pools/${made.uuid}/disks?disk=/dev/sdd`)).body.code).toBe("last_of_role");
+    const tank = (await pool("tank"))!;
+
+    expect((await d.send<{ code: string }>("DELETE", `/storage/pools/${tank.uuid}?confirm=tank`)).body.code).toBe("pool_in_use");
+    expect((await d.send<{ code: string }>("DELETE", `/storage/pools/${made.uuid}?confirm=tank`)).body.code).toBe("confirm");
+    expect((await d.send("DELETE", `/storage/pools/${made.uuid}?confirm=fast`)).status).toBe(204);
+    expect([(await pool("fast")) === undefined, (await d.get<Status>("/storage")).unassigned.map((x) => x.contents)]).toEqual([true, ["", ""]]);
+  });
+
+  it("adds a disk to a pool and follows its removal", async () => {
+    const d = demo();
+    type Status = Schema<"StorageStatus">;
+    const tank = async () => (await d.get<Status>("/storage")).pools[0]!;
+    const uuid = (await tank()).uuid;
+    expect((await d.post(`/storage/pools/${uuid}/disks`, { disk: "/dev/sdc" })).status).toBe(204);
+    expect((await tank()).disks.map((x) => x.bcachefs_label)).toEqual(["hdd.a", "hdd.b", "ssd.a", "hdd.hdd3"]);
+
+    expect((await d.send("DELETE", `/storage/pools/${uuid}/disks?disk=/dev/sdb`)).status).toBe(202);
+    expect((await d.post<{ code: string }>(`/storage/pools/${uuid}/disks`, { disk: "/dev/sdd", confirm: "tank" })).body.code).toBe("busy");
+    d.wait(6000);
+    const mid = (await tank()).operation!;
+    expect([mid.phase, mid.left_bytes < mid.total_bytes, mid.left_bytes > 0]).toEqual(["moving", true, true]);
+    d.wait(7000);
+    const after = await tank();
+    expect([after.operation?.phase, after.disks.map((x) => x.name)]).toEqual(["done", ["sda", "nvme1n1", "sdc"]]);
+    expect((await d.get<Status>("/storage")).unassigned.map((x) => x.name)).toEqual(["sdd", "sdb"]);
+    expect((await d.send("DELETE", `/storage/pools/${uuid}/operation`)).status).toBe(204);
+    expect((await tank()).operation).toBeUndefined();
+  });
+
   it("approves a stack's new grant, then updates it", async () => {
     const d = demo();
     const before = await d.get<Schema<"Stack">>("/stacks/home");

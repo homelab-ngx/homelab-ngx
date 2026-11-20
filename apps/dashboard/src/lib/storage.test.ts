@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Schema, Stack } from "./api/client.ts";
-import { browseDefault, browseHref, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, folderName, foldersOf, measuredAt, role, segments, systemDisk, usedBy } from "./storage.ts";
+import { browseDefault, browseHref, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, folderName, foldersOf, maxCopies, measuredAt, removal, removeBlocked, role, running, segments, systemDisk, tiering, usedBy, withContents } from "./storage.ts";
 
 type Pool = Schema<"Pool">;
 type Disk = Schema<"Disk">;
@@ -193,5 +193,50 @@ describe("the system disk", () => {
 
   it("is nothing when the disk could not be read", () => {
     expect(systemDisk(store({ total_bytes: 0 }))).toBeNull();
+  });
+});
+
+describe("making and changing a pool", () => {
+  const d = (name: string, kind: "ssd" | "hdd", label = "", contents = "") =>
+    ({ name, path: `/dev/${name}`, kind, bcachefs_label: label, contents }) as Schema<"Disk">;
+  const tiered = {
+    data_replicas: 2,
+    metadata_replicas: 2,
+    foreground_target: "ssd",
+    promote_target: "ssd",
+    background_target: "hdd",
+    disks: [d("sda", "ssd", "ssd.ssd1"), d("sdb", "hdd", "hdd.hdd1"), d("sdc", "hdd", "hdd.hdd2")],
+  } as Schema<"Pool">;
+
+  it("says what a mix of disks does, and nothing for one kind", () => {
+    expect(tiering([d("a", "ssd"), d("b", "hdd"), d("c", "hdd")])).toBe("1 SSD caches for 2 HDDs");
+    expect(tiering([d("a", "ssd"), d("b", "ssd"), d("c", "hdd")])).toBe("2 SSDs cache for 1 HDD");
+    expect(tiering([d("b", "hdd"), d("c", "hdd")])).toBe("");
+  });
+
+  it("offers a copy per disk, three at most", () => {
+    expect([0, 1, 2, 3, 5].map(maxCopies)).toEqual([1, 1, 2, 3, 3]);
+  });
+
+  it("names the disks a pool would erase", () => {
+    expect(withContents([d("a", "hdd"), d("b", "hdd", "", "ext4")]).map((x) => x.name)).toEqual(["b"]);
+  });
+
+  it("keeps the last cache disk, and as many disks as copies", () => {
+    expect(removeBlocked(tiered, tiered.disks[0]!)).toBe("It is the pool's only cache disk.");
+    expect(removeBlocked(tiered, tiered.disks[1]!)).toBe("");
+    const two = { ...tiered, background_target: "", disks: tiered.disks.slice(1) };
+    expect(removeBlocked(two, two.disks[0]!)).toBe("The pool keeps 2 copies and needs 2 disks.");
+    const one = { ...two, data_replicas: 1, metadata_replicas: 1, disks: two.disks.slice(1) };
+    expect(removeBlocked(one, one.disks[0]!)).toBe("It is the pool's only disk.");
+  });
+
+  it("says how far a removal is", () => {
+    const op = { kind: "remove", disk: "/dev/sdc", phase: "moving", started_at: "", total_bytes: 4000, left_bytes: 1000 } as Schema<"PoolOperation">;
+    const size = (n: number) => `${n} B`;
+    expect(removal(op, size)).toEqual({ percent: 75, text: "Removing sdc · 3000 B of 4000 B moved · 75%" });
+    expect(removal({ ...op, phase: "erasing", left_bytes: 0 }, size).text).toBe("Removing sdc · erasing…");
+    expect(removal({ ...op, phase: "failed" }, size).text).toBe("Removing sdc failed");
+    expect([running(op), running({ ...op, finished_at: "x" }), running(undefined)]).toEqual([true, false, false]);
   });
 });

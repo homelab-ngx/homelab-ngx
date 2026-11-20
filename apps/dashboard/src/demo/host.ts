@@ -246,6 +246,9 @@ function disk(name: string, model: string, size: number, label: string, health: 
     mountpoint: "",
     data_target: label.split(".")[0] ?? "",
     metadata_target: "ssd",
+    kind: label.startsWith("ssd") ? "ssd" : "hdd",
+    contents: "",
+    state: "rw",
     health: { bad_sectors: 0, checked_at: iso(now - 20 * MIN), passed: true, power_on_hours: 11200, temperature_c: 34, ...health },
   };
 }
@@ -463,7 +466,10 @@ export function newHost(now: () => number = Date.now): Host {
         { id: "258", path: "/var/mnt/tank/documents", used_bytes: 41 * GB, measured_at: iso(t - HOUR) },
         { id: "259", path: "/var/mnt/tank/scratch", used_bytes: 220 * GB, measured_at: iso(t - HOUR) },
       ],
-      unassigned: [],
+      unassigned: [
+        { ...disk("sdc", "ST8000VN004", 8 * TB, "", { power_on_hours: 120, temperature_c: 31 }, t), fstype: "", label: "", state: "", data_target: "", metadata_target: "" },
+        { ...disk("sdd", "Crucial MX500 500GB", 500 * GB, "", { power_on_hours: 9800, temperature_c: 33 }, t), kind: "ssd", fstype: "", label: "", state: "", data_target: "", metadata_target: "", has_children: true, contents: "2 partitions" },
+      ],
       partitions: [
         {
           uuid: "5b1d2c0e-7a44-4d0b-9c1f-2f8e6a3b9d10",
@@ -718,4 +724,126 @@ export function reboot(h: Host) {
   h.image.installed = h.image.installed.map((x) => (x === next ? { version: x.version, state: "booted" } : { version: x.version, state: "good" }));
   h.image.booted = next.version;
   h.image.pending_reboot = false;
+}
+
+// ---- pools: made, grown, shrunk and deleted, as the daemon answers ----
+
+type Pool = Schema<"Pool">;
+
+function poolOf(h: Host, uuid: string): Pool {
+  const p = h.storage.pools.find((x) => x.uuid === uuid);
+  if (!p) throw new DemoProblem(404, "unknown_pool", "There is no such pool.");
+  if (p.operation && !p.operation.finished_at) throw new DemoProblem(409, "busy", "A disk is being removed from the pool.");
+  return p;
+}
+
+/** Takes a spare disk out of the list, erased; a disk with contents needs the pool's name. */
+function takeSpare(h: Host, path: string, name: string, confirm: unknown): Disk {
+  const d = h.storage.unassigned.find((x) => x.path === path);
+  if (!d) throw new DemoProblem(409, "disk_not_eligible", `${path} cannot go into a pool.`);
+  if (d.contents && confirm !== name) throw new DemoProblem(422, "confirm", `${path} holds ${d.contents}; it is erased only with the pool's name.`);
+  return d;
+}
+
+/** Labels the disks of a pool the way the daemon does, and sets its targets. */
+function tier(p: Pool) {
+  const count: Record<string, number> = {};
+  const both = new Set(p.disks.map((d) => d.kind)).size === 2;
+  for (const d of p.disks) {
+    if (!d.bcachefs_label) {
+      count[d.kind] = (count[d.kind] ?? p.disks.filter((o) => o.kind === d.kind && o.bcachefs_label).length) + 1;
+      d.bcachefs_label = `${d.kind}.${d.kind}${count[d.kind]}`;
+    }
+    Object.assign(d, { fstype: "bcachefs", label: p.label, state: "rw", contents: "", has_children: false, data_target: both ? (d.kind === "ssd" ? "foreground" : "background") : "", metadata_target: both && d.kind === "ssd" ? "foreground" : "" });
+  }
+  const ssd = both ? "ssd" : "";
+  Object.assign(p, { foreground_target: ssd, promote_target: ssd, metadata_target: ssd, background_target: both ? "hdd" : "" });
+}
+
+const rawSize = (p: Pool) => p.disks.reduce((n, d) => n + d.size, 0);
+
+export function createPool(h: Host, body: Record<string, unknown>): Pool {
+  const name = String(body.name ?? "");
+  const paths = (body.disks as string[] | undefined) ?? [];
+  const copies = Number(body.copies ?? 1);
+  if (!/^[a-z0-9][a-z0-9-]{0,30}$/.test(name)) throw new DemoProblem(400, "invalid_name", "A pool's name has lowercase letters, digits and dashes.");
+  if (h.storage.pools.some((p) => p.mount_name === name) || h.storage.partitions.some((p) => p.state === "mounted" && p.mount_name === name)) {
+    throw new DemoProblem(409, "name_taken", "Another pool has that name.");
+  }
+  if (paths.length === 0 || copies > paths.length) throw new DemoProblem(409, "too_few_disks", `${copies} copies need ${copies} disks.`);
+  const disks = paths.map((path) => takeSpare(h, path, name, body.confirm));
+  h.storage.unassigned = h.storage.unassigned.filter((d) => !paths.includes(d.path));
+  const p: Pool = {
+    name, label: name, uuid: `0d5e7a10-demo-4000-8000-${String(h.now()).padStart(12, "0").slice(-12)}`, state: "mounted", mountdir: `/var/mnt/${name}`, mount_name: name,
+    auto_mount: true, data_replicas: copies, metadata_replicas: copies, foreground_target: "", promote_target: "", background_target: "", metadata_target: "",
+    disks, usage: { total_bytes: 0, used_bytes: 0, available_bytes: 0, used_percent: 0 },
+  };
+  tier(p);
+  p.usage = { total_bytes: rawSize(p), used_bytes: 0, available_bytes: rawSize(p), used_percent: 0 };
+  h.storage.pools.push(p);
+  return p;
+}
+
+export function addPoolDisk(h: Host, uuid: string, body: Record<string, unknown>) {
+  const p = poolOf(h, uuid);
+  const d = takeSpare(h, String(body.disk ?? ""), p.name, body.confirm);
+  h.storage.unassigned = h.storage.unassigned.filter((x) => x.path !== d.path);
+  d.bcachefs_label = "";
+  p.disks.push(d);
+  tier(p);
+  if (p.usage) {
+    p.usage.total_bytes += d.size;
+    p.usage.available_bytes += d.size;
+    p.usage.used_percent = (p.usage.used_bytes / p.usage.total_bytes) * 100;
+  }
+}
+
+/** A removal takes twelve seconds here: a quarter of the disk's data moves every three. */
+export function removePoolDisk(h: Host, uuid: string, path: string): Pool {
+  const p = poolOf(h, uuid);
+  const d = p.disks.find((x) => x.path === path);
+  if (!d) throw new DemoProblem(404, "unknown_disk", "The pool has no such disk.");
+  const copies = Math.max(p.data_replicas, p.metadata_replicas, 1);
+  if (p.disks.length - 1 < copies) throw new DemoProblem(409, "too_few_disks", `The pool keeps ${copies} copies and would have ${p.disks.length - 1} disks.`);
+  if (!p.disks.some((o) => o !== d && o.kind === d.kind) && p.background_target) throw new DemoProblem(409, "last_of_role", `It is the pool's only ${d.kind} disk.`);
+  const total = Math.round(((p.usage?.used_bytes ?? 0) * d.size) / Math.max(rawSize(p), 1));
+  const op: Schema<"PoolOperation"> = { kind: "remove", disk: path, phase: "moving", started_at: iso(h.now()), total_bytes: total, left_bytes: total };
+  p.operation = op;
+  d.state = "evacuating";
+  for (let i = 1; i <= 3; i++) {
+    later(h, i * 3000, () => {
+      if (p.operation === op) op.left_bytes = Math.round(total * (1 - i / 4));
+    });
+  }
+  later(h, 12_000, () => {
+    if (p.operation !== op) return;
+    Object.assign(op, { phase: "done", left_bytes: 0, finished_at: iso(h.now()) });
+    p.disks = p.disks.filter((x) => x !== d);
+    if (p.usage) {
+      p.usage.total_bytes -= d.size;
+      p.usage.available_bytes = p.usage.total_bytes - p.usage.used_bytes;
+      p.usage.used_percent = (p.usage.used_bytes / Math.max(p.usage.total_bytes, 1)) * 100;
+    }
+    h.storage.unassigned.push({ ...d, fstype: "", label: "", bcachefs_label: "", state: "", contents: "", data_target: "", metadata_target: "" });
+  });
+  return p;
+}
+
+/** Stops a removal, or clears one that ended. */
+export function endRemoval(h: Host, uuid: string) {
+  const p = h.storage.pools.find((x) => x.uuid === uuid);
+  if (!p?.operation) throw new DemoProblem(404, "unknown_pool", "No removal runs on that pool.");
+  const d = p.disks.find((x) => x.path === p.operation!.disk);
+  if (d) d.state = "rw";
+  p.operation = undefined;
+}
+
+export function deletePool(h: Host, uuid: string, confirm: string | null) {
+  const p = poolOf(h, uuid);
+  if (confirm !== p.name) throw new DemoProblem(422, "confirm", `Send the pool's name, ${p.name}; every disk in it is erased.`);
+  const users = h.stacks.filter((s) => (s.variables ?? []).some((v) => v.kind === "path" && `${v.value}/`.startsWith(`${p.mountdir}/`)));
+  if (users.length > 0) throw new DemoProblem(409, "pool_in_use", `The pool is in use by ${users.map((s) => `the stack ${s.name}`).join(", ")}.`);
+  h.storage.pools = h.storage.pools.filter((x) => x !== p);
+  h.storage.subvolumes = h.storage.subvolumes.filter((s) => !s.path.startsWith(`${p.mountdir}/`));
+  h.storage.unassigned.push(...p.disks.map((d) => ({ ...d, fstype: "", label: "", bcachefs_label: "", state: "", contents: "", data_target: "", metadata_target: "" })));
 }

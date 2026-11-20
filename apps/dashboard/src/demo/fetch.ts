@@ -6,7 +6,7 @@
  */
 import type { paths } from "#lib/api/schema.gen.ts";
 import type { Schema } from "#lib/api/client.ts";
-import { approve, DemoProblem, downloadImage, installImage, iso, newHost, power, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
+import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, removePoolDisk, downloadImage, installImage, iso, newHost, power, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
 import { history } from "./metrics.ts";
 
 type JsonOf<P extends keyof paths> = paths[P] extends { get: { responses: { 200: { content: { "application/json": infer R } } } } } ? R : never;
@@ -174,7 +174,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
     return { logs: r ? `${r.started_at} ${b.name}: started (${r.trigger})\n${r.finished_at ?? ""} ${b.name}: ${r.result}${r.error ? `: ${r.error}` : ""}\n` : "" };
   },
   "/backups/{id}/runs": (h, c) => h.backups.find((x) => x.id === Number(c.path.id))?.recent_runs ?? [],
-  "/config": (h) => ({ core_services: ["homelab-daemon.service", "caddy.service"], generation: 42, loaded_at: iso(h.now() - 6 * DAY), pools: [{ name: "tank", uuid: h.storage.pools[0]!.uuid, mountpoint: "/var/mnt/tank", auto_mount: true, options: "" }] }),
+  "/config": (h) => ({ core_services: ["homelab-daemon.service", "caddy.service"], generation: 42, loaded_at: iso(h.now() - 6 * DAY), pools: h.storage.pools.map((p) => ({ name: p.name, uuid: p.uuid, mountpoint: p.mountdir, auto_mount: p.auto_mount, options: "" })) }),
   "/core-services": (h) =>
     ["homelab-daemon", "caddy", "cloudflared", "tailscaled"].map((name) => ({ name, unit_name: `${name}.service`, description: name, type: "Native" as const, active_state: "active", sub_state: "running", started_at: iso(h.now() - 6 * DAY) })),
   "/drafts": () => [],
@@ -279,6 +279,15 @@ const posts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknow
     const config = `[Interface]\nPrivateKey = DemoPrivateKeyDemoPrivateKeyDemoPrivateKey0=\nAddress = ${peer.address}\n\n[Peer]\nPublicKey = ${settings.wireguard.public_key}\nEndpoint = ${settings.wireguard.endpoint}\nAllowedIPs = 10.99.0.0/24\nPersistentKeepalive = 25\n`;
     return { status: 200, body: { settings, config } };
   },
+  "/storage/pools": (h, c) => ({ status: 201, body: createPool(h, c.body) }),
+  "/storage/pools/{uuid}/disks": (h, c) => (addPoolDisk(h, c.path.uuid!, c.body), { status: 204 }),
+};
+
+/** The deletes it acts out: a pool, a pool's disk, and a removal that is stopped. */
+const deletes: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknown }> = {
+  "/storage/pools/{uuid}": (h, c) => (deletePool(h, c.path.uuid!, c.query.get("confirm")), { status: 204 }),
+  "/storage/pools/{uuid}/disks": (h, c) => ({ status: 202, body: removePoolDisk(h, c.path.uuid!, c.query.get("disk") ?? "") }),
+  "/storage/pools/{uuid}/operation": (h, c) => (endRemoval(h, c.path.uuid!), { status: 204 }),
 };
 
 interface Route {
@@ -299,6 +308,7 @@ function compile(table: Record<string, (h: Host, c: Ctx) => unknown>, wrap: (v: 
 
 const getRoutes = compile(gets, (body) => ({ status: 200, body }));
 const postRoutes = compile(posts, (v) => v as { status: number; body?: unknown });
+const deleteRoutes = compile(deletes, (v) => v as { status: number; body?: unknown });
 
 const json = (status: number, body: unknown, type = "application/json") => new Response(JSON.stringify(body), { status, headers: { "Content-Type": type } });
 const problem = (status: number, code: string, detail: string) => json(status, { type: "about:blank", title: detail, status, code, detail }, "application/problem+json");
@@ -312,7 +322,7 @@ export function demoFetchFor(h: Host) {
     tick(h);
     // A host that reboots answers nothing, as a browser sees it.
     if (h.now() < h.downUntil) throw new TypeError("Failed to fetch");
-    for (const r of get ? getRoutes : input.method === "POST" ? postRoutes : []) {
+    for (const r of get ? getRoutes : input.method === "POST" ? postRoutes : input.method === "DELETE" ? deleteRoutes : []) {
       const m = r.re.exec(path);
       if (!m) continue;
       const ctx: Ctx = { path: Object.fromEntries(r.names.map((n, i) => [n, decodeURIComponent(m[i + 1]!)])), query: url.searchParams, body: {} };

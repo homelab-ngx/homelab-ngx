@@ -8,10 +8,14 @@
   import Modal from "#lib/components/Modal.svelte";
   import Pill from "#lib/components/Pill.svelte";
   import RowMenu from "#lib/components/RowMenu.svelte";
+  import AddDiskDialog from "#lib/components/storage/AddDiskDialog.svelte";
+  import CreatePoolDialog from "#lib/components/storage/CreatePoolDialog.svelte";
+  import DeletePoolDialog from "#lib/components/storage/DeletePoolDialog.svelte";
+  import RemoveDiskDialog from "#lib/components/storage/RemoveDiskDialog.svelte";
   import SystemDisk from "#lib/components/SystemDisk.svelte";
   import { ago, bytes } from "#lib/format.ts";
   import { stackTitles } from "#lib/stacks.ts";
-  import { browseHref, capacity, diskState, disksSummary, folderName, foldersOf, fullness, measuredAt, role, segments, usedBy } from "#lib/storage.ts";
+  import { browseHref, capacity, diskState, disksSummary, folderName, foldersOf, fullness, measuredAt, removal, role, running, segments, usedBy } from "#lib/storage.ts";
 
   type Pool = Schema<"Pool">;
   type Disk = Schema<"Disk">;
@@ -23,7 +27,8 @@
   const storage = createQuery(() => ({
     queryKey: key,
     queryFn: () => call<StorageStatus>(api.GET("/storage")),
-    refetchInterval: 10_000,
+    // A disk that is leaving a pool is followed closely.
+    refetchInterval: (q) => (q.state.data?.pools.some((p) => running(p.operation)) ? 2_000 : 10_000),
   }));
   const stacks = createQuery(() => ({ queryKey: keys.stacks, queryFn: fetchStacks }));
   const title = $derived(stackTitles(stacks.data));
@@ -49,6 +54,22 @@
   let error = $state("");
   let confirm = $state<{ title: string; body: string; label: string; run: () => Promise<unknown> } | null>(null);
   let newSubvolume = $state<Pool | null>(null);
+  /** The open pool dialog. Each one runs its own request. */
+  let dialog = $state<
+    | { kind: "create" }
+    | { kind: "add"; pool: Pool }
+    | { kind: "remove"; pool: Pool; disk: Disk }
+    | { kind: "delete"; pool: Pool }
+    | null
+  >(null);
+  /** The names taken under /var/mnt. */
+  const taken = $derived([
+    ...pools.map((p) => p.mountdir.replace("/var/mnt/", "")),
+    ...mountedParts.map((p) => p.mount_name),
+  ]);
+  /** Stops a removal, or clears one that ended. */
+  const endRemoval = (p: Pool) =>
+    op.mutate(() => call(api.DELETE("/storage/pools/{uuid}/operation", { params: { path: { uuid: p.uuid } } })));
   let name = $state("");
 
   /** Runs one storage action; every action reads the pools again. */
@@ -172,14 +193,31 @@
           >
             New subvolume…
           </DropdownMenu.Item>
-          <DropdownMenu.Separator class="my-1 border-t border-line" />
           <DropdownMenu.Item
+            disabled={running(p.operation)}
+            onSelect={() => (dialog = { kind: "add", pool: p })}
+            class="cursor-default rounded px-2.5 py-1.5 outline-none data-disabled:opacity-50 data-highlighted:bg-sunken"
+          >
+            Add disk…
+          </DropdownMenu.Item>
+        {/if}
+        <DropdownMenu.Separator class="my-1 border-t border-line" />
+        {#if p.state === "mounted"}
+          <DropdownMenu.Item
+            disabled={running(p.operation)}
             onSelect={() => askUnmount(p)}
-            class="cursor-default rounded px-2.5 py-1.5 text-bad outline-none data-highlighted:bg-bad-soft"
+            class="cursor-default rounded px-2.5 py-1.5 text-bad outline-none data-disabled:opacity-50 data-highlighted:bg-bad-soft"
           >
             Unmount…
           </DropdownMenu.Item>
         {/if}
+        <DropdownMenu.Item
+          disabled={running(p.operation)}
+          onSelect={() => (dialog = { kind: "delete", pool: p })}
+          class="cursor-default rounded px-2.5 py-1.5 text-bad outline-none data-disabled:opacity-50 data-highlighted:bg-bad-soft"
+        >
+          Delete pool…
+        </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Portal>
   </DropdownMenu.Root>
@@ -203,9 +241,12 @@
 {/if}
 
 {#if storage.data && pools.length === 0}
-  <p class="mt-5 rounded-lg border border-line bg-surface px-4 py-3 text-muted">
-    No storage pools found. <a class="link" href="/storage/browse">Browse stack folders</a>
-  </p>
+  <div class="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-line bg-surface px-4 py-3">
+    <p class="text-muted">No storage pools found. <a class="link" href="/storage/browse">Browse stack folders</a></p>
+    {#if spare.length > 0}
+      <button type="button" class="btn btn-primary" onclick={() => (dialog = { kind: "create" })}>Create pool…</button>
+    {/if}
+  </div>
 {/if}
 
 {#each pools as p (p.uuid)}
@@ -289,6 +330,25 @@
         </div>
       {:else}
         <p class="text-muted">The pool's size could not be read.</p>
+      {/if}
+      {#if p.operation}
+        {@const o = p.operation}
+        {@const r = removal(o, bytes)}
+        <div class="mt-4 border-t border-line pt-3" role="status">
+          <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+            <p class="tabular-nums {o.phase === 'failed' ? 'text-bad' : ''}">{r.text}</p>
+            <button type="button" class="btn btn-sm" disabled={op.isPending || (running(o) && o.phase !== "moving")} onclick={() => endRemoval(p)}>
+              {running(o) ? "Stop" : "Dismiss"}
+            </button>
+          </div>
+          {#if running(o)}
+            <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={r.percent} aria-label="Data moved off the disk">
+              <div class="h-full rounded-full bg-accent transition-[width] duration-700" style:width="{r.percent}%"></div>
+            </div>
+          {:else if o.error}
+            <p class="mt-1 text-sm text-muted [overflow-wrap:anywhere]">{o.error}</p>
+          {/if}
+        </div>
       {/if}
     </div>
 
@@ -448,13 +508,18 @@
         <tr class="border-b border-line bg-sunken">
           <th scope="col" class="label px-3 py-2">Disk</th>
           {#if p}
-<th scope="col" class="label px-3 py-2 max-md:hidden">Role</th>
+            <th scope="col" class="label px-3 py-2 max-md:hidden">Role</th>
+          {:else}
+            <th scope="col" class="label px-3 py-2 max-sm:hidden">Holds</th>
           {/if}
           <th scope="col" class="label px-3 py-2 text-right">Size</th>
           <th scope="col" class="label px-3 py-2">Health</th>
           <th scope="col" class="label px-3 py-2 text-right max-md:hidden">Temp</th>
           <th scope="col" class="label px-3 py-2 text-right max-md:hidden">Hours on</th>
           <th scope="col" class="label px-3 py-2 text-right max-md:hidden">Bad sectors</th>
+          {#if p?.state === "mounted"}
+            <th scope="col" class="px-3 py-2"><span class="sr-only">Actions</span></th>
+          {/if}
         </tr>
       </thead>
       <tbody>
@@ -468,14 +533,30 @@
             </td>
             {#if p}
               <td class="px-3 py-2 whitespace-nowrap max-md:hidden">{roleWord[role(p, d)]}</td>
+            {:else}
+              <td class="px-3 py-2 max-sm:hidden {d.contents ? '' : 'text-muted'}">{d.contents || "nothing"}</td>
             {/if}
             <td class="px-3 py-2 text-right whitespace-nowrap">{bytes(d.size)}</td>
-            <td class="px-3 py-2"><Pill tone={st.tone}>{st.word}</Pill></td>
+            <td class="px-3 py-2">
+              {#if p && running(p.operation) && p.operation?.disk === d.path}
+                <Pill tone="info">leaving</Pill>
+              {:else}
+                <Pill tone={st.tone}>{st.word}</Pill>
+              {/if}
+            </td>
             <td class="px-3 py-2 text-right whitespace-nowrap max-md:hidden {h && h.temperature_c >= 55 ? 'text-warn' : ''}">
               {h ? `${h.temperature_c} °C` : "–"}
             </td>
             <td class="px-3 py-2 text-right whitespace-nowrap max-md:hidden">{h ? h.power_on_hours.toLocaleString() : "–"}</td>
             <td class="px-3 py-2 text-right max-md:hidden {h && h.bad_sectors > 0 ? 'text-warn' : ''}">{h ? h.bad_sectors : "–"}</td>
+            {#if p?.state === "mounted"}
+              <td class="px-3 py-2 text-right">
+                <RowMenu
+                  name={d.name}
+                  items={[{ label: "Remove from pool…", danger: true, disabled: running(p.operation), onSelect: () => (dialog = { kind: "remove", pool: p, disk: d }) }]}
+                />
+              </td>
+            {/if}
           </tr>
         {/each}
       </tbody>
@@ -485,12 +566,17 @@
 
 {#if storage.data}
   <section class="mt-6" aria-labelledby="spare-h">
-    <h2 id="spare-h" class="mb-2 font-semibold">
-      <Help label="Spare disks and partitions">
-        Disks that are not part of any pool, such as one just plugged in, and partitions that are not mounted. A partition mounts under
-        /var/mnt, where stacks and backups can use it.
-      </Help>
-    </h2>
+    <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
+      <h2 id="spare-h" class="min-w-0 font-semibold">
+        <Help label="Spare disks and partitions">
+          Disks that are not part of any pool, such as one just plugged in, and partitions that are not mounted. A pool erases what a
+          spare disk holds. A partition mounts under /var/mnt, where stacks and backups can use it.
+        </Help>
+      </h2>
+      {#if spare.length > 0 && pools.length > 0}
+        <button type="button" class="btn btn-sm" onclick={() => (dialog = { kind: "create" })}>Create pool…</button>
+      {/if}
+    </div>
     {#if spare.length > 0}
       {@render diskTable(spare)}
     {/if}
@@ -581,6 +667,16 @@
       <button type="submit" form="new-subvolume" class="btn btn-primary" disabled={op.isPending || !name.trim()}>Create</button>
     {/snippet}
   </Modal>
+{/if}
+
+{#if dialog?.kind === "create"}
+  <CreatePoolDialog {spare} {taken} onClose={() => (dialog = null)} />
+{:else if dialog?.kind === "add"}
+  <AddDiskDialog pool={dialog.pool} {spare} onClose={() => (dialog = null)} />
+{:else if dialog?.kind === "remove"}
+  <RemoveDiskDialog pool={dialog.pool} disk={dialog.disk} onClose={() => (dialog = null)} />
+{:else if dialog?.kind === "delete"}
+  <DeletePoolDialog pool={dialog.pool} users={usedBy(dialog.pool.mountdir, stacks.data ?? []).map(title)} onClose={() => (dialog = null)} />
 {/if}
 
 {#if confirm}
