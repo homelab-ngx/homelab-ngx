@@ -97,7 +97,18 @@ describe("the demo's API", () => {
     d.wait(6000);
     const staged = await d.get<Schema<"ImageStatus">>("/system-updates/image");
     expect([staged.pending_reboot, staged.installed[0]]).toEqual([true, { version: "0.2.6", state: "pending", tries_left: 3 }]);
-    await d.post("/system-updates/reboot");
+    const first = (await d.get<Schema<"PowerStatus">>("/system/power")).boot_id;
+    expect((await d.post<Schema<"PowerStatus">>("/system/power", { action: "reboot" })).status).toBe(202);
+    const going = await d.get<Schema<"PowerStatus">>("/system/power");
+    expect([going.phase, going.steps.every((s) => s.kind === "stack")]).toEqual(["stopping_stacks", true]);
+    d.wait(4000);
+    expect((await d.get<Schema<"PowerStatus">>("/system/power")).steps.some((s) => s.kind === "mount")).toBe(true);
+    d.wait(3000);
+    // Down: the host answers nothing for a while.
+    await expect(d.get("/system/power")).rejects.toThrow(TypeError);
+    d.wait(30_000);
+    const back = await d.get<Schema<"PowerStatus">>("/system/power");
+    expect([back.phase, back.boot_id === first]).toEqual(["idle", false]);
     const after = await d.get<Schema<"ImageStatus">>("/system-updates/image");
     expect([after.booted, after.pending_reboot]).toEqual(["0.2.6", false]);
   });

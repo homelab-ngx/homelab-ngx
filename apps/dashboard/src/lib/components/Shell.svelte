@@ -2,10 +2,13 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { CircleQuestionMark, Settings } from "@lucide/svelte";
   import type { Snippet } from "svelte";
+  import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { DEMO } from "#lib/api/client.ts";
   import { fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
   import { help, toggleHelp } from "#lib/help.svelte.ts";
   import type { NavItem } from "#lib/nav.ts";
+  import { fetchPower, powerHref, powerKey, underWay } from "#lib/power.ts";
 
   interface Props {
     active: string;
@@ -18,6 +21,15 @@
   let { active, nav, settings, wide = false, children }: Props = $props();
 
   const stacks = createQuery(() => ({ queryKey: keys.stacks, queryFn: fetchStacks, refetchInterval: idlePoll }));
+
+  // A shutdown started anywhere (the CLI, the power button, an update's
+  // reboot) takes every page to the power page.
+  const power = createQuery(() => ({ queryKey: powerKey, queryFn: fetchPower, refetchInterval: idlePoll, retry: false }));
+  $effect(() => {
+    const s = power.data;
+    if (!s || !underWay(s) || page.url.pathname === "/power") return;
+    void goto(powerHref(s.action ?? "reboot", s.boot_id, page.url.pathname));
+  });
   function onkeydown(e: KeyboardEvent) {
     if (e.key !== "F1") return;
     e.preventDefault();

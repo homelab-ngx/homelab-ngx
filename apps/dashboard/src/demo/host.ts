@@ -39,6 +39,9 @@ export interface Host {
   image: Schema<"ImageStatus">;
   deploys: Schema<"CoreDeploy">[];
   storage: Schema<"StorageStatus">;
+  power: Schema<"PowerStatus">;
+  /** Until when the host is down (ms): every request fails, as when it reboots. */
+  downUntil: number;
   pending: Pending[];
 }
 
@@ -491,8 +494,55 @@ export function newHost(now: () => number = Date.now): Host {
         },
       ],
     },
+    power: idlePower("demo-boot-1"),
+    downUntil: 0,
     pending: [],
   };
+}
+
+const REBOOT_SECONDS = 25;
+
+const idlePower = (boot: string): Schema<"PowerStatus"> => ({ phase: "idle", steps: [], busy: [], boot_id: boot, expected_seconds: REBOOT_SECONDS });
+
+/**
+ * A reboot or poweroff as the daemon runs it: the running stacks stop, then
+ * the pools and partitions unmount, then the host is gone. A reboot comes
+ * back from a new boot; a poweroff stays off until the page is reloaded.
+ */
+export function power(h: Host, action: "reboot" | "poweroff", force: boolean) {
+  if (h.power.phase !== "idle") throw new DemoProblem(409, "shutting_down", "The host is already shutting down.");
+  const working = h.stacks.filter(busy).map((s) => `stack ${s.name}: ${s.operation!.kind} (${s.operation!.phase})`);
+  if (working.length > 0 && !force) throw new DemoProblem(409, "busy", `${working.join(", ")} would be interrupted; force to ${action} anyway`);
+  const mounts = [...h.storage.pools.map((p) => p.mountdir), ...h.storage.partitions.filter((p) => p.state === "mounted").map((p) => p.mountdir)];
+  h.power = {
+    ...h.power,
+    action,
+    phase: "stopping_stacks",
+    started_at: iso(h.now()),
+    steps: h.stacks.filter((s) => s.running).map((s) => ({ kind: "stack", name: s.name, state: "working" })),
+  };
+  const set = (kind: "stack" | "mount", state: "working" | "done") => {
+    for (const st of h.power.steps) if (st.kind === kind) st.state = state;
+  };
+  later(h, 3000, () => {
+    set("stack", "done");
+    h.power.phase = "unmounting";
+    h.power.steps.push(...mounts.map((m) => ({ kind: "mount" as const, name: m, state: "working" as const })));
+  });
+  later(h, 5000, () => {
+    set("mount", "done");
+    h.power.phase = "going_down";
+  });
+  later(h, 6000, () => {
+    if (action === "poweroff") {
+      h.downUntil = Infinity;
+      return;
+    }
+    h.downUntil = h.now() + REBOOT_SECONDS * 1000 - 2000;
+    reboot(h);
+    h.power = idlePower(`demo-boot-${Math.round(h.now())}`);
+  });
+  return h.power;
 }
 
 /** Applies every step whose time has come. The fake API calls it before each request. */

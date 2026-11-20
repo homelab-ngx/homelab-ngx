@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { createMutation, createQuery } from "@tanstack/svelte-query";
+  import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { api, call, describe } from "#lib/api/client.ts";
   import Help from "#lib/components/Help.svelte";
-  import Modal from "#lib/components/Modal.svelte";
+  import PowerDialog from "#lib/components/PowerDialog.svelte";
   import { busyPoll, idlePoll } from "#lib/api/queries.ts";
   import DeployCard from "#lib/components/core/DeployCard.svelte";
   import ImageCard from "#lib/components/core/ImageCard.svelte";
+  import { fetchPower, powerKey } from "#lib/power.ts";
 
   const keys = {
     deploys: ["daemon", "system-updates", "deploys"] as const,
@@ -29,26 +30,30 @@
     refetchInterval: deploying ? busyPoll : idlePoll,
   }));
 
-  let error = $state("");
-  let confirmReboot = $state(false);
-
-  const reboot = createMutation(() => ({
-    mutationFn: () => call(api.POST("/system-updates/reboot")),
-    onMutate: () => {
-      error = "";
-      confirmReboot = false;
-    },
-    onError: (e: unknown) => (error = `Reboot: ${describe(e)}`),
-  }));
-
-  // While an update or a reboot is under way the daemon goes away for a while;
-  // that is expected, so the page waits and does not report an error.
-  const expectedAway = $derived(deploying || reboot.isSuccess);
-  const away = $derived(expectedAway && (!!image.error || !!deploys.error));
   // An update that ended in the last ten minutes stays on the page.
   const showDeploy = $derived(
     !!latest && (deploying || (!!latest.finished_at && Date.now() - new Date(latest.finished_at).getTime() < 10 * 60_000)),
   );
+
+  let error = $state("");
+  let confirmReboot = $state(false);
+
+  // A reboot set for a time (the install's choice) shows until it happens.
+  // Read often while an update runs or has just ended: one that reboots
+  // takes the page to the power page as soon as the host starts going down.
+  const client = useQueryClient();
+  const power = createQuery(() => ({ queryKey: powerKey, queryFn: fetchPower, refetchInterval: showDeploy ? busyPoll : idlePoll }));
+  const scheduled = $derived(power.data?.scheduled);
+  const cancel = createMutation(() => ({
+    mutationFn: () => call(api.DELETE("/system/power/scheduled")),
+    onMutate: () => (error = ""),
+    onError: (e: unknown) => (error = `Cancel: ${describe(e)}`),
+    onSettled: () => client.invalidateQueries({ queryKey: powerKey }),
+  }));
+
+  // An update restarts the daemon; that is expected, so the page waits and
+  // does not report an error.
+  const away = $derived(deploying && (!!image.error || !!deploys.error));
 </script>
 
 <svelte:head><title>Updates · System Settings · Homelab-ngx</title></svelte:head>
@@ -62,16 +67,17 @@
     </Help>
   </h1>
   {#if image.data}
-    <button type="button" class="btn" disabled={deploying || reboot.isPending || reboot.isSuccess} onclick={() => (confirmReboot = true)}>Reboot…</button>
+    <button type="button" class="btn" disabled={deploying} onclick={() => (confirmReboot = true)}>Reboot…</button>
   {/if}
 </div>
 
 {#if error}
   <p role="alert" class="mt-4 rounded-md bg-bad-soft px-3 py-2 text-bad">{error}</p>
 {/if}
-{#if reboot.isSuccess}
-  <p role="status" class="mt-4 rounded-md bg-core-soft px-3 py-2 text-core">
-    {away ? "Restarting. This page reconnects by itself." : "Rebooting. Back in a few minutes."}
+{#if scheduled}
+  <p role="status" class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md bg-core-soft px-3 py-2 text-core">
+    <span class="grow">{scheduled.action === "reboot" ? "Reboots" : "Shuts down"} at {new Date(scheduled.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+    <button type="button" class="btn btn-sm" disabled={cancel.isPending} onclick={() => cancel.mutate()}>Cancel</button>
   </p>
 {/if}
 
@@ -81,18 +87,8 @@
 
 {#if image.data}
   <ImageCard image={image.data} busy={deploying} onReboot={() => (confirmReboot = true)} />
-{:else if image.error && !expectedAway}
+{:else if image.error && !deploying}
   <p class="mt-5 text-muted">{describe(image.error)}</p>
 {/if}
 
-<Modal
-  open={confirmReboot}
-  onOpenChange={(o) => (confirmReboot = o)}
-  title="Reboot the homelab?"
-  description="Every service, and this page, goes down for a few minutes while the host restarts."
->
-  {#snippet children()}{/snippet}
-  {#snippet actions()}
-    <button type="button" class="btn btn-danger" disabled={reboot.isPending} onclick={() => reboot.mutate()}>Reboot now</button>
-  {/snippet}
-</Modal>
+{#if confirmReboot}<PowerDialog action="reboot" onClose={() => (confirmReboot = false)} />{/if}

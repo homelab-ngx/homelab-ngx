@@ -11,6 +11,8 @@
   import { assistantLabel } from "#lib/assistant.ts";
   import { fetchHostSettings, hostKeys } from "#lib/host.ts";
   import { fetchAudits, POSTURE, RESULT, securityKeys } from "#lib/security.ts";
+  import PowerDialog from "#lib/components/PowerDialog.svelte";
+  import { fetchPower, powerKey, type PowerAction } from "#lib/power.ts";
 
   const assistant = createQuery(() => ({ queryKey: keys.assistant, queryFn: fetchAssistant }));
   const assistantOn = $derived(!!assistant.data && assistant.data.provider !== "none");
@@ -32,6 +34,10 @@
     if (s.applied.errors.length > 0) return { tone: "bad" as const, state: "not applied" };
     return s.managed === "nixos" ? { tone: "info" as const, state: "nixos" } : { tone: "ok" as const, state: "applied" };
   });
+
+  const power = createQuery(() => ({ queryKey: powerKey, queryFn: fetchPower }));
+  const scheduled = $derived(power.data?.scheduled);
+  let powerAction = $state<PowerAction | null>(null);
 
   let changing = $state(false);
   let signOutError = $state("");
@@ -99,6 +105,21 @@
         <span class="grow text-muted">Host, backups</span>
         {@render go()}
       </li>
+      <li class="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
+        <span class="flex grow flex-wrap items-center gap-x-3 font-semibold">
+          <Help label="Power">
+            Before the host goes down the stacks stop and the pools unmount. The next boot starts the same stacks and mounts the
+            same pools.
+          </Help>
+          {#if scheduled}
+            <span class="font-normal text-muted">{scheduled.action} at {new Date(scheduled.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+          {/if}
+        </span>
+        <span class="flex flex-wrap gap-2">
+          <button type="button" class="btn btn-sm" onclick={() => (powerAction = "reboot")}>Reboot…</button>
+          <button type="button" class="btn btn-sm" onclick={() => (powerAction = "poweroff")}>Shut down…</button>
+        </span>
+      </li>
     </ul>
   </section>
 
@@ -153,3 +174,4 @@
 </div>
 
 {#if changing}<PasswordForm onClose={() => (changing = false)} />{/if}
+{#if powerAction}<PowerDialog action={powerAction} onClose={() => (powerAction = null)} />{/if}

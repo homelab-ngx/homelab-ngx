@@ -6,7 +6,7 @@
  */
 import type { paths } from "#lib/api/schema.gen.ts";
 import type { Schema } from "#lib/api/client.ts";
-import { approve, DemoProblem, downloadImage, installImage, iso, newHost, reboot, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
+import { approve, DemoProblem, downloadImage, installImage, iso, newHost, power, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
 import { history } from "./metrics.ts";
 
 type JsonOf<P extends keyof paths> = paths[P] extends { get: { responses: { 200: { content: { "application/json": infer R } } } } } ? R : never;
@@ -253,6 +253,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
   }),
   "/system-updates/deploys": (h) => h.deploys,
   "/system-updates/image": (h) => h.image,
+  "/system/power": (h) => h.power,
   "/version": (h) => ({ version: h.image.core.active, commit: "demo" }),
 };
 
@@ -266,7 +267,7 @@ const posts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknow
   "/backups/{id}/run": (h, c) => ({ status: 202, body: runBackup(h, Number(c.path.id)) }),
   "/system-updates/image/download": (h) => ({ status: 202, body: downloadImage(h) }),
   "/system-updates/image/release": (h) => ({ status: 202, body: installImage(h) }),
-  "/system-updates/reboot": (h) => (reboot(h), { status: 202 }),
+  "/system/power": (h, c) => ({ status: 202, body: power(h, c.body.action === "poweroff" ? "poweroff" : "reboot", c.body.force === true) }),
 };
 
 interface Route {
@@ -298,6 +299,8 @@ export function demoFetchFor(h: Host) {
     const path = url.pathname.replace(/^\/api/, "");
     const get = input.method === "GET";
     tick(h);
+    // A host that reboots answers nothing, as a browser sees it.
+    if (h.now() < h.downUntil) throw new TypeError("Failed to fetch");
     for (const r of get ? getRoutes : input.method === "POST" ? postRoutes : []) {
       const m = r.re.exec(path);
       if (!m) continue;
