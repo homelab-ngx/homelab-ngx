@@ -28,6 +28,10 @@ type Client struct {
 	diskstats  string
 	sysfs      string // /sys/fs/bcachefs: one folder per mounted filesystem
 	statfs     func(path string, st *syscall.Statfs_t) error
+	// For Candidates and Wipe.
+	mountinfo   string // /proc/self/mountinfo
+	sysDevBlock string // /sys/dev/block: one link per device number
+	zeroHead    func(path string, n int) error
 
 	friendlyMu    sync.Mutex
 	friendlyNames map[string]string
@@ -37,7 +41,8 @@ type Client struct {
 func New(r cmdrunner.Runner) *Client {
 	return &Client{
 		r: r, procMounts: "/proc/mounts", diskstats: "/proc/diskstats", sysfs: "/sys/fs/bcachefs",
-		statfs:        syscall.Statfs,
+		statfs:    syscall.Statfs,
+		mountinfo: "/proc/self/mountinfo", sysDevBlock: "/sys/dev/block", zeroHead: zeroHead,
 		friendlyNames: make(map[string]string),
 	}
 }
@@ -74,6 +79,8 @@ type Disk struct {
 	MetadataTarget string       `json:"metadata_target"` // NEW — "foreground", "background", or ""
 	IO             *DiskIOStats `json:"io,omitempty"`
 	FriendlyName   string       `json:"friendly_name"` // NEW — friendly display name via smartctl
+	Rotational     bool         `json:"rotational"`    // lsblk's ROTA: a disk that spins
+	State          string       `json:"state"`         // a pool member's state: rw, ro, evacuating, ...
 }
 
 type Pool struct {
@@ -127,12 +134,13 @@ type lsblkDevice struct {
 	Mountpoint  string        `json:"mountpoint"`
 	Mountpoints []string      `json:"mountpoints"` // Newer lsblk uses an array
 	Label       string        `json:"label"`
+	Rota        bool          `json:"rota"`
 	Children    []lsblkDevice `json:"children"`
 }
 
 // GetDisks returns all block devices using lsblk.
 func (c *Client) GetDisks(ctx context.Context) ([]Disk, error) {
-	out, err := c.run(ctx, "lsblk", "-J", "-b", "-o", "NAME,PATH,SIZE,TYPE,MODEL,SERIAL,FSTYPE,MOUNTPOINT,LABEL")
+	out, err := c.run(ctx, "lsblk", "-J", "-b", "-o", "NAME,PATH,SIZE,TYPE,MODEL,SERIAL,FSTYPE,MOUNTPOINT,LABEL,ROTA")
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +184,7 @@ func (c *Client) GetDisks(ctx context.Context) ([]Disk, error) {
 				Label:        dev.Label,
 				HasChildren:  len(dev.Children) > 0,
 				FriendlyName: friendly,
+				Rotational:   dev.Rota,
 			})
 			if len(dev.Children) > 0 {
 				extractDisks(dev.Children)
@@ -289,6 +298,7 @@ func (c *Client) DiscoverPools(ctx context.Context) ([]Pool, error) {
 		for _, dev := range super.Devices {
 			if d.Path == dev.Path || (dev.Path != "" && strings.HasSuffix(d.Path, dev.Path)) || (d.Name != "" && strings.HasSuffix(dev.Path, d.Name)) {
 				d.BcachefsLabel = dev.Label
+				d.State = dev.State
 				d.DataTarget, d.MetadataTarget = determineDiskTargets(dev.Label, super.ForegroundTarget, super.MetadataTarget, super.BackgroundTarget)
 				break
 			}
@@ -333,6 +343,7 @@ type ParsedDevice struct {
 	Path  string
 	Model string
 	Label string
+	State string // rw, ro, evacuating, spare, ...
 }
 
 func parseSuper(output string) ParsedSuper {
@@ -374,6 +385,11 @@ func parseSuper(output string) ParsedSuper {
 		}
 
 		if currentDevice != nil {
+			if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "State:"); ok {
+				if fields := strings.Fields(rest); len(fields) > 0 {
+					currentDevice.State = fields[0]
+				}
+			}
 			if strings.Contains(line, "Label:") {
 				parts := strings.SplitN(line, "Label:", 2)
 				if len(parts) == 2 {

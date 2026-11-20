@@ -59,10 +59,10 @@ func TestParseSuper(t *testing.T) {
 		t.Fatalf("devices = %+v", s.Devices)
 	}
 	want := []ParsedDevice{
-		{"0", "sdb", "ST4000VN008", "hdd.hdd1"},
-		{"1", "sda", "Samsung", "ssd.ssd1"},
-		{"2", "sdc", "ST4000VN008", "hdd.hdd2"},
-		{"3", "sdd", "ST4000VN008", ""}, // "(none)" normalised
+		{"0", "sdb", "ST4000VN008", "hdd.hdd1", "rw"},
+		{"1", "sda", "Samsung", "ssd.ssd1", "rw"},
+		{"2", "sdc", "ST4000VN008", "hdd.hdd2", "rw"},
+		{"3", "sdd", "ST4000VN008", "", "rw"}, // "(none)" normalised
 	}
 	for i, w := range want {
 		if s.Devices[i] != w {
