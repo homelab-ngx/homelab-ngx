@@ -423,6 +423,17 @@ stackrefused() {
   [ "$code" = 200 ] || die "$1's own route answered $code inside $1, not 200"
 }
 
+# fixedids: the image's own accounts keep their ids from one version to the
+# next, since files in /var are owned by number
+# (usr/lib/sysusers.d/homelab.conf). False on a version from before they
+# were fixed.
+fixedids() {
+  local got
+  vssh 'grep -q "^u caddy 956 " /usr/lib/sysusers.d/homelab.conf' || return 1
+  got=$(vssh 'echo "$(id -u caddy):$(id -g caddy) $(getent group homelab-daemon | cut -d: -f3) $(id -u homelab-nixd)"')
+  [ "$got" = "956:956 957 955" ] || die "the image's accounts have other ids than the ones it fixes: caddy, homelab-daemon, homelab-nixd are $got"
+}
+
 # hostcheck: everything the host settings asked for is in place.
 hostcheck() {
   served || die "the dashboard is not served at homelab.$domain"
@@ -662,13 +673,7 @@ signed=" (no sign-in on $version)"
 hassignin && signin && signed=" behind its sign-in"
 ok "daemon $(api http://x/api/version | jq -r .version), dashboard over HTTP and at https://homelab.$domain$signed$wol"
 
-# The image's own accounts keep their ids from one version to the next:
-# files in /var are owned by number (usr/lib/sysusers.d/homelab.conf).
-if vssh 'grep -q "^u caddy 956 " /usr/lib/sysusers.d/homelab.conf'; then
-  got=$(vssh 'echo "$(id -u caddy):$(id -g caddy) $(getent group homelab-daemon | cut -d: -f3) $(id -u homelab-nixd)"')
-  [ "$got" = "956:956 957 955" ] || die "the image's accounts have other ids than the ones it fixes: caddy, homelab-daemon, homelab-nixd are $got"
-  ok "caddy, homelab-daemon and homelab-nixd have their fixed ids"
-fi
+fixedids && ok "caddy, homelab-daemon and homelab-nixd have their fixed ids"
 
 step "5. a bcachefs pool through the daemon"
 vssh 'bcachefs format -q --replicas=2 /dev/vdb /dev/vdc >/dev/null'
@@ -827,6 +832,7 @@ if [ -n "$next" ]; then
   for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
   booted "$next"
   vssh 'systemd-sysext status --no-legend' | grep -q homelab-core || die "the core extension is not merged on $next"
+  fixedids || true
   # $next has no /pool: a pool the first version mounted there is mounted
   # again by hand, under its name, and the stack is given its new path.
   if [ "$pool" = /pool ] && vssh 'test -L /mnt'; then
@@ -1018,6 +1024,7 @@ install vdb true crossdisk "" vdc1
 boot "$vm/sys.raw" "$vm/win2.raw" "usb:$vm/stick.raw"
 booted "$under"
 runs_from vda vdb
+fixedids || true
 ownid
 crossdisk=$id
 # Where this version keeps the store, for step 19.
