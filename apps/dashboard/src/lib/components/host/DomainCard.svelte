@@ -36,6 +36,7 @@
 
 <HostCard
   title="Domain"
+  subtitle="Where the dashboard and stacks are served, with HTTPS."
   help="The private domain the dashboard and every stack route are served under, with one wildcard certificate. Point it at this host in the LAN's DNS."
   {readOnly}
   dirty={changed(draft, stored())}

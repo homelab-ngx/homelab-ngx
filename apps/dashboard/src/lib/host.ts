@@ -7,9 +7,51 @@ export type Peer = Schema<"Peer">;
 export type Route = Schema<"Route">;
 export type DNSProvider = Schema<"Domain">["dns_provider"];
 
-export const hostKeys = { settings: ["daemon", "host-settings"] as const };
+export type TailscaleStatus = Schema<"TailscaleStatus">;
+export type Login = Schema<"Login">;
+export type AddedDevice = Schema<"AddedDevice">;
+
+export const hostKeys = {
+  settings: ["daemon", "host-settings"] as const,
+  tailscale: ["daemon", "host-settings", "tailscale"] as const,
+  tunnelLogin: ["daemon", "host-settings", "tunnel-login"] as const,
+};
 
 export const fetchHostSettings = () => call<HostSettings>(api.GET("/host-settings"));
+export const fetchTailscale = () => call<TailscaleStatus>(api.GET("/host-settings/tailscale/status"));
+export const fetchTunnelLogin = () => call<Login>(api.GET("/host-settings/tunnel/login"));
+
+/** Tailscale's state as a status mark and word. */
+export function tailscaleState(st: TailscaleStatus | undefined): { tone: "ok" | "warn" | "info" | "idle"; word: string } {
+  switch (st?.state) {
+    case "running":
+      return { tone: "ok", word: "connected" };
+    case "needs-login":
+      return { tone: "warn", word: "logged out" };
+    case "needs-approval":
+      return { tone: "warn", word: "awaiting approval" };
+    case "starting":
+      return { tone: "info", word: "starting" };
+  }
+  return { tone: "idle", word: "off" };
+}
+
+/** The VPN's UDP port. */
+export const vpnPort = (w: { listen_port?: number }) => w.listen_port || 51820;
+
+/** The host's address on the LAN: the static one, else a wired interface's. */
+export function lanAddress(s: Pick<HostSettings, "network" | "wired">): string {
+  if (s.network.ipv4?.mode === "static" && s.network.ipv4.address) return s.network.ipv4.address.replace(/\/\d+$/, "");
+  return s.wired.flatMap((w) => w.addresses ?? [])[0] ?? "";
+}
+
+/** The name dynamic DNS keeps, as the daemon writes it, or "" without a domain. */
+export function ddnsName(s: Pick<HostSettings, "domain">, label: string): string {
+  const d = s.domain.domain;
+  if (!d) return "";
+  if (s.domain.dns_provider === "duckdns") return d;
+  return `${label || "vpn"}.${d}`;
+}
 
 /** The credential fields each DNS provider takes. */
 export const DNS_FIELDS: Record<string, { key: string; label: string }[]> = {

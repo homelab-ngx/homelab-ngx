@@ -187,12 +187,16 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
     host: { hostname: "homelab", timezone: "Europe/Stockholm", ssh_keys: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoKeyDemoKeyDemoKeyDemoKeyDemoKeyDemoKeyDemo demo@laptop"] },
     domain: { domain: "home.example", dashboard_label: "homelab", dns_provider: "cloudflare", dns_credentials_set: true, acme_email: "admin@home.example" },
     network: { lan: ["192.0.2.0/24"], ipv4: { mode: "dhcp", address: "192.0.2.10/24", gateway: "192.0.2.1", dns: ["192.0.2.1"] } },
-    wired: [{ name: "enp3s0", mac: "02:00:5e:00:53:10" }],
+    wired: [{ name: "enp3s0", mac: "02:00:5e:00:53:10", addresses: ["192.0.2.10"] }],
     firewall: { openings: [{ port: 22, proto: "tcp", from: ["192.0.2.0/24"], note: "SSH from the LAN" }] },
     wireguard: { enabled: true, address: "10.99.0.1/24", endpoint: "vpn.home.example:51820", listen_port: 51820, public_key: "DemoDemoDemoDemoDemoDemoDemoDemoDemoDemoDem0=", peers: [{ name: "phone", address: "10.99.0.2/32", public_key: "PhonePhonePhonePhonePhonePhonePhonePhonePho0=" }, { name: "laptop", address: "10.99.0.3/32", public_key: "LaptopLaptopLaptopLaptopLaptopLaptopLaptopL0=" }] },
-    tunnel: { enabled: true, credentials_set: true, tunnel_id: "00000000-demo-4000-8000-000000000000", routes: [{ hostname: "photos.home.example", target: "http://photos:2283" }] },
+    tunnel: { enabled: true, credentials_set: true, dns_managed: true, tunnel_id: "00000000-demo-4000-8000-000000000000", routes: [{ hostname: "photos.home.example", target: "http://photos:2283" }] },
     tailscale: { enabled: false },
+    ddns: { enabled: true, name: "vpn", status: { record: "vpn.home.example", ips: ["203.0.113.7"], at: iso(h.now() - 3 * MIN) } },
   }),
+  "/host-settings/tailscale/status": () => ({ state: "off", ips: [] }),
+  "/host-settings/tunnel/login": () => ({ state: "idle" }),
+  "/host-settings/wireguard/public-address": () => ({ ip: "203.0.113.7" }),
   "/installer": () => installer(),
   "/log-viewer-config": (h) => ({
     units: [
@@ -268,6 +272,13 @@ const posts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknow
   "/system-updates/image/download": (h) => ({ status: 202, body: downloadImage(h) }),
   "/system-updates/image/release": (h) => ({ status: 202, body: installImage(h) }),
   "/system/power": (h, c) => ({ status: 202, body: power(h, c.body.action === "poweroff" ? "poweroff" : "reboot", c.body.force === true) }),
+  "/host-settings/wireguard/peers": (h, c) => {
+    const settings = gets["/host-settings"](h, c) as Schema<"HostSettings">;
+    const peer = { name: String(c.body.name ?? "device"), address: `10.99.0.${settings.wireguard.peers.length + 2}/32`, public_key: "DemoDeviceDemoDeviceDemoDeviceDemoDeviceDem0=" };
+    settings.wireguard.peers.push(peer);
+    const config = `[Interface]\nPrivateKey = DemoPrivateKeyDemoPrivateKeyDemoPrivateKey0=\nAddress = ${peer.address}\n\n[Peer]\nPublicKey = ${settings.wireguard.public_key}\nEndpoint = ${settings.wireguard.endpoint}\nAllowedIPs = 10.99.0.0/24\nPersistentKeepalive = 25\n`;
+    return { status: 200, body: { settings, config } };
+  },
 };
 
 interface Route {

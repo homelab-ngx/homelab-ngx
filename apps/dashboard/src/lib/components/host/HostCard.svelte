@@ -5,8 +5,12 @@
 
   interface Props {
     title: string;
+    /** What the section is for, in a few words: the one hint it shows. */
+    subtitle: string;
     /** The title's help. */
     help: string;
+    /** The section's state, as a status mark and word beside the title. */
+    status?: Snippet;
     /** Values from the NixOS configuration: shown, not changed. */
     readOnly: boolean;
     /** Something differs from what is stored. */
@@ -17,7 +21,7 @@
     reset: () => void;
     children: Snippet;
   }
-  let { title, help, readOnly, dirty, problem = "", apply, reset, children }: Props = $props();
+  let { title, subtitle, help, status, readOnly, dirty, problem = "", apply, reset, children }: Props = $props();
 
   const id = $props.id();
   let pending = $state(false);
@@ -40,7 +44,13 @@
 
 <!-- One section of the host's settings: its fields and one Apply (DESIGN.md, Value List). -->
 <section class="card" aria-labelledby="{id}-h">
-  <h2 id="{id}-h" class="font-semibold"><Help label={title}>{help}</Help></h2>
+  <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
+    <div class="min-w-0">
+      <h3 id="{id}-h" class="font-semibold"><Help label={title}>{help}</Help></h3>
+      <p class="mt-0.5 text-xs text-muted">{subtitle}</p>
+    </div>
+    {#if status}<div class="pt-0.5">{@render status()}</div>{/if}
+  </div>
   <form class="mt-3 grid gap-3" onsubmit={submit}>
     <fieldset class="grid gap-3" disabled={readOnly}>
       {@render children()}

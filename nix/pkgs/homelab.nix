@@ -8,7 +8,7 @@
 let
   final = pkgs;
   # The dashboard's npm deps hash (update-hashes.sh patches it by name).
-  dashboardNpmDepsHash = "sha256-hGapl/71sw6sOHarUHbszNtdmuNYZMf3v5gsQxvdC1w=";
+  dashboardNpmDepsHash = "sha256-Qv2tAjz7XHL74sDspw9JdxXHWLsnq/jjk2qpXfhAmKg=";
   vendorHash = "sha256-Q+/jCjHdWRXxpIz9nKqe79eQI9jZRE3qvgoZ1oLsrKw=";
 
   # The daemon's module with the backup runner's next to it: the daemon

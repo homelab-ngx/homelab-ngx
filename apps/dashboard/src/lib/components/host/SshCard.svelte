@@ -23,6 +23,7 @@
 
 <HostCard
   title="SSH"
+  subtitle="Keys that may log in as root."
   help="Public keys that may log in as root over SSH, one per line. Passwords are never accepted. Without a key, the host has no shell login."
   {readOnly}
   dirty={changed(keys, settings.host.ssh_keys ?? [])}
