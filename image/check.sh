@@ -444,7 +444,7 @@ hostcheck() {
     sleep 2
     sitewait=$((sitewait + 2))
   done
-  vssh 'wg show wg-homelab peers' | grep -q . || die "the VPN has no device"
+  [ "$(vssh 'wg show wg-homelab peers' | wc -l)" -eq 2 ] || die "the VPN does not have its two devices"
   vssh 'ip -4 -o addr show wg-homelab' | grep -q 10.10.0.1/24 || die "the VPN interface has no address"
   vssh 'grep -q "originServerName: site.'"$domain"'" /var/lib/homelab/cloudflared/config.yml' || die "the tunnel route is not in cloudflared's config"
   vssh 'systemctl is-enabled homelab-cloudflared' | grep -q runtime || die "the tunnel is not turned on"
@@ -772,6 +772,12 @@ step "7. host settings: VPN, tunnel, firewall, name and time zone"
 peer=$(vssh 'wg genkey | wg pubkey')
 put host-settings/wireguard "$(jq -n --arg k "$peer" '{enabled: true, address: "10.10.0.1/24", endpoint: "vpn.example.net:51820",
   peers: [{name: "laptop", public_key: $k, address: "10.10.0.2"}]}')" || die "VPN refused"
+# A device whose keys the host makes: its config holds the private key that
+# belongs to the public key the VPN now has.
+dev=$(post host-settings/wireguard/peers '{"name":"phone"}') || die "adding a VPN device refused: $dev"
+jq -e '.config | test("Address = 10.10.0.3/32") and test("Endpoint = vpn.example.net:51820")' <<<"$dev" >/dev/null || die "the new device's config: $dev"
+devpub=$(jq -r '.config | capture("PrivateKey = (?<k>[^\n]+)").k' <<<"$dev" | vssh wg pubkey)
+jq -e --arg k "$devpub" '.settings.wireguard.peers | any(.public_key == $k)' <<<"$dev" >/dev/null || die "the new device's private key is not its peer's"
 creds='{"AccountTag":"acc","TunnelID":"0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","TunnelSecret":"c2VjcmV0"}'
 put host-settings/tunnel "$(jq -n --arg c "$creds" '{enabled: true, credentials: $c, routes: [{hostname: "site.example.net", target: "site"}]}')" || die "tunnel refused"
 put host-settings/firewall '{"openings":[{"port":8443,"proto":"tcp","from":["10.0.2.0/24"]}]}' || die "firewall refused"
@@ -780,7 +786,7 @@ errs=$(api http://x/api/host-settings | jq -r '.applied.errors | join("; ")')
 [ -z "$errs" ] || die "not applied: $errs"
 sleep 2
 hostcheck
-ok "VPN device, tunnel route, firewall, host name and time zone in place"
+ok "VPN devices (one with keys the host made), tunnel route, firewall, host name and time zone in place"
 
 step "8. after a reboot"
 reboot_vm
