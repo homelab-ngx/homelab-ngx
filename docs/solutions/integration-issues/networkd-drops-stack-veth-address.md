@@ -64,6 +64,16 @@ Two other ways were set aside:
   about networkd's start and stop, not about a reconfigure, so it would not
   stop the drop.
 
+## What changes on a host
+With a stack running, IPv6 forwarding used to be on for the whole host, a
+side effect of the stock file's `IPMasquerade=both`. It is off now (checked
+on a VM: `net.ipv6.conf.all.forwarding` is 0 with a stack running).
+systemd-networkd accepts router advertisements on a link unless IPv6
+forwarding is on, so on a LAN that sends them a host running stacks now
+gets an IPv6 address and default route, as a host without stacks always
+did. The host firewall is an `inet` table and covers both. The check's VM
+gets no router advertisements, so the new address itself was not seen there.
+
 ## How it is checked
 `TestStackLinksAreTheDaemons` (`stacks/runtime_test.go`) covers the file,
 the reload, and forwarding. The image check's `stackrace` (step 10) runs
