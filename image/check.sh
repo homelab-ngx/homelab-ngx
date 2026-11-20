@@ -603,13 +603,18 @@ stackup() {
 }
 # stackrace: systemd-networkd reading its configuration again leaves the
 # stack's link alone. The daemon gives ve-site its address, and networkd
-# also has a file for ve-* links, so a reload or a reconfigure can take the
-# address off: every change to the host's network settings does one. Checked
+# also has a file for ve-* links, so a reconfigure takes the address off:
+# the first change to the host's settings after a boot does one. Checked
 # with the stack running, and with reloads going on while it starts. Only on
 # the version under test: a release before cannot be fixed by this run.
 stackrace() {
   local racer
-  vssh 'networkctl reload && networkctl reconfigure ve-site' || die "networkctl reload and reconfigure refused"
+  # What a change to the host settings runs. The first one after a boot
+  # makes networkd configure every link again; later ones do not.
+  vssh 'systemd-confext refresh --always-refresh=yes && networkctl reload' || die "confext refresh and networkctl reload refused"
+  sleep 3
+  stackup 0 "after the host's settings were applied as a change does"
+  vssh 'networkctl reconfigure ve-site' || die "networkctl reconfigure refused"
   sleep 3
   stackup 0 "after systemd-networkd reconfigured the link"
   api -X POST http://x/api/stacks/site/stop >/dev/null || die "stop refused"
