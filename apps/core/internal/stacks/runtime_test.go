@@ -215,6 +215,7 @@ func newFakeHost() *fakeHost {
 	h.On("machinectl", "terminate").Do(locked(func(cmdrunner.Cmd) (cmdrunner.Result, error) { h.orphan = false; return ok("") }))
 	h.On("nft").Reply("")
 	h.On("ip").Reply("")
+	h.On("networkctl").Reply("")
 	return h
 }
 
@@ -1087,5 +1088,62 @@ func TestStartEndsAContainerThatOutlivedItsUnit(t *testing.T) {
 	boot := slices.IndexFunc(calls, func(c cmdrunner.Cmd) bool { return c.Name == "systemd-run" })
 	if term < 0 || term > boot {
 		t.Errorf("the old container was ended at %d, the new one started at %d", term, boot)
+	}
+}
+
+// The host end of a stack's veth is the daemon's alone: networkd is told to
+// leave ve-* links alone before any stack starts, reloaded only when that
+// file is missing or changed, and a stack's start turns IPv4 forwarding on
+// (networkd did that while it managed the links).
+func TestStackLinksAreTheDaemons(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	svc, _, h := newRuntime(t)
+	dir := t.TempDir()
+	svc.host.NetworkDir = filepath.Join(dir, "network")
+	svc.host.ProcSys = filepath.Join(dir, "sys")
+	fwd := filepath.Join(svc.host.ProcSys, "net/ipv4/ip_forward")
+	if err := writeFile(fwd, "0\n", 0o644); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(svc.host.NetworkDir, "10-homelab-stacks.network")
+	reloads := func() int { return len(h.CallsMatching("networkctl", "reload")) }
+
+	svc.StartWanted(ctx) // nothing to start: immich is not wanted running
+	if b, _ := os.ReadFile(file); string(b) != "[Match]\nKind=veth\nName=ve-*\n\n[Link]\nUnmanaged=yes\n" {
+		t.Fatalf("networkd file:\n%s", b)
+	}
+	if reloads() != 1 {
+		t.Fatalf("networkd reloads at the daemon's start = %d, want 1", reloads())
+	}
+
+	if s := finished(t, svc, svc.Start); !s.Running || s.Operation.Error != "" {
+		t.Fatalf("running=%v operation=%+v", s.Running, s.Operation)
+	}
+	if reloads() != 1 {
+		t.Errorf("networkd reloaded again at a stack's start with the file in place: %d", reloads())
+	}
+	if b, _ := os.ReadFile(fwd); string(b) != "1" {
+		t.Errorf("ip_forward = %q, want 1", b)
+	}
+
+	// A file that went missing is written again before the next boot, and
+	// networkd reloaded before the container starts.
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	finished(t, svc, svc.Stop)
+	n := len(h.Calls())
+	if s := finished(t, svc, svc.Start); !s.Running {
+		t.Fatalf("not running after a stop and start: %+v", s.Operation)
+	}
+	calls := h.Calls()[n:]
+	reload := slices.IndexFunc(calls, func(c cmdrunner.Cmd) bool { return argv(c) == "networkctl reload" })
+	boot := slices.IndexFunc(calls, func(c cmdrunner.Cmd) bool { return c.Name == "systemd-run" })
+	if reload < 0 || boot < 0 || reload > boot {
+		t.Errorf("networkctl reload at %d, the container's boot at %d", reload, boot)
+	}
+	if !exists(file) {
+		t.Error("the networkd file was not written again")
 	}
 }

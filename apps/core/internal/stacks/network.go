@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -279,9 +281,63 @@ func concreteNet(m Manifest, vars []storedVar, lan []string) ([]Egress, []Port) 
 	return egress, ports
 }
 
-// linkUp gives the host side of the stack's veth its address. nspawn creates
-// the interface and nothing on the host configures it. expect lists exit
-// codes that are an expected answer, such as `ip` finding no interface yet.
+// The daemon alone configures the host end of a stack's veth. systemd-networkd
+// would otherwise take it too: the stock 80-container-ve.network matches every
+// ve-* link and gives it an address of networkd's own, and each time networkd
+// configures such a link again it drops the address the daemon put there,
+// which cuts the stack off from the host and from Caddy. That happens on
+// `networkctl reconfigure`, on a networkd restart, and on the first reload
+// after /etc changes in a boot, which the first host settings change after a
+// boot causes. This file, ahead of the stock one, leaves ve-* links
+// unmanaged. It lives in /run, so every daemon start writes it again before
+// any stack starts; a host that updates with stacks running takes it at the
+// daemon's start, and connect puts their addresses back.
+const (
+	unmanagedFile  = "10-homelab-stacks.network"
+	unmanagedLinks = "[Match]\nKind=veth\nName=ve-*\n\n[Link]\nUnmanaged=yes\n"
+)
+
+// ownLinks makes networkd leave the stacks' veths alone, and reloads it when
+// that file was missing or different.
+func (s *Service) ownLinks(ctx context.Context) error {
+	if s.host.NetworkDir == "" {
+		return nil
+	}
+	p := filepath.Join(s.host.NetworkDir, unmanagedFile)
+	if b, err := os.ReadFile(p); err == nil && string(b) == unmanagedLinks {
+		return nil
+	}
+	if err := writeFile(p, unmanagedLinks, 0o644); err != nil {
+		return fmt.Errorf("leaving the stacks' links to the daemon: %w", err)
+	}
+	if _, err := s.r.Run(ctx, cmdrunner.Cmd{Module: "stacks", Name: "networkctl", Args: []string{"reload"}}); err != nil {
+		return fmt.Errorf("leaving the stacks' links to the daemon: %w", err)
+	}
+	return nil
+}
+
+// forward turns IPv4 forwarding on, which a stack needs to reach the
+// internet through the host's masquerade. networkd used to do it for a link
+// it managed (IPMasquerade= in the stock file); IPv6 is left as it is, as a
+// stack has none.
+func (s *Service) forward() error {
+	if s.host.ProcSys == "" {
+		return nil
+	}
+	p := filepath.Join(s.host.ProcSys, "net/ipv4/ip_forward")
+	if b, err := os.ReadFile(p); err == nil && strings.TrimSpace(string(b)) == "1" {
+		return nil
+	}
+	if err := os.WriteFile(p, []byte("1"), 0o644); err != nil {
+		return fmt.Errorf("turning on IPv4 forwarding: %w", err)
+	}
+	return nil
+}
+
+// linkUp gives the host side of the stack's veth its address, and turns on
+// forwarding for the stack's traffic. nspawn creates the interface; nothing
+// else on the host configures it (ownLinks). expect lists exit codes that
+// are an expected answer, such as `ip` finding no interface yet.
 func (s *Service) linkUp(ctx context.Context, name, subnet string, expect ...int) error {
 	host, _, err := addrs(subnet)
 	if err != nil {
@@ -296,7 +352,7 @@ func (s *Service) linkUp(ctx context.Context, name, subnet string, expect ...int
 			return fmt.Errorf("configuring %s: %w", ifc, err)
 		}
 	}
-	return nil
+	return s.forward()
 }
 
 // removeRules deletes the stack's firewall; `destroy` accepts a table that

@@ -60,6 +60,12 @@ type Host struct {
 	LAN []string
 	// GPU is what a version 8 stack with the GPU grant is given.
 	GPU GPU
+	// NetworkDir is where the daemon tells the host's systemd-networkd to
+	// leave the stacks' veths alone (network.go). Empty: it does not.
+	NetworkDir string
+	// ProcSys is the kernel's /proc/sys, where a stack's start turns IPv4
+	// forwarding on. Empty: it does not.
+	ProcSys string
 }
 
 // GPU is the host's graphics stack as a version 8 stack gets it with the GPU
@@ -77,6 +83,7 @@ func DefaultHost(r cmdrunner.Runner) Host {
 		BuildsDir: "/var/lib/homelab-daemon/stack-builds",
 		StoreDir:  "/nix/store", StoreFile: "/var/lib/homelab-daemon/nix-store.json",
 		VarsDir: "/run/homelab-stack-vars", AgeKeyFile: "/var/lib/sops-age/keys.txt",
+		NetworkDir: "/run/systemd/network", ProcSys: "/proc/sys",
 	}
 }
 
@@ -256,6 +263,9 @@ func bootedArgs(r store.Stack) []string {
 // prepare creates what nspawn needs before the first boot: the profile
 // directory, a root it accepts as an OS tree and the network file.
 func (s *Service) prepare(ctx context.Context, name, subnet string) error {
+	if err := s.ownLinks(ctx); err != nil {
+		return err
+	}
 	root := filepath.Join(s.stateDir(name), "root")
 	if err := mkdirs(0o700, s.stateDir(name)); err != nil {
 		return err

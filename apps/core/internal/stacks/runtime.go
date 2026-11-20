@@ -297,6 +297,11 @@ func (s *Service) StartWanted(ctx context.Context) {
 	if err := s.st.Queries().InterruptStackUpdates(ctx, s.now().UnixMilli()); err != nil {
 		s.log.Warn("cannot close interrupted stack attempts", "error", err)
 	}
+	// Before any stack is started or connected; a stack that cannot have
+	// its link to itself fails at its own start (prepare).
+	if err := s.ownLinks(ctx); err != nil {
+		s.log.Warn("networkd may still configure the stacks' links", "error", err)
+	}
 	rows, err := s.st.Queries().ListStacks(ctx)
 	if err != nil {
 		s.log.Error("cannot list stacks to start", "error", err)
