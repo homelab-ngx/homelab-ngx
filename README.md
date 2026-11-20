@@ -48,8 +48,8 @@
   it.
 - Secrets are set on the host and encrypted with age, never kept in a
   stack's repo.
-- bcachefs pools: mounted, monitored and browsed in the dashboard, created
-  in a shell.
+- bcachefs pools made in the dashboard from one to three copies, with SSDs as
+  cache for HDDs. A disk is added or removed while the pool is mounted.
 - Reproducible builds: the same tag gives the same image, bit for bit.
 - Signed releases, verified by the host before it stages an update.
 - Remote access from the dashboard: wildcard certificate, WireGuard,
@@ -69,7 +69,8 @@ commit you chose, so you can read what runs, pin it and roll it back.
 
 It is for the job you would give Unraid or TrueNAS SCALE. Both manage
 arrays in the web UI, share folders over SMB and NFS, and have an app
-catalogue. homelab-ngx does none of these yet (see [Roadmap](#roadmap)).
+catalogue. homelab-ngx manages its pools in the dashboard and does not do
+the other two yet (see [Roadmap](#roadmap)).
 
 ## Screenshots
 
@@ -150,7 +151,8 @@ Not built yet:
 - A stack catalogue in the dashboard.
 - Secure Boot.
 - A documentation site.
-- Creating a pool and changing its drives in the dashboard.
+- Replacing a failed disk, changing a pool's copies, and encrypted pools in
+  the dashboard. Today these are done with `bcachefs` in a shell.
 - bcachefs snapshots.
 - Network shares over SMB and NFS.
 - ZFS pools.

@@ -151,8 +151,12 @@ An immutable view of the effective configuration (the nix config plus the pools)
 _Avoid_: config copy, cache
 
 **Pool**:
-A bcachefs storage pool recorded by the daemon, including whether it is auto-mounted at boot; owned by the database, not Nix.
+A bcachefs storage pool recorded by the daemon, including whether it is auto-mounted at boot; owned by the database, not Nix. The daemon makes one from spare disks, adds and removes its disks, and deletes it. In a pool with SSDs and HDDs the SSDs are its cache disks and the HDDs its storage disks.
 _Avoid_: array, volume
+
+**Spare disk**:
+A whole disk a pool can be made from or grown with: the system does not run from it, nothing on it is mounted and no pool has a member on it. It may hold partitions or a file system, which a pool erases after the pool's name is typed.
+_Avoid_: unassigned disk, free disk, drive
 
 **Stack id**:
 The host's number for a user or group name its stacks declare, from 2000 to 2099: given to the folders the daemon makes for a path variable, the same for every stack that declares the name. A folder that came with another owner keeps it.
