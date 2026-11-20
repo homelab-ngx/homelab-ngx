@@ -24,6 +24,7 @@ tags: [cli, json, secrets, automation, problem-json]
 - Put `--json` before the command: `homelab --json services status`. Results go to stdout; prompts, warnings, and errors go to stderr.
 - Branch on the exit code, then on `code`. With `--json`, an error is one JSON object on stderr with `success`, `error`, and, when the daemon answered with problem+json, `status`, `code`, and `detail`. Never parse the `error` sentence. If the daemon is down, the CLI prints `contacting daemon: ...` and exits non-zero.
 - `homelab update download`, `build`, `core` and `image` start an update through the daemon and wait. Exit code 0 means `healthy`; with `--json` the update record is on stdout, and `result` says `rolled_back`, `build_failed`, `failed` or `interrupted` otherwise. A core update restarts the daemon, so the CLI keeps asking until it answers again.
+- `homelab system reboot --yes` and `homelab system poweroff --yes` (or `shutdown`) print each stack stopping and each pool unmounting, then exit 0 when the host is handed to systemd or the daemon stops answering. While a stack operation, an update or a backup runs they exit non-zero with `code` `busy`; `--force` goes ahead. `--no-wait` returns once it has started. `homelab system status` shows a shutdown under way or scheduled, and `homelab system cancel` calls off one set with `shutdown -r HH:MM`.
 
 ## Examples
 

@@ -184,6 +184,10 @@ _Avoid_: flapping, crash loop
 The host's operating system as one built, read-only disk image (Arch, made with mkosi), installed in two slots and updated whole with systemd-sysupdate; a broken update falls back to the slot before.
 _Avoid_: firmware, appliance
 
+**Power action**:
+A reboot or poweroff of the host. Before any shutdown that goes through logind (the dashboard, the CLI, `shutdown -r`, the power button) the daemon stops the running stacks, then unmounts the pools and partitions. It records nothing, so the next boot starts the same stacks and mounts the same pools.
+_Avoid_: restart (that is a stack's or a unit's), shutdown sequence
+
 **Core extension**:
 The daemon, CLI, dashboard and Caddy as one system extension (`homelab-core`) merged over the image's /usr; updated without a reboot.
 _Avoid_: core package, sysext (in prose)
