@@ -662,6 +662,14 @@ signed=" (no sign-in on $version)"
 hassignin && signin && signed=" behind its sign-in"
 ok "daemon $(api http://x/api/version | jq -r .version), dashboard over HTTP and at https://homelab.$domain$signed$wol"
 
+# The image's own accounts keep their ids from one version to the next:
+# files in /var are owned by number (usr/lib/sysusers.d/homelab.conf).
+if vssh 'grep -q "^u caddy 956 " /usr/lib/sysusers.d/homelab.conf'; then
+  got=$(vssh 'echo "$(id -u caddy):$(id -g caddy) $(getent group homelab-daemon | cut -d: -f3) $(id -u homelab-nixd)"')
+  [ "$got" = "956:956 957 955" ] || die "the image's accounts have other ids than the ones it fixes: caddy, homelab-daemon, homelab-nixd are $got"
+  ok "caddy, homelab-daemon and homelab-nixd have their fixed ids"
+fi
+
 step "5. a bcachefs pool through the daemon"
 vssh 'bcachefs format -q --replicas=2 /dev/vdb /dev/vdc >/dev/null'
 # Pools mount under /var/mnt, by name. A release from before that (0.2.5,
