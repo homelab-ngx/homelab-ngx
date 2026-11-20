@@ -208,3 +208,40 @@ func TestTunnelRouteDNS(t *testing.T) {
 		t.Errorf("route dns calls after a second apply = %d, want only the failed route again", n)
 	}
 }
+
+// Offered subnets need the host to forward their family; nothing else turns
+// it on while no stack runs. A host not logged in is left as it is.
+func TestTailscaleForwardsOfferedSubnets(t *testing.T) {
+	root := t.TempDir()
+	f := cmdrunnertest.NewFake()
+	f.On("systemctl").Reply("")
+	status := tsNeedsLogin
+	f.On("tailscale", "status").Do(func(cmdrunner.Cmd) (cmdrunner.Result, error) { return cmdrunner.Result{Stdout: status}, nil })
+	f.On("tailscale", "set").Reply("")
+	a := &ImageApplier{Runner: f, Root: root}
+	s := snapshotOf(t)
+	s.Tailscale = Tailscale{Enabled: true, AdvertiseRoutes: []string{"192.168.1.0/24"}}
+	v4, v6 := filepath.Join(root, "proc/sys/net/ipv4/ip_forward"), filepath.Join(root, "proc/sys/net/ipv6/conf/all/forwarding")
+	read := func(p string) string { b, _ := os.ReadFile(p); return string(b) }
+	ctx := context.Background()
+	if err := a.tailscale(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if read(v4) != "" {
+		t.Errorf("forwarding turned on before the login: %q", read(v4))
+	}
+	status = tsRunning
+	if err := a.tailscale(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if read(v4) != "1" || read(v6) != "" {
+		t.Errorf("IPv4 subnet: ip_forward=%q, IPv6 forwarding=%q", read(v4), read(v6))
+	}
+	s.Tailscale.AdvertiseRoutes = append(s.Tailscale.AdvertiseRoutes, "fd00:1::/64")
+	if err := a.tailscale(ctx, s); err != nil {
+		t.Fatal(err)
+	}
+	if read(v6) != "1" {
+		t.Errorf("IPv6 subnet: IPv6 forwarding=%q", read(v6))
+	}
+}

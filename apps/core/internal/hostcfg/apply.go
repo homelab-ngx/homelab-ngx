@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -516,12 +517,49 @@ func (a *ImageApplier) tailscale(ctx context.Context, s Snapshot) error {
 	if readTailscale(ctx, a.Runner).State != TailscaleRunning {
 		return nil
 	}
+	if err := a.forwarding(s.Tailscale.AdvertiseRoutes); err != nil {
+		return err
+	}
 	args := []string{"set", "--advertise-routes=" + strings.Join(s.Tailscale.AdvertiseRoutes, ",")}
 	if s.Host.Hostname != "" {
 		args = append(args, "--hostname="+s.Host.Hostname)
 	}
 	if err := a.run(ctx, "tailscale", args...); err != nil {
 		return fmt.Errorf("offering subnets: %s", commandError(err))
+	}
+	return nil
+}
+
+// forwarding turns on IP forwarding for each family the offered subnets are
+// in, which Tailscale needs to route them through the host. It used to be on
+// only by chance, while systemd-networkd managed a stack's link; a stack's
+// start now turns on IPv4 forwarding alone (stacks/network.go).
+func (a *ImageApplier) forwarding(routes []string) error {
+	var v4, v6 bool
+	for _, r := range routes {
+		if p, err := netip.ParsePrefix(r); err == nil {
+			v4, v6 = v4 || p.Addr().Is4(), v6 || !p.Addr().Is4()
+		}
+	}
+	for _, f := range []struct {
+		on   bool
+		path string
+	}{{v4, "/proc/sys/net/ipv4/ip_forward"}, {v6, "/proc/sys/net/ipv6/conf/all/forwarding"}} {
+		if !f.on {
+			continue
+		}
+		p := a.path(f.path)
+		if b, err := os.ReadFile(p); err == nil && strings.TrimSpace(string(b)) == "1" {
+			continue
+		}
+		if a.Root != "" {
+			if err := a.mkdir(filepath.Dir(p)); err != nil {
+				return err
+			}
+		}
+		if err := os.WriteFile(p, []byte("1"), 0o644); err != nil {
+			return fmt.Errorf("turning on forwarding for the offered subnets: %w", err)
+		}
 	}
 	return nil
 }
