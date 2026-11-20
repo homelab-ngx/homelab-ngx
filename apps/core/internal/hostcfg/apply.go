@@ -39,6 +39,10 @@ func wgPort(w WireGuard) int {
 type ImageApplier struct {
 	Runner cmdrunner.Runner
 	Root   string
+
+	// routed holds the tunnel routes whose DNS record was added since the
+	// daemon started, as "<tunnel id> <hostname>".
+	routed map[string]bool
 }
 
 func (a *ImageApplier) path(p string) string { return filepath.Join(a.Root, p) }
@@ -435,11 +439,13 @@ func (a *ImageApplier) tunnel(ctx context.Context, s Snapshot) error {
 	dir := a.path("/var/lib/homelab/cloudflared")
 	creds := filepath.Join(dir, "credentials.json")
 	cfg := filepath.Join(dir, "config.yml")
+	cert := filepath.Join(dir, "cert.pem")
 	if !s.Tunnel.Enabled || s.TunnelCredentials == "" {
 		_, err1 := remove(cfg)
 		_, err2 := remove(creds)
+		_, err3 := remove(cert)
 		_ = a.run(ctx, "systemctl", "disable", "--runtime", "--now", tunnelUnit)
-		return errors.Join(err1, err2)
+		return errors.Join(err1, err2, err3)
 	}
 	c1, err := a.write(creds, s.TunnelCredentials+"\n", 0o600, "")
 	if err != nil {
@@ -454,10 +460,45 @@ func (a *ImageApplier) tunnel(ctx context.Context, s Snapshot) error {
 	if err := a.run(ctx, "systemctl", "enable", "--runtime", tunnelUnit); err != nil {
 		return err
 	}
+	start := "start"
 	if c1 || c2 {
-		return a.run(ctx, "systemctl", "restart", tunnelUnit)
+		start = "restart"
 	}
-	return a.run(ctx, "systemctl", "start", tunnelUnit)
+	if err := a.run(ctx, "systemctl", start, tunnelUnit); err != nil {
+		return err
+	}
+	return a.routeDNS(ctx, s, cert)
+}
+
+// routeDNS points each route's name at the tunnel (a CNAME to
+// <id>.cfargotunnel.com), with the certificate from the tunnel's login. A
+// record of the same name is replaced. Each route is added once per daemon
+// start; a tunnel whose credentials were pasted has no certificate, and its
+// records are added at Cloudflare by hand.
+func (a *ImageApplier) routeDNS(ctx context.Context, s Snapshot, cert string) error {
+	if s.TunnelCert == "" {
+		_, err := remove(cert)
+		return err
+	}
+	if _, err := a.write(cert, s.TunnelCert, 0o600, ""); err != nil {
+		return err
+	}
+	if a.routed == nil {
+		a.routed = map[string]bool{}
+	}
+	var errs []error
+	for _, r := range s.Tunnel.Routes {
+		k := s.Tunnel.TunnelID + " " + r.Hostname
+		if a.routed[k] {
+			continue
+		}
+		if err := a.run(ctx, "cloudflared", "tunnel", "--origincert", cert, "route", "dns", "--overwrite-dns", s.Tunnel.TunnelID, r.Hostname); err != nil {
+			errs = append(errs, fmt.Errorf("DNS record for %s (is it in the zone approved at the tunnel's login?): %s", r.Hostname, commandError(err)))
+			continue
+		}
+		a.routed[k] = true
+	}
+	return errors.Join(errs...)
 }
 
 // ── Tailscale ────────────────────────────────────────────────────────────
@@ -470,10 +511,17 @@ func (a *ImageApplier) tailscale(ctx context.Context, s Snapshot) error {
 	if err := a.run(ctx, "systemctl", "enable", "--runtime", "--now", "tailscaled.service"); err != nil {
 		return err
 	}
-	// Needs the host logged in once (tailscale up); until then it fails and
-	// the page says so.
-	if err := a.run(ctx, "tailscale", "set", "--advertise-routes="+strings.Join(s.Tailscale.AdvertiseRoutes, ",")); err != nil {
-		return fmt.Errorf("advertising routes (is the host logged in? run tailscale up): %w", err)
+	// Until the host is logged in (login.go) there is nothing to set; the
+	// login applies the settings again once it is in.
+	if readTailscale(ctx, a.Runner).State != TailscaleRunning {
+		return nil
+	}
+	args := []string{"set", "--advertise-routes=" + strings.Join(s.Tailscale.AdvertiseRoutes, ",")}
+	if s.Host.Hostname != "" {
+		args = append(args, "--hostname="+s.Host.Hostname)
+	}
+	if err := a.run(ctx, "tailscale", args...); err != nil {
+		return fmt.Errorf("offering subnets: %s", commandError(err))
 	}
 	return nil
 }

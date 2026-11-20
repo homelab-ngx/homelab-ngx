@@ -32,6 +32,7 @@ type tailscaleIn struct{ Body Tailscale }
 func (h *HTTP) Register(a httpx.APIs) {
 	tags := []string{"host"}
 	errs := []int{http.StatusBadRequest, http.StatusConflict}
+	loginErrs := []int{http.StatusConflict, http.StatusBadGateway}
 	httpx.Register(a, httpx.ScopeRead, huma.Operation{
 		OperationID: "getHostSettings", Method: http.MethodGet, Path: "/host-settings", Tags: tags,
 		Summary: "The host's settings, without secrets, and the last apply's outcome.",
@@ -50,6 +51,67 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeOperator, put("setHostWireGuard", "wireguard", "Set the WireGuard VPN and its peers."), h.setWireGuard)
 	httpx.Register(a, httpx.ScopeOperator, put("setHostTunnel", "tunnel", "Set the Cloudflare tunnel and its routes."), h.setTunnel)
 	httpx.Register(a, httpx.ScopeOperator, put("setHostTailscale", "tailscale", "Set Tailscale."), h.setTailscale)
+
+	httpx.Register(a, httpx.ScopeRead, huma.Operation{
+		OperationID: "getTailscaleStatus", Method: http.MethodGet, Path: "/host-settings/tailscale/status", Tags: tags,
+		Summary: "The host on its tailnet: logged in or not, its link while a login waits, its addresses.",
+	}, h.tailscaleStatus)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "loginTailscale", Method: http.MethodPost, Path: "/host-settings/tailscale/login", Tags: tags, Errors: loginErrs,
+		Summary:     "Turn Tailscale on and start its login.",
+		Description: "Answers with auth_url once tailscale login prints it (within 15 s). The link stays open for 10 minutes; once the host is approved, the settings are applied again. `409 managed_by_nixos` on a NixOS host.",
+	}, h.tailscaleLogin)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "logoutTailscale", Method: http.MethodPost, Path: "/host-settings/tailscale/logout", Tags: tags, Errors: loginErrs,
+		Summary: "Take the host off its tailnet.",
+	}, h.tailscaleLogout)
+	httpx.Register(a, httpx.ScopeRead, huma.Operation{
+		OperationID: "getTunnelLogin", Method: http.MethodGet, Path: "/host-settings/tunnel/login", Tags: tags,
+		Summary: "The last Cloudflare login: its link while it waits, and how it ended.",
+	}, h.tunnelLoginState)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "loginTunnel", Method: http.MethodPost, Path: "/host-settings/tunnel/login", Tags: tags, Errors: loginErrs,
+		Summary:     "Connect the tunnel through Cloudflare's login.",
+		Description: "Runs cloudflared tunnel login and answers with its link once printed (within 15 s). Once a zone is approved there, the host creates its tunnel (or takes back the one named after it), keeps its credentials and turns it on, and adds each route's DNS record. The link stays open for 10 minutes. `409 managed_by_nixos` on a NixOS host.",
+	}, h.tunnelLogin)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "forgetTunnel", Method: http.MethodPost, Path: "/host-settings/tunnel/forget", Tags: tags, Errors: errs,
+		Summary: "Drop the tunnel's credentials and turn it off. The tunnel and its DNS records stay at Cloudflare.",
+	}, h.tunnelForget)
+}
+
+type tailscaleOut struct{ Body TailscaleStatus }
+type loginOut struct{ Body Login }
+
+func (h *HTTP) tailscaleStatus(ctx context.Context, _ *struct{}) (*tailscaleOut, error) {
+	return &tailscaleOut{Body: h.s.TailscaleStatus(ctx)}, nil
+}
+func (h *HTTP) tailscaleLogin(ctx context.Context, _ *struct{}) (*tailscaleOut, error) {
+	st, err := h.s.TailscaleLogin(ctx)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &tailscaleOut{Body: st}, nil
+}
+func (h *HTTP) tailscaleLogout(ctx context.Context, _ *struct{}) (*tailscaleOut, error) {
+	st, err := h.s.TailscaleLogout(ctx)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &tailscaleOut{Body: st}, nil
+}
+func (h *HTTP) tunnelLoginState(_ context.Context, _ *struct{}) (*loginOut, error) {
+	return &loginOut{Body: h.s.TunnelLoginState()}, nil
+}
+func (h *HTTP) tunnelLogin(ctx context.Context, _ *struct{}) (*loginOut, error) {
+	l, err := h.s.TunnelLogin(ctx)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &loginOut{Body: l}, nil
+}
+func (h *HTTP) tunnelForget(ctx context.Context, _ *struct{}) (*settingsOut, error) {
+	return out(h.s.TunnelForget(ctx))
 }
 
 func problem(err error) error {
@@ -58,6 +120,8 @@ func problem(err error) error {
 		return httpx.BadRequest("invalid_setting", "%s", strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": "))
 	case errors.Is(err, ErrManaged):
 		return httpx.Conflict("managed_by_nixos", "%s", err)
+	case errors.Is(err, ErrCommand):
+		return httpx.BadGateway("command_failed", "%s", strings.TrimPrefix(err.Error(), ErrCommand.Error()+": "))
 	}
 	return err
 }

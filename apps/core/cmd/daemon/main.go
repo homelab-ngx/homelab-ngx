@@ -141,6 +141,7 @@ func run(configPath string) error {
 	// The stacks follow their domain, dashboard address and LAN.
 	hostSvc := hostcfg.New(st, stacks.DefaultHost(r).AgeKeyFile, hostcfg.Detect("/etc/os-release"), nix,
 		&hostcfg.ImageApplier{Runner: r}, logging.Logger("hostcfg"))
+	hostSvc.SetRunner(r)
 	stackHost := stacks.DefaultHost(r)
 	// A fresh host has no age key yet: stack variables, channel tokens and
 	// backup keys are sealed to it.

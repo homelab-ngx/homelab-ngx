@@ -176,6 +176,7 @@ type Tunnel struct {
 	Enabled        bool    `json:"enabled"`
 	TunnelID       string  `json:"tunnel_id,omitempty" doc:"From the stored credentials."`
 	CredentialsSet bool    `json:"credentials_set" doc:"The tunnel's credentials file is stored; it is never shown."`
+	DNSManaged     bool    `json:"dns_managed" doc:"The tunnel was connected through Cloudflare's login, so the host adds each route's DNS record itself. Otherwise each record is added at Cloudflare by hand."`
 	Routes         []Route `json:"routes"`
 }
 
@@ -189,6 +190,6 @@ type TunnelSet struct {
 
 // Tailscale is the host on a tailnet.
 type Tailscale struct {
-	Enabled         bool     `json:"enabled" doc:"Runs tailscaled; log it in once with tailscale up on the host."`
+	Enabled         bool     `json:"enabled" doc:"Runs tailscaled. The host joins a tailnet through the login link (POST /host-settings/tailscale/login)."`
 	AdvertiseRoutes []string `required:"false" json:"advertise_routes" doc:"Subnets offered to the tailnet, such as the LAN."`
 }

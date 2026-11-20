@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"homelab-ngx.com/core/internal/agefile"
+	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/config"
 	"homelab-ngx.com/core/internal/store"
 )
@@ -32,6 +33,8 @@ var (
 	ErrInvalid = errors.New("invalid setting")
 	// ErrManaged is a change on a host whose settings belong to NixOS.
 	ErrManaged = errors.New("this host's settings come from its NixOS configuration")
+	// ErrCommand is tailscale or cloudflared failing for a login.
+	ErrCommand = errors.New("command failed")
 )
 
 func invalid(format string, a ...any) error {
@@ -61,6 +64,9 @@ type Snapshot struct {
 	DNSCredentials map[string]string
 	// TunnelCredentials is the credentials file's JSON.
 	TunnelCredentials string
+	// TunnelCert is Cloudflare's certificate for the zone approved at the
+	// tunnel's login (cert.pem), for adding the routes' DNS records.
+	TunnelCert string
 	// WireGuardKey is the server's private key (base64).
 	WireGuardKey string
 }
@@ -80,7 +86,15 @@ type Service struct {
 	mu       sync.Mutex // serialises changes and applies
 	applied  Applied
 	onChange []func(Values)
+
+	// run runs tailscale and cloudflared for the logins (login.go).
+	run            cmdrunner.Runner
+	tailscaleLogin loginJob
+	tunnelLogin    loginJob
 }
+
+// SetRunner gives the service the runner its logins use.
+func (s *Service) SetRunner(r cmdrunner.Runner) { s.run = r }
 
 // New keeps the settings in st, sealing secrets with keyFile. A host whose
 // managed is ManagedNixOS shows nix and refuses changes; apply may be nil
@@ -157,6 +171,7 @@ type domainSecret struct {
 }
 type tunnelSecret struct {
 	Credentials string `json:"credentials,omitempty"`
+	Cert        string `json:"cert,omitempty"`
 }
 type wgSecret struct {
 	PrivateKey string `json:"private_key,omitempty"`
@@ -197,6 +212,8 @@ func (s *Service) snapshot(ctx context.Context) (Snapshot, error) {
 		return snap, fmt.Errorf("tunnel: %w", err)
 	}
 	snap.TunnelCredentials = ts.Credentials
+	snap.TunnelCert = ts.Cert
+	snap.Tunnel.DNSManaged = ts.Cert != "" && ts.Credentials != ""
 	snap.Tunnel.CredentialsSet = ts.Credentials != ""
 	snap.Tunnel.TunnelID = tunnelID(ts.Credentials)
 	var ws wgSecret
@@ -708,15 +725,22 @@ func (s *Service) SetTunnel(ctx context.Context, in TunnelSet) (HostSettings, er
 	}
 	return s.change(ctx, func(rs map[string]row) error {
 		var sec tunnelSecret
+		if err := s.open(rs["tunnel"], &sec); err != nil && in.Credentials == nil {
+			return err
+		}
 		if in.Credentials != nil {
 			c := strings.TrimSpace(*in.Credentials)
-			var parsed struct{ AccountTag, TunnelID, TunnelSecret string }
-			if c != "" && (json.Unmarshal([]byte(c), &parsed) != nil || parsed.AccountTag == "" || parsed.TunnelSecret == "" || !tunnelIDRE.MatchString(parsed.TunnelID)) {
-				return invalid("credentials: the JSON file cloudflared tunnel create writes (AccountTag, TunnelID, TunnelSecret)")
+			if c != "" {
+				if err := checkTunnelCredentials(c); err != nil {
+					return err
+				}
 			}
+			// The certificate is the zone's, not the tunnel's: it stays
+			// with new credentials and goes with none.
 			sec.Credentials = c
-		} else if err := s.open(rs["tunnel"], &sec); err != nil {
-			return err
+			if c == "" {
+				sec.Cert = ""
+			}
 		}
 		if in.Enabled && sec.Credentials == "" {
 			return invalid("credentials: the tunnel needs its credentials file to run")
@@ -724,6 +748,15 @@ func (s *Service) SetTunnel(ctx context.Context, in TunnelSet) (HostSettings, er
 		t := Tunnel{Enabled: in.Enabled, Routes: nonNil(in.Routes)}
 		return s.save(ctx, "tunnel", t, sec)
 	})
+}
+
+// checkTunnelCredentials refuses what is not a tunnel's credentials file.
+func checkTunnelCredentials(c string) error {
+	var parsed struct{ AccountTag, TunnelID, TunnelSecret string }
+	if json.Unmarshal([]byte(c), &parsed) != nil || parsed.AccountTag == "" || parsed.TunnelSecret == "" || !tunnelIDRE.MatchString(parsed.TunnelID) {
+		return invalid("credentials: the JSON file cloudflared tunnel create writes (AccountTag, TunnelID, TunnelSecret)")
+	}
+	return nil
 }
 
 // SetTailscale changes Tailscale.
