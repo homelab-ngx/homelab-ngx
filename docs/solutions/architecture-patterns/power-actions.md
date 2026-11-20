@@ -39,6 +39,11 @@ pool could be unmounted while a container still wrote to it.
   3. syncs and unmounts what is mounted under `/var/mnt`, deepest first,
      trying a busy mount 3 times 2 s apart;
   4. writes `power_last` to the database, then closes the lock.
+
+  On an installed image, `systemctl reboot` logs "The system will reboot
+  now!", then the stack unit and `var-mnt-*.mount` stop, then logind logs
+  "System is rebooting." `systemd-inhibit --list` shows the lock as
+  `homelab-daemon … shutdown … delay`.
 - **Nothing is recorded.** A stop through the API clears `want_running` and
   an unmount clears `auto_mount`; a shutdown uses `Halt` and `Release`,
   which do neither. The next boot mounts the same pools and starts the same
@@ -56,7 +61,8 @@ pool could be unmounted while a container still wrote to it.
 - **systemd orders the same steps when the daemon is not there.** Each stack
   unit has `TimeoutStopSec=120` and `WantsMountsFor=` on every host path it
   binds. Since systemd stops units in the reverse of their start order, the
-  pool's mount unit stops after the container. `Wants`, not `Requires`:
+  pool's mount unit stops after the container (`systemctl show -p After`
+  lists `var-mnt-<name>.mount`). `Wants`, not `Requires`:
   unmounting a pool by hand must not stop the stack.
 - **The unit properties restart no stack.** Whether a running stack needs a
   restart compares the boot arguments from `systemd-nspawn` on
