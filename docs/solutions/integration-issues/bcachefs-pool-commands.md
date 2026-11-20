@@ -7,6 +7,7 @@ problem_type: integration_issue
 component: storage
 symptoms:
   - A disk removed from a pool is still listed as its member
+  - lsblk shows a pool's mountpoint on a disk that left the pool
   - show-super still answers on a disk after wipefs -a
   - device evacuate never returns when the other disks are too small
 root_cause: tool_behaviour
@@ -74,6 +75,17 @@ answers with the pool's UUID and label, and `lsblk` shows it as `bcachefs`.
 A mount that names it with the pool's other disks succeeds and ignores it.
 The daemon finds a pool's members by that UUID, so it wipes a disk after
 removing it.
+
+## A pool's mount keeps its first disk's number
+
+The mount of a pool has the device number of the first disk it was mounted
+from, and keeps it when that disk is removed. `lsblk` matches mounts by that
+number: it shows the pool's mountpoint on that one disk only, and still
+shows it there after the disk has left the pool and been wiped. The source
+in `/proc/self/mountinfo` is right: it lists the members
+(`/dev/vdf:/dev/vdg`) and changes when one is added or removed. The daemon
+reads the source to tell which pool is mounted where, and whether a disk
+with a mountpoint in `lsblk` is in use.
 
 ## Wipe
 

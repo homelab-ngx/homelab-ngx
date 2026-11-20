@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -108,6 +109,22 @@ func (c *Client) Candidates(ctx context.Context) ([]Candidate, error) {
 		return nil, fmt.Errorf("failed to parse lsblk output: %w", err)
 	}
 	system := c.SystemDisks()
+	pools := c.poolSources()
+	// mounted: something on d is mounted. A disk that left a mounted pool is
+	// not: the kernel keeps the device number of the pool's first disk for
+	// the mount, so lsblk goes on listing the pool's mountpoint on it.
+	mounted := func(d lsblkCandidate) bool {
+		for _, m := range append([]string{d.Mountpoint}, d.Mountpoints...) {
+			if m == "" {
+				continue
+			}
+			if members, ok := pools[m]; ok && !slices.Contains(members, d.Path) {
+				continue
+			}
+			return true
+		}
+		return false
+	}
 	var list []Candidate
 	for _, d := range parsed.Blockdevices {
 		if d.Type != "disk" || d.RO || system[d.Name] || lsblkSize(d.Size) == 0 {
@@ -170,16 +187,28 @@ func (c *Client) Candidates(ctx context.Context) ([]Candidate, error) {
 	return list, nil
 }
 
-func mounted(d lsblkCandidate) bool {
-	if d.Mountpoint != "" {
-		return true
+// poolSources is, for each mounted bcachefs pool whose mount names its
+// member devices (/dev/sdb:/dev/sdc), those devices by mountpoint.
+func (c *Client) poolSources() map[string][]string {
+	out := map[string][]string{}
+	data, err := os.ReadFile(c.mountinfo)
+	if err != nil {
+		return out
 	}
-	for _, m := range d.Mountpoints {
-		if m != "" {
-			return true
+	for _, line := range strings.Split(string(data), "\n") {
+		// 552 61 254:64 / /var/mnt/pool rw shared:9 - bcachefs /dev/sdb:/dev/sdc rw
+		before, after, ok := strings.Cut(line, " - ")
+		head, tail := strings.Fields(before), strings.Fields(after)
+		if !ok || len(head) < 5 || len(tail) < 2 || tail[0] != "bcachefs" {
+			continue
 		}
+		members := strings.Split(tail[1], ":")
+		if slices.ContainsFunc(members, func(m string) bool { return !strings.HasPrefix(m, "/dev/") || strings.HasPrefix(m, "/dev/disk/") }) {
+			continue
+		}
+		out[head[4]] = members
 	}
-	return false
+	return out
 }
 
 func named(fstype, label string) string {

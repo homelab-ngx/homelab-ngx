@@ -140,6 +140,21 @@ func TestFriendlyNameCachedAndFallsBack(t *testing.T) {
 	}
 }
 
+// A pool mounted from its device paths, whose first disk has left it: no
+// remaining member has the mountpoint in lsblk, and the mount's source names
+// the members.
+func TestDiscoverPoolsMountedFromDevicePaths(t *testing.T) {
+	c, f := newClient(t, "/dev/sda:/dev/sdc:/dev/sdd /var/mnt/tank bcachefs rw 0 0\n")
+	f.On("lsblk").Reply(strings.ReplaceAll(fixture(t, "lsblk.json"), `"mountpoint": "/pool"`, `"mountpoint": null`))
+	pools, err := c.DiscoverPools(context.Background())
+	if err != nil || len(pools) != 1 {
+		t.Fatalf("pools=%v err=%v", pools, err)
+	}
+	if pools[0].State != "mounted" || pools[0].Mountdir != "/var/mnt/tank" {
+		t.Fatalf("pool = %+v", pools[0])
+	}
+}
+
 func TestDiscoverPoolsMounted(t *testing.T) {
 	mounts := "/dev/sdb:/dev/sda:/dev/sdc:/dev/sdd /pool bcachefs rw,nosuid 0 0\n" +
 		"/dev/nvme0n1p2 /var ext4 rw 0 0\n"

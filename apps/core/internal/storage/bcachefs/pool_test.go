@@ -133,7 +133,9 @@ func sysTree(t *testing.T) (sysDevBlock, mountinfo string) {
 	mountinfo = filepath.Join(root, "mountinfo")
 	body := "22 1 254:0 / / ro,relatime shared:1 - erofs /dev/mapper/root ro\n" +
 		"30 22 259:4 / /var rw,relatime shared:2 - ext4 /dev/nvme0n1p4 rw\n" +
-		"31 22 8:0 / /var/mnt/data rw,relatime shared:3 - ext4 /dev/sdz rw\n"
+		"31 22 8:0 / /var/mnt/data rw,relatime shared:3 - ext4 /dev/sdz rw\n" +
+		// A pool whose first disk, sdl, has left it: the mount keeps sdl's number.
+		"40 22 8:176 / /var/mnt/tank rw,relatime shared:4 - bcachefs /dev/sdm:/dev/sdn rw\n"
 	if err := os.WriteFile(mountinfo, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -167,6 +169,8 @@ const candidatesLsblk = `{"blockdevices":[
      {"name":"secret","path":"/dev/mapper/secret","size":1000,"type":"crypt","mountpoints":[null]}]}]},
  {"name":"sdi","path":"/dev/sdi","size":4000000000000,"type":"disk","rota":true,"ro":true,"mountpoints":[null]},
  {"name":"sdj","path":"/dev/sdj","size":4000000000000,"type":"disk","rota":true,"ro":false,"mountpoints":[null]},
+ {"name":"sdl","path":"/dev/sdl","size":4000000000000,"type":"disk","rota":true,"ro":false,"mountpoints":["/var/mnt/tank"]},
+ {"name":"sdm","path":"/dev/sdm","size":4000000000000,"type":"disk","fstype":"bcachefs","rota":true,"ro":false,"mountpoints":["/var/mnt/tank"]},
  {"name":"sr0","path":"/dev/sr0","size":1000,"type":"rom","rota":false,"ro":false,"mountpoints":[null]},
  {"name":"sdk","path":"/dev/sdk","size":0,"type":"disk","model":"Card reader","rota":true,"ro":false,"mountpoints":[null]}
 ]}`
@@ -196,9 +200,10 @@ func TestCandidates(t *testing.T) {
 		"sdd": {"2 partitions", "hdd", ""},
 		"sde": {`bcachefs "old"`, "hdd", "aaaa-bbbb"},
 		"sdj": {`bcachefs "half"`, "hdd", "cccc-dddd"},
+		"sdl": {"", "hdd", ""}, // it left the pool mounted at /var/mnt/tank
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("candidates:\n got %v\nwant %v\n(the system disk, a mounted partition, swap, LUKS, a read-only disk, an empty card reader and a rom are left out)", got, want)
+		t.Fatalf("candidates:\n got %v\nwant %v\n(the system disk, a mounted partition, swap, LUKS, a read-only disk, a mounted pool's disk, an empty card reader and a rom are left out)", got, want)
 	}
 	for _, d := range list {
 		if d.Name == "sdd" && !slices.Equal(d.Parts, []string{"/dev/sdd1", "/dev/sdd2"}) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -200,14 +201,22 @@ func (c *Client) GetDisks(ctx context.Context) ([]Disk, error) {
 // single /dev/disk/by-uuid/<UUID> source line, not per-member device paths,
 // so we match on the pool's External UUID rather than a disk path. Returns
 // "" if the pool isn't mounted anywhere.
-func (c *Client) findBcachefsMount(uuid string) string {
+//
+// A pool mounted from its device paths has them as its source instead
+// (/dev/sdb:/dev/sdc), so member, when not empty, is matched against those:
+// lsblk shows such a mount on the pool's first disk only, and on that disk
+// still after it left the pool.
+func (c *Client) findBcachefsMount(uuid, member string) string {
 	data, err := os.ReadFile(c.procMounts)
 	if err != nil {
 		return ""
 	}
 	for _, line := range strings.Split(string(data), "\n") {
 		fields := strings.Fields(line)
-		if len(fields) >= 3 && fields[2] == "bcachefs" && strings.Contains(fields[0], uuid) {
+		if len(fields) < 3 || fields[2] != "bcachefs" {
+			continue
+		}
+		if strings.Contains(fields[0], uuid) || (member != "" && slices.Contains(strings.Split(fields[0], ":"), member)) {
 			return fields[1]
 		}
 	}
@@ -308,7 +317,7 @@ func (c *Client) DiscoverPools(ctx context.Context) ([]Pool, error) {
 		// `mountpoint` field is alphabetical and can return a bind or autofs
 		// overlay instead of the real mount. Fall back to whatever lsblk
 		// reported if /proc/mounts has nothing.
-		if canon := c.findBcachefsMount(super.UUID); canon != "" {
+		if canon := c.findBcachefsMount(super.UUID, d.Path); canon != "" {
 			p.State = "mounted"
 			p.Mountdir = canon
 		} else if d.Mountpoint != "" {
