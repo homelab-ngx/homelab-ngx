@@ -21,7 +21,10 @@
 #      /var/mnt/pool; unmounted, its directory takes no writes. A disk with
 #      another file system is offered as a partition and mounted by name
 #   6. a stack (the drafts template) is built by Nix and serves a page from
-#      the pool at its route under the domain
+#      the pool at its route under the domain. A second pool is made from
+#      three more disks through the daemon, grown with a disk that held
+#      ext4, shrunk by one disk with its files kept, and deleted; the pool
+#      the stack uses is not
 #   7. host settings: a VPN device, a tunnel route, the firewall, host name
 #      and time zone take effect without a rebuild
 #   8. all of it holds after a reboot
@@ -132,6 +135,8 @@ cp --sparse=always "$out/homelab_$version.raw" "$vm/stick.raw"
 # The disk the installer erases; a build on the host (BUILD=1) needs room in /var.
 qemu-img create -q -f raw "$vm/disk.raw" "$([ "${BUILD:-}" = 1 ] && echo 100G || echo 80G)"
 for d in pool1 pool2; do qemu-img create -q -f raw "$vm/$d.raw" 8G; done
+# Three more for the pool the daemon makes, changes and deletes (step 6).
+for d in pool3 pool4 pool5; do qemu-img create -q -f raw "$vm/$d.raw" 4G; done
 qemu-img create -q -f raw "$vm/part.raw" 1G
 # windisk FILE [GAP] [ESP]: a stand-in for a Windows disk: an ESP (512 MB
 # unless given; Windows' own setup makes 100 MB) with Windows Boot Manager
@@ -337,6 +342,69 @@ ownid() {
 put() { vssh "cat > /tmp/body.json" <<<"$2" && api -X PUT "http://x/api/$1" -d @/tmp/body.json >/dev/null; }
 # post PATH JSON: the same with POST; prints the answer.
 post() { vssh "cat > /tmp/body.json" <<<"$2" && api -X POST "http://x/api/$1" -d @/tmp/body.json; }
+# code METHOD PATH [BODY]: the status an API request answers with.
+code() {
+  vssh "curl -s -o /dev/null -w '%{http_code}' --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json' -X $1 'http://x/api/$2' ${3:+-d '$3'}"
+}
+# spare: the disks a pool can be made from, as "path:contents" words.
+spare() { api http://x/api/storage | jq -r '[.unassigned[] | "\(.path):\(.contents)"] | join(" ")'; }
+# pool_lifecycle: a second pool on vde, vdf and vdg, made, grown, shrunk and
+# deleted through the daemon. It runs once, on the first version that can:
+# a release from before the daemon made pools lists no contents for a disk.
+lifecycle=
+pool_lifecycle() {
+  [ -z "$lifecycle" ] || return 0
+  api http://x/api/storage | jq -e '.unassigned | length > 0 and (.[0] | has("contents"))' >/dev/null || return 0
+  local st uuid main mainname sum op
+  [ "$(spare)" = "/dev/vde: /dev/vdf: /dev/vdg:" ] || die "the spare disks are not vde, vdf and vdg, blank: $(spare)"
+  [ "$(code POST storage/pools '{"name":"scratch","disks":["/dev/vde"],"copies":2}')" = 409 ] || die "two copies on one disk were not refused"
+  [ "$(code POST storage/pools '{"name":"scratch","disks":["/dev/vda"],"copies":1}')" = 409 ] || die "a pool on the system disk was not refused"
+  st=$(post storage/pools '{"name":"scratch","disks":["/dev/vde","/dev/vdf"],"copies":2}') || die "the pool was not made: $st"
+  uuid=$(jq -r .uuid <<<"$st")
+  [ "$(jq -r '"\(.state) \(.mountdir) \(.data_replicas) \(.auto_mount) \(.disks | length)"' <<<"$st")" = "mounted /var/mnt/scratch 2 true 2" ] ||
+    die "the new pool is not mounted at /var/mnt/scratch with 2 copies on 2 disks: $st"
+  vssh 'findmnt -no FSTYPE /var/mnt/scratch' | grep -q bcachefs || die "/var/mnt/scratch is not mounted"
+
+  # A disk with a file system on it is erased only with the pool's name.
+  vssh 'mkfs.ext4 -q -L Old /dev/vdg'
+  for _ in $(seq 1 10); do [ "$(spare)" = '/dev/vdg:ext4 "Old"' ] && break; sleep 2; done
+  [ "$(spare)" = '/dev/vdg:ext4 "Old"' ] || die "vdg is not offered with its contents: $(spare)"
+  [ "$(code POST "storage/pools/$uuid/disks" '{"disk":"/dev/vdg"}')" = 422 ] || die "a disk with contents was added without the pool's name"
+  vssh 'blkid -o value -s TYPE /dev/vdg' | grep -q ext4 || die "the refused add touched vdg"
+  [ "$(code POST "storage/pools/$uuid/disks" '{"disk":"/dev/vdg","confirm":"scratch"}')" = 204 ] || die "vdg was not added"
+  [ "$(api http://x/api/storage | jq -r --arg u "$uuid" '.pools[] | select(.uuid == $u) | .disks | length')" = 3 ] || die "the pool does not have 3 disks"
+
+  # Removing a disk moves its data to the others first.
+  vssh 'dd if=/dev/urandom of=/var/mnt/scratch/file bs=1M count=300 status=none && sync'
+  sum=$(vssh 'sha256sum < /var/mnt/scratch/file')
+  [ "$(code DELETE "storage/pools/$uuid/disks?disk=/dev/vde")" = 202 ] || die "the removal of vde did not start"
+  for _ in $(seq 1 60); do
+    op=$(api http://x/api/storage | jq -c --arg u "$uuid" '.pools[] | select(.uuid == $u) | .operation')
+    jq -e '.finished_at' <<<"$op" >/dev/null && break
+    sleep 2
+  done
+  [ "$(jq -r '"\(.phase) \(.error // "")"' <<<"$op")" = "done " ] || die "the removal of vde did not end well: $op"
+  [ "$(api http://x/api/storage | jq -r --arg u "$uuid" '.pools[] | select(.uuid == $u) | [.disks[].path] | join(" ")')" = "/dev/vdf /dev/vdg" ] ||
+    die "the pool's disks are not vdf and vdg after the removal"
+  [ "$(vssh 'sha256sum < /var/mnt/scratch/file')" = "$sum" ] || die "the file changed when vde left"
+  [ "$(spare)" = "/dev/vde:" ] || die "the removed vde is not a blank spare disk: $(spare)"
+  vssh '! bcachefs show-super /dev/vde >/dev/null 2>&1' || die "the removed vde still has a superblock"
+  [ "$(code DELETE "storage/pools/$uuid/disks?disk=/dev/vdf")" = 409 ] || die "a pool with two copies gave up its second disk"
+
+  # A pool a stack keeps a folder on is not deleted; this one is, by name.
+  st=$(api http://x/api/storage | jq -c --arg m "$pool" '.pools[] | select(.mountdir == $m)')
+  main=$(jq -r .uuid <<<"$st") mainname=$(jq -r .name <<<"$st")
+  [ "$(code DELETE "storage/pools/$main?confirm=$mainname")" = 409 ] || die "the pool the stack uses was not refused"
+  [ "$(code DELETE "storage/pools/$uuid?confirm=$mainname")" = 422 ] || die "a delete under another pool's name was not refused"
+  [ "$(code DELETE "storage/pools/$uuid?confirm=scratch")" = 204 ] || die "the pool was not deleted"
+  vssh '! findmnt /var/mnt/scratch >/dev/null && ! test -e /var/mnt/scratch' || die "/var/mnt/scratch is still there"
+  [ "$(spare)" = "/dev/vde: /dev/vdf: /dev/vdg:" ] || die "the deleted pool's disks are not blank spare disks: $(spare)"
+  vssh '! bcachefs show-super /dev/vdf >/dev/null 2>&1' || die "a deleted pool's disk still has a superblock"
+  [ "$(api http://x/api/storage | jq -r '[.pools[].mountdir] | join(" ")')" = "$pool" ] || die "the pools left are not just $pool"
+  vssh "findmnt -no FSTYPE $pool" | grep -q bcachefs || die "$pool is not mounted any more"
+  lifecycle=1
+  ok "a pool made on vde and vdf, grown with vdg (erased by name), shrunk by vde with its file kept, and deleted; the stack's pool refused"
+}
 # gone: wait for the VM to stop answering, as a reboot it started itself does.
 gone() { for _ in $(seq 1 60); do vssh true 2>/dev/null || break; sleep 2; done; }
 # daemon: wait for the daemon's API.
@@ -624,7 +692,7 @@ install vda true installed
 ok "the stick ($stick) ran from itself next to an install of $version and offered that disk; installed onto vda and turned off"
 
 step "4. the installed disk boots $version with its core, its name, machine ID, time zone, SSH key and a domain"
-boot "$vm/disk.raw" "$vm/pool1.raw" "$vm/pool2.raw" "$vm/part.raw"
+boot "$vm/disk.raw" "$vm/pool1.raw" "$vm/pool2.raw" "$vm/part.raw" "$vm/pool3.raw" "$vm/pool4.raw" "$vm/pool5.raw"
 booted "$version"
 runs_from vda
 ownid
@@ -767,6 +835,7 @@ if [ -n "$onvar" ]; then
 fi
 [ -z "$madefolder" ] || grep -q '^nginx:x:2000:' <(vssh 'cat /var/lib/homelab/appdata/stacks/site/root/etc/passwd') || die "nginx in the stack does not have the id 2000"
 ok "stack site built, serving the page from the pool at https://site.$domain$refused$madefolder"
+pool_lifecycle
 
 step "7. host settings: VPN, tunnel, firewall, name and time zone"
 peer=$(vssh 'wg genkey | wg pubkey')
@@ -867,6 +936,7 @@ if [ -n "$next" ]; then
   booted "$next"
   hostcheck
   ok "$version booted once more from the API, then $next again"
+  pool_lifecycle
 else
   step "9-10. core and image updates skipped: image/out has one version"
 fi
@@ -1000,7 +1070,7 @@ fi
 
 step "13. the free-space install boots alone, beside the other system"
 stop
-drop disk pool1 pool2 part
+drop disk pool1 pool2 part pool3 pool4 pool5
 boot "$vm/beside.raw"
 booted "$version"
 runs_from vda
