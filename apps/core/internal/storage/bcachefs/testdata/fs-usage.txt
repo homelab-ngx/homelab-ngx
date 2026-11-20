@@ -1,0 +1,25 @@
+Filesystem: 1613240e-3f18-4688-910b-fdf327766cdb
+Size:             47001203712  
+Used:              8633974784  
+Online reserved:            0  
+Free:             37776963584  33500579840  writable now
+  at 2 replicas:  37776963584  33500579840  
+  at 3 replicas:  33550395904  33455152640  
+  at 4 replicas:            0            0  
+
+
+     undegraded  
+2x:  8633974784  
+
+cached:  4294967296  
+
+
+Pending reconcile:  data  metadata  
+pending:               0  22020096  
+
+
+Device label          Device  State         Size        Used  Use%  
+hdd.hdd2 (device 2):  vdb1    rw     17042501632  4308860928   25%  
+hdd.hdd3 (device 3):  vdb2    rw     17042501632  4303093760   25%  
+ssd.ssd1 (device 0):  vdc     rw     17042501632  4316987392   25%  
+

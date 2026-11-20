@@ -1,0 +1,7 @@
+
+Device label          Device  State              Size        Used  Use%     Leaving  
+hdd.hdd1 (device 4):  vdd     evacuating  17042501632  4084465664   23%  4082630656  
+hdd.hdd2 (device 2):  vdb1    rw          17042501632  4305453056   25%     1310720  
+hdd.hdd3 (device 3):  vdb2    rw          17042501632   223346688    1%     2097152  
+ssd.ssd1 (device 0):  vdc     rw          17042501632  4318298112   25%  
+

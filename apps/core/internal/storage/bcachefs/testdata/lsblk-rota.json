@@ -1,0 +1,204 @@
+{
+   "blockdevices": [
+      {
+         "name": "loop0",
+         "path": "/dev/loop0",
+         "size": 61480960,
+         "type": "loop",
+         "model": null,
+         "serial": null,
+         "fstype": "erofs",
+         "mountpoint": null,
+         "label": null,
+         "rota": true
+      },{
+         "name": "sr0",
+         "path": "/dev/sr0",
+         "size": 1073741312,
+         "type": "rom",
+         "model": "QEMU DVD-ROM",
+         "serial": "QM00005",
+         "fstype": null,
+         "mountpoint": null,
+         "label": null,
+         "rota": false
+      },{
+         "name": "vda",
+         "path": "/dev/vda",
+         "size": 1309954560,
+         "type": "disk",
+         "model": null,
+         "serial": null,
+         "fstype": "iso9660",
+         "mountpoint": null,
+         "label": null,
+         "rota": true,
+         "children": [
+            {
+               "name": "vda1",
+               "path": "/dev/vda1",
+               "size": 272629760,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": "vfat",
+               "mountpoint": "/boot",
+               "label": "ESP",
+               "rota": true
+            },{
+               "name": "vda2",
+               "path": "/dev/vda2",
+               "size": 894980096,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": "erofs",
+               "mountpoint": null,
+               "label": null,
+               "rota": true,
+               "children": [
+                  {
+                     "name": "root",
+                     "path": "/dev/mapper/root",
+                     "size": 894980096,
+                     "type": "crypt",
+                     "model": null,
+                     "serial": null,
+                     "fstype": "erofs",
+                     "mountpoint": "/",
+                     "label": null,
+                     "rota": true
+                  }
+               ]
+            },{
+               "name": "vda3",
+               "path": "/dev/vda3",
+               "size": 7061504,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": "DM_verity_hash",
+               "mountpoint": null,
+               "label": null,
+               "rota": true,
+               "children": [
+                  {
+                     "name": "root",
+                     "path": "/dev/mapper/root",
+                     "size": 894980096,
+                     "type": "crypt",
+                     "model": null,
+                     "serial": null,
+                     "fstype": "erofs",
+                     "mountpoint": "/",
+                     "label": null,
+                     "rota": true
+                  }
+               ]
+            },{
+               "name": "vda4",
+               "path": "/dev/vda4",
+               "size": 134217728,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": "ext4",
+               "mountpoint": "/var",
+               "label": "var",
+               "rota": true
+            }
+         ]
+      },{
+         "name": "vdb",
+         "path": "/dev/vdb",
+         "size": 107374182400,
+         "type": "disk",
+         "model": null,
+         "serial": null,
+         "fstype": null,
+         "mountpoint": null,
+         "label": null,
+         "rota": true,
+         "children": [
+            {
+               "name": "vdb1",
+               "path": "/dev/vdb1",
+               "size": 17179869184,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": "bcachefs",
+               "mountpoint": null,
+               "label": "pool",
+               "rota": true
+            },{
+               "name": "vdb2",
+               "path": "/dev/vdb2",
+               "size": 17179869184,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": "bcachefs",
+               "mountpoint": null,
+               "label": "pool",
+               "rota": true
+            },{
+               "name": "vdb3",
+               "path": "/dev/vdb3",
+               "size": 17179869184,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": null,
+               "mountpoint": null,
+               "label": null,
+               "rota": true
+            },{
+               "name": "vdb4",
+               "path": "/dev/vdb4",
+               "size": 17179869184,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": "bcachefs",
+               "mountpoint": null,
+               "label": "small",
+               "rota": true
+            },{
+               "name": "vdb5",
+               "path": "/dev/vdb5",
+               "size": 17179869184,
+               "type": "part",
+               "model": null,
+               "serial": null,
+               "fstype": "bcachefs",
+               "mountpoint": null,
+               "label": "small",
+               "rota": true
+            }
+         ]
+      },{
+         "name": "vdc",
+         "path": "/dev/vdc",
+         "size": 17179869184,
+         "type": "disk",
+         "model": null,
+         "serial": null,
+         "fstype": "bcachefs",
+         "mountpoint": "/var/mnt/pool",
+         "label": "pool",
+         "rota": true
+      },{
+         "name": "vdd",
+         "path": "/dev/vdd",
+         "size": 17179869184,
+         "type": "disk",
+         "model": null,
+         "serial": null,
+         "fstype": "bcachefs",
+         "mountpoint": null,
+         "label": "pool",
+         "rota": true
+      }
+   ]
+}
