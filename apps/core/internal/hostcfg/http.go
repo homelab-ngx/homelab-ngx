@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -27,6 +28,10 @@ type firewallIn struct{ Body Firewall }
 type wireguardIn struct{ Body WireGuard }
 type tunnelIn struct{ Body TunnelSet }
 type tailscaleIn struct{ Body Tailscale }
+type ddnsIn struct{ Body DDNSSet }
+type deviceIn struct{ Body DeviceAdd }
+type deviceOut struct{ Body AddedDevice }
+type publicAddressOut struct{ Body PublicAddress }
 
 // Register adds the operations: reading is read, changing is operator.
 func (h *HTTP) Register(a httpx.APIs) {
@@ -51,6 +56,18 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeOperator, put("setHostWireGuard", "wireguard", "Set the WireGuard VPN and its peers."), h.setWireGuard)
 	httpx.Register(a, httpx.ScopeOperator, put("setHostTunnel", "tunnel", "Set the Cloudflare tunnel and its routes."), h.setTunnel)
 	httpx.Register(a, httpx.ScopeOperator, put("setHostTailscale", "tailscale", "Set Tailscale."), h.setTailscale)
+	httpx.Register(a, httpx.ScopeOperator, put("setHostDDNS", "ddns", "Set dynamic DNS: a name under the domain kept pointed at the home's public address, through the domain's DNS provider."), h.setDDNS)
+
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "addWireGuardDevice", Method: http.MethodPost, Path: "/host-settings/wireguard/peers", Tags: tags, Errors: errs,
+		Summary:     "Add a VPN device with keys the host makes.",
+		Description: "The host makes the device's key pair, gives it the next free address in the VPN and adds it as a peer. The answer's config holds the device's private key, which is not kept and not shown again. `400` while the VPN is off or has no endpoint.",
+	}, h.addDevice)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "getPublicAddress", Method: http.MethodGet, Path: "/host-settings/wireguard/public-address", Tags: tags, Errors: []int{http.StatusBadGateway},
+		Summary:     "The home's public IPv4 address, for the VPN's endpoint.",
+		Description: "Asks Cloudflare (https://1.1.1.1/cdn-cgi/trace) on each call; nothing is kept.",
+	}, h.publicAddress)
 
 	httpx.Register(a, httpx.ScopeRead, huma.Operation{
 		OperationID: "getTailscaleStatus", Method: http.MethodGet, Path: "/host-settings/tailscale/status", Tags: tags,
@@ -110,6 +127,25 @@ func (h *HTTP) tunnelLogin(ctx context.Context, _ *struct{}) (*loginOut, error) 
 	}
 	return &loginOut{Body: l}, nil
 }
+func (h *HTTP) setDDNS(ctx context.Context, in *ddnsIn) (*settingsOut, error) {
+	return out(h.s.SetDDNS(ctx, in.Body))
+}
+func (h *HTTP) addDevice(ctx context.Context, in *deviceIn) (*deviceOut, error) {
+	d, err := h.s.AddWireGuardDevice(ctx, in.Body)
+	if err != nil {
+		return nil, problem(err)
+	}
+	ifs, _ := net.Interfaces()
+	d.Settings.Wired = wired(ifs)
+	return &deviceOut{Body: d}, nil
+}
+func (h *HTTP) publicAddress(ctx context.Context, _ *struct{}) (*publicAddressOut, error) {
+	a, err := h.s.PublicAddress(ctx)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &publicAddressOut{Body: a}, nil
+}
 func (h *HTTP) tunnelForget(ctx context.Context, _ *struct{}) (*settingsOut, error) {
 	return out(h.s.TunnelForget(ctx))
 }
@@ -120,8 +156,8 @@ func problem(err error) error {
 		return httpx.BadRequest("invalid_setting", "%s", strings.TrimPrefix(err.Error(), ErrInvalid.Error()+": "))
 	case errors.Is(err, ErrManaged):
 		return httpx.Conflict("managed_by_nixos", "%s", err)
-	case errors.Is(err, ErrCommand):
-		return httpx.BadGateway("command_failed", "%s", strings.TrimPrefix(err.Error(), ErrCommand.Error()+": "))
+	case errors.Is(err, ErrUpstream):
+		return httpx.BadGateway("upstream_failed", "%s", strings.TrimPrefix(err.Error(), ErrUpstream.Error()+": "))
 	}
 	return err
 }
@@ -143,7 +179,16 @@ func wired(ifs []net.Interface) []Interface {
 		if len(i.HardwareAddr) == 0 || !(strings.HasPrefix(i.Name, "en") || strings.HasPrefix(i.Name, "eth")) {
 			continue
 		}
-		out = append(out, Interface{Name: i.Name, MAC: i.HardwareAddr.String()})
+		iface := Interface{Name: i.Name, MAC: i.HardwareAddr.String(), Addresses: []string{}}
+		// Index 0 would list every interface's addresses.
+		if addrs, err := i.Addrs(); err == nil && i.Index > 0 {
+			for _, a := range addrs {
+				if p, err := netip.ParsePrefix(a.String()); err == nil && p.Addr().Is4() {
+					iface.Addresses = append(iface.Addresses, p.Addr().String())
+				}
+			}
+		}
+		out = append(out, iface)
 	}
 	return out
 }

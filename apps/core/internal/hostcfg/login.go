@@ -252,7 +252,7 @@ func (s *Service) TailscaleLogin(ctx context.Context) (TailscaleStatus, error) {
 		return err
 	})
 	if l.State == LoginFailed {
-		return TailscaleStatus{}, fmt.Errorf("%w: tailscale login: %s", ErrCommand, l.Error)
+		return TailscaleStatus{}, fmt.Errorf("%w: tailscale login: %s", ErrUpstream, l.Error)
 	}
 	return s.TailscaleStatus(ctx), nil
 }
@@ -264,7 +264,7 @@ func (s *Service) TailscaleLogout(ctx context.Context) (TailscaleStatus, error) 
 		return TailscaleStatus{}, ErrManaged
 	}
 	if _, err := s.run.Run(ctx, cmdrunner.Cmd{Module: "hostcfg", Name: "tailscale", Args: []string{"logout"}}); err != nil {
-		return TailscaleStatus{}, fmt.Errorf("%w: tailscale logout: %s", ErrCommand, commandError(err))
+		return TailscaleStatus{}, fmt.Errorf("%w: tailscale logout: %s", ErrUpstream, commandError(err))
 	}
 	return s.TailscaleStatus(ctx), nil
 }

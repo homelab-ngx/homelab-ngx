@@ -517,6 +517,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/host-settings/ddns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set dynamic DNS: a name under the domain kept pointed at the home's public address, through the domain's DNS provider.
+         * @description Applied at once on an image host. `409 managed_by_nixos` on a NixOS host.
+         */
+        put: operations["setHostDDNS"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/host-settings/domain": {
         parameters: {
             query?: never;
@@ -762,6 +782,46 @@ export interface paths {
          * @description Applied at once on an image host. `409 managed_by_nixos` on a NixOS host.
          */
         put: operations["setHostWireGuard"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/host-settings/wireguard/peers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a VPN device with keys the host makes.
+         * @description The host makes the device's key pair, gives it the next free address in the VPN and adds it as a peer. The answer's config holds the device's private key, which is not kept and not shown again. `400` while the VPN is off or has no endpoint.
+         */
+        post: operations["addWireGuardDevice"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/host-settings/wireguard/public-address": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The home's public IPv4 address, for the VPN's endpoint.
+         * @description Asks Cloudflare (https://1.1.1.1/cdn-cgi/trace) on each call; nothing is kept.
+         */
+        get: operations["getPublicAddress"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -2059,6 +2119,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        AddedDevice: {
+            /** @description The device's WireGuard config, with its private key. Shown this once: the host keeps only the public key. */
+            config: string;
+            settings: components["schemas"]["HostSettings"];
+        };
         AnswerUsage: {
             /**
              * Format: double
@@ -2502,6 +2567,30 @@ export interface components {
              */
             uncovered: number;
         };
+        DDNS: {
+            enabled: boolean;
+            /** @description The label under the domain, such as vpn (the default). With DuckDNS the record is the DuckDNS name itself, and this is not used. */
+            name?: string;
+            /** @description The last check, while dynamic DNS is on. Kept in memory: empty until the first check after the daemon starts. */
+            readonly status?: components["schemas"]["DDNSStatus"];
+        };
+        DDNSSet: {
+            enabled: boolean;
+            name?: string;
+        };
+        DDNSStatus: {
+            /**
+             * Format: date-time
+             * @description When the record was last found or made up to date.
+             */
+            at?: string;
+            /** @description Why the last check or update failed. */
+            error?: string;
+            /** @description The public addresses it points at: IPv4, and IPv6 when the host has one. */
+            ips: string[];
+            /** @description The name kept up to date, such as vpn.home.example.com. */
+            record: string;
+        };
         DeleteInBody: {
             /** @description The partition's name, typed by the user. */
             confirm: string;
@@ -2558,6 +2647,10 @@ export interface components {
         DestinationTest: {
             detail: string;
             ok: boolean;
+        };
+        DeviceAdd: {
+            /** @description The device's name, such as phone. */
+            name: string;
         };
         Disk: {
             bcachefs_label: string;
@@ -2867,6 +2960,7 @@ export interface components {
         };
         HostSettings: {
             applied: components["schemas"]["Applied"];
+            ddns: components["schemas"]["DDNS"];
             domain: components["schemas"]["Domain"];
             firewall: components["schemas"]["Firewall"];
             host: components["schemas"]["Host"];
@@ -3060,6 +3154,8 @@ export interface components {
             step: "idle" | "installing" | "installed" | "failed";
         };
         Interface: {
+            /** @description Its IPv4 addresses on the LAN, such as 192.168.1.20. */
+            addresses: string[];
             /** @description Its MAC address, such as d8:43:ae:00:11:22. */
             mac: string;
             /** @description The interface's name, such as enp5s0. */
@@ -3506,6 +3602,10 @@ export interface components {
              * @description Chunks in all: the areas and the summary.
              */
             total: number;
+        };
+        PublicAddress: {
+            /** @description The home's public IPv4 address. Behind carrier-grade NAT it is the carrier's, and a port forwarded at home is not reached through it. */
+            ip: string;
         };
         RcloneInput: {
             /** @description One section of an rclone config file ([name] and its lines). Required on create; on update an absent or empty value keeps the stored one. */
@@ -6942,6 +7042,106 @@ export interface operations {
             };
         };
     };
+    setHostDDNS: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DDNSSet"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSettings"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     setHostDomain: {
         parameters: {
             query?: never;
@@ -8109,6 +8309,164 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    addWireGuardDevice: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeviceAdd"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AddedDevice"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getPublicAddress: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicAddress"];
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

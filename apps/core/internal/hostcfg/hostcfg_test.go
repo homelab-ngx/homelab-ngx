@@ -8,7 +8,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"slices"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -405,8 +405,8 @@ func TestWired(t *testing.T) {
 		{Name: "wg-homelab"},
 		{Name: "eth0", HardwareAddr: mac},
 	})
-	want := []Interface{{Name: "enp5s0", MAC: "d8:43:ae:00:11:22"}, {Name: "eth0", MAC: "d8:43:ae:00:11:22"}}
-	if !slices.Equal(got, want) {
+	want := []Interface{{Name: "enp5s0", MAC: "d8:43:ae:00:11:22", Addresses: []string{}}, {Name: "eth0", MAC: "d8:43:ae:00:11:22", Addresses: []string{}}}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("wired = %v, want %v", got, want)
 	}
 }

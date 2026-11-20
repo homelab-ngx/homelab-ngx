@@ -33,8 +33,9 @@ var (
 	ErrInvalid = errors.New("invalid setting")
 	// ErrManaged is a change on a host whose settings belong to NixOS.
 	ErrManaged = errors.New("this host's settings come from its NixOS configuration")
-	// ErrCommand is tailscale or cloudflared failing for a login.
-	ErrCommand = errors.New("command failed")
+	// ErrUpstream is a tool (tailscale, cloudflared) or an outside service
+	// failing.
+	ErrUpstream = errors.New("upstream failed")
 )
 
 func invalid(format string, a ...any) error {
@@ -91,6 +92,7 @@ type Service struct {
 	run            cmdrunner.Runner
 	tailscaleLogin loginJob
 	tunnelLogin    loginJob
+	ddns           *ddnsLoop
 }
 
 // SetRunner gives the service the runner its logins use.
@@ -100,7 +102,7 @@ func (s *Service) SetRunner(r cmdrunner.Runner) { s.run = r }
 // managed is ManagedNixOS shows nix and refuses changes; apply may be nil
 // there.
 func New(st *store.Store, keyFile string, managed Managed, nix *config.Nix, apply Applier, log *slog.Logger) *Service {
-	return &Service{st: st, keyFile: keyFile, managed: managed, nix: nix, apply: apply, log: log, now: time.Now, tzdir: "/usr/share/zoneinfo"}
+	return &Service{st: st, keyFile: keyFile, managed: managed, nix: nix, apply: apply, log: log, now: time.Now, tzdir: "/usr/share/zoneinfo", ddns: newDDNSLoop()}
 }
 
 // Detect tells an image host from a NixOS one by its os-release.
@@ -200,6 +202,7 @@ func (s *Service) snapshot(ctx context.Context) (Snapshot, error) {
 	dec("wireguard", &snap.WireGuard)
 	dec("tunnel", &snap.Tunnel)
 	dec("tailscale", &snap.Tailscale)
+	dec("ddns", &snap.DDNS)
 
 	var ds domainSecret
 	if err := s.open(rs["domain"], &ds); err != nil {
@@ -251,6 +254,7 @@ func (s *Service) Get(ctx context.Context) (HostSettings, error) {
 	s.mu.Lock()
 	snap.Applied = s.applied
 	s.mu.Unlock()
+	snap.DDNS.Status = s.ddnsStatus()
 	snap.Applied.Errors = nonNil(snap.Applied.Errors)
 	return snap.HostSettings, nil
 }
@@ -391,6 +395,7 @@ func (s *Service) change(ctx context.Context, fn func(rs map[string]row) error) 
 		return HostSettings{}, err
 	}
 	s.Apply(ctx)
+	s.kickDDNS()
 	return s.Get(ctx)
 }
 

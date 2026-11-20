@@ -97,7 +97,7 @@ func TestTailscaleLoginFails(t *testing.T) {
 	f.On("tailscale", "status").Reply(tsNeedsLogin)
 	f.On("tailscale", "login").FailCode(1, "backend error: invalid key")
 	_, err := s.TailscaleLogin(context.Background())
-	if !errors.Is(err, ErrCommand) || !strings.Contains(err.Error(), "invalid key") {
+	if !errors.Is(err, ErrUpstream) || !strings.Contains(err.Error(), "invalid key") {
 		t.Fatalf("err = %v", err)
 	}
 }

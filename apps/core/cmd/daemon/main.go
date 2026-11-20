@@ -251,6 +251,11 @@ func run(configPath string) error {
 		}
 		return nil
 	})
+	// Dynamic DNS, while it is on: the record follows the public address.
+	g.Go(func() error {
+		hostSvc.RunDDNS(gctx)
+		return nil
+	})
 	// Stacks with an approved api grant reach the daemon here; their
 	// firewall opens the port only for them, and every request carries the
 	// stack's token.
