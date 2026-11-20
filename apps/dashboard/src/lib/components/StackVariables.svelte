@@ -1,7 +1,7 @@
 <script lang="ts">
   import Help from "./Help.svelte";
-  import { useQueryClient } from "@tanstack/svelte-query";
-  import { api, call, type Stack } from "#lib/api/client.ts";
+  import { createQuery, useQueryClient } from "@tanstack/svelte-query";
+  import { api, call, type Schema, type Stack } from "#lib/api/client.ts";
   import { keys } from "#lib/api/queries.ts";
   import { stamp } from "#lib/format.ts";
   import { browseHref } from "#lib/storage.ts";
@@ -11,6 +11,7 @@
     mountText,
     nameProblem,
     ownerText,
+    ownedText,
     needsValue,
     variableError,
     type StackVariable,
@@ -45,6 +46,55 @@
   let errors = $state<Record<string, string>>({});
   let note = $state("");
   let removing = $state<StackVariable | null>(null);
+
+  // A path's folder can be made here: on a pool it is a subvolume, and it gets
+  // the owner the stack needs. The places are the mounted pools and partitions.
+  let creating = $state<StackVariable | null>(null);
+  let place = $state("");
+  let folder = $state("");
+  const storage = createQuery(() => ({
+    queryKey: ["daemon", "storage"] as const,
+    queryFn: () => call<Schema<"StorageStatus">>(api.GET("/storage")),
+    enabled: creating !== null,
+  }));
+  const places = $derived([
+    ...(storage.data?.pools ?? []).filter((p) => p.state === "mounted").map((p) => p.mountdir),
+    ...(storage.data?.partitions ?? []).filter((p) => p.state === "mounted" && !p.read_only).map((p) => p.mountdir),
+  ]);
+  const chosenPlace = $derived(places.includes(place) ? place : (places[0] ?? ""));
+  function askCreate(v: StackVariable) {
+    creating = v;
+    place = "";
+    folder = stack.name;
+    delete errors[v.name];
+  }
+  function create(e: SubmitEvent) {
+    e.preventDefault();
+    const v = creating;
+    if (!v || !chosenPlace || !folder.trim()) return;
+    void act(async () => {
+      const made = await send(v.name, v, () =>
+        call<Stack>(api.POST("/stacks/{name}/variables/{var}/folder", { ...path(v.name), body: { place: chosenPlace, folder: folder.trim() } })),
+      );
+      if (made) creating = null;
+      return made ? `${chosenPlace}/${folder.trim()} made.` : "";
+    });
+  }
+
+  // Changing a folder's owner to the stack ids cannot be undone: its path is typed.
+  let owning = $state<StackVariable | null>(null);
+  let typed = $state("");
+  const ids = (uid?: number, gid?: number) => `${uid ?? "?"}:${gid ?? "?"}`;
+  function own(e: SubmitEvent) {
+    e.preventDefault();
+    const v = owning;
+    if (!v || typed !== v.value) return;
+    void act(async () => {
+      const done = await send(v.name, v, () => call<Stack>(api.POST("/stacks/{name}/variables/{var}/own", { ...path(v.name), body: { confirm: typed } })));
+      if (done) owning = null;
+      return done ? `${v.value} has the stack ids.` : "";
+    });
+  }
 
   let newName = $state("");
   let newValue = $state("");
@@ -154,6 +204,8 @@
   function stateOf(v: StackVariable): { tone: Tone; word: string } {
     if (v.builtin) return { tone: "info", word: "host" };
     if (needsValue(v)) return { tone: "warn", word: "required" };
+    if (v.owner_state === "root") return { tone: "warn", word: "root's" };
+    if (v.owner_state === "group_differs") return { tone: "warn", word: "own group" };
     if (v.set || v.source === "stored") return { tone: "ok", word: "set" };
     if (v.source === "default" || stackValue(v)) return { tone: "idle", word: "default" };
     return { tone: "idle", word: "empty" };
@@ -166,6 +218,8 @@
     if (!v.declared && !v.secret && v.value) items.push({ label: "Make secret", onSelect: () => void act(async () => ((await put(v, v.value!, true)) ? `${v.name} is a secret now.` : "")) });
     if (!v.declared) items.push({ label: "Remove…", danger: true, onSelect: () => (removing = v) });
     else if (!v.required && v.set) items.push({ label: "Clear value…", danger: true, onSelect: () => (removing = v) });
+    if (v.kind === "path" && v.value && v.owner_state && v.owner_state !== "ok")
+      items.push({ label: "Change owner…", danger: true, onSelect: () => ((owning = v), (typed = ""), delete errors[v.name]) });
     return items;
   }
 </script>
@@ -176,6 +230,7 @@
   {#if v.builtin}<span class="block">This host fills it in{v.secret ? ", and issues a new one when the stack's API access changes" : ""}.</span>{/if}
   {#if v.kind === "address"}<span class="block">The stack's network access to or from these addresses follows what is entered here.</span>{/if}
   {#if ownerText(v)}<span class="block">{ownerText(v)}</span>{/if}
+  {#if ownedText(v)}<span class="block">{ownedText(v)}</span>{/if}
   {#if fileOnly(v)}<span class="block">Delivered only as /run/secrets/{v.name}, not in /run/secrets/env.</span>{/if}
   {#if v.secret && !v.builtin}<span class="block">Generate, in the row's menu, fills in a random 32-byte key.</span>{/if}
   {#if v.updated_at}<span class="block">Set {stamp(v.updated_at)}</span>{/if}
@@ -240,6 +295,8 @@
           <a class="btn btn-sm px-1.5" href={browseHref(v.value)} aria-label="Browse {v.value}" title="Browse files">
             <FolderOpen class="size-4" aria-hidden="true" />
           </a>
+        {:else if v.kind === "path" && v.declared}
+          <button type="button" class="btn btn-sm whitespace-nowrap" disabled={pending} onclick={() => askCreate(v)}>Create…</button>
         {/if}
         <RowMenu name={v.name} items={menuOf(v)} />
       </span>
@@ -343,5 +400,54 @@
   {#if removing && errors[removing.name]}<p role="alert" class="text-bad">{errors[removing.name]}</p>{/if}
   {#snippet actions()}
     <button type="button" class="btn btn-danger" disabled={pending} onclick={() => removing && remove(removing)}>{removing?.declared ? "Clear" : "Remove"}</button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={creating !== null}
+  onOpenChange={(o) => {
+    if (!o) creating = null;
+  }}
+  title="New folder for {creating?.name}"
+  description={creating?.owner || creating?.group ? "It is made with the owner the stack needs." : undefined}
+>
+  <form id="{id}-create" class="grid gap-3" onsubmit={create}>
+    <label class="grid gap-1">
+      <span class="text-muted">On</span>
+      <select class="input" bind:value={() => chosenPlace, (v) => (place = v)} disabled={places.length < 2}>
+        {#each places as p (p)}<option value={p}>{p}</option>{/each}
+      </select>
+    </label>
+    <label class="grid gap-1">
+      <span class="text-muted">Name</span>
+      <input class="input" autocomplete="off" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" maxlength="64" bind:value={folder} />
+    </label>
+    {#if storage.isSuccess && places.length === 0}
+      <p class="text-muted">No pool or partition is mounted. <a class="link" href="/storage">Mount one</a> first.</p>
+    {/if}
+    {#if creating && errors[creating.name]}<p role="alert" class="text-bad">{errors[creating.name]}</p>{/if}
+  </form>
+  {#snippet actions()}
+    <button type="submit" form="{id}-create" class="btn btn-primary" disabled={pending || !chosenPlace || !folder.trim()}>Create</button>
+  {/snippet}
+</Modal>
+
+<Modal
+  open={owning !== null}
+  onOpenChange={(o) => {
+    if (!o) owning = null;
+  }}
+  title="Change the owner of {owning?.value}?"
+  description="Everything in it gets this host's ids for the stack. This cannot be undone here."
+>
+  <form id="{id}-own" class="grid gap-1" onsubmit={own}>
+    <p class="text-muted">Owner now: {ids(owning?.folder_uid, owning?.folder_gid)}</p>
+    {#if stack.running}<p class="text-warn">Stop the stack first.</p>{/if}
+    <label for="{id}-typed" class="text-muted">Type {owning?.value}</label>
+    <input id="{id}-typed" class="input" autocomplete="off" spellcheck="false" bind:value={typed} />
+    {#if owning && errors[owning.name]}<p role="alert" class="text-bad">{errors[owning.name]}</p>{/if}
+  </form>
+  {#snippet actions()}
+    <button type="submit" form="{id}-own" class="btn btn-danger" disabled={pending || stack.running || typed !== owning?.value}>Change owner</button>
   {/snippet}
 </Modal>

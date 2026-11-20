@@ -471,6 +471,15 @@ type StackVariable struct {
 	// ReadOnly A path is bound read-only.
 	ReadOnly *bool `json:"read_only,omitempty" doc:"The path is bound read-only. Only for a path."`
 
+	// FolderUID and FolderGID are who owns a path's folder now.
+	FolderUID *int64 `json:"folder_uid,omitempty" doc:"For a path with an owner or group: the uid that owns the folder now."`
+	FolderGID *int64 `json:"folder_gid,omitempty" doc:"For a path with an owner or group: the gid of the folder now."`
+	// StackUID and StackGID are this host's ids for the owner and group.
+	StackUID *int64 `json:"stack_uid,omitempty" doc:"This host's id for the path's owner; absent until it has one."`
+	StackGID *int64 `json:"stack_gid,omitempty" doc:"This host's id for the path's group; absent until it has one."`
+	// OwnerState How the folder's owner stands against the stack ids.
+	OwnerState string `json:"owner_state,omitempty" enum:"ok,own,root,group_differs" doc:"For a path with an owner or group and a folder: ok (it has the stack ids), own (ids of its own, which the stack takes), root (owned by root: the stack cannot use it), group_differs (another stack's folder has another id for the same group)."`
+
 	// Required An install or update waits until it has a value.
 	Required bool `json:"required" doc:"An install or update waits until it has a value, stored or a default. False for the operator's own."`
 
@@ -588,4 +597,33 @@ type StackRollback struct {
 type StackUpdateAll struct {
 	// Queued The stacks that will be updated, in order.
 	Queued []string `json:"queued" doc:"The stacks that will be updated, in order."`
+}
+
+// StackFolderCreate makes a path variable's folder.
+type StackFolderCreate struct {
+	Place  string `json:"place,omitempty" maxLength:"4096" doc:"The pool or partition to make it on, by its directory (/var/mnt/pool). Empty: the host's only one."`
+	Folder string `json:"folder,omitempty" maxLength:"64" doc:"The folder's name there. Empty: the stack's name."`
+}
+
+// StackFolderOwn changes the owner of a path variable's folder.
+type StackFolderOwn struct {
+	Confirm string `json:"confirm" minLength:"1" maxLength:"4096" doc:"The folder's path, typed to confirm: the change cannot be undone."`
+}
+
+// StackID is this host's id for a user or group name its stacks declare.
+type StackID struct {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+// StackIDList is the host's stack ids and their range.
+type StackIDList struct {
+	IDs []StackID `json:"ids"`
+	Max int64     `json:"max"`
+	Min int64     `json:"min"`
+}
+
+// StackIDSet pins a name's id.
+type StackIDSet struct {
+	ID int64 `json:"id" minimum:"2000" maximum:"2099"`
 }

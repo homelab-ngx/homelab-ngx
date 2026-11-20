@@ -73,6 +73,12 @@ type Service struct {
 	timeZone func() string
 	// statOwner reads who owns a host directory; a seam for tests.
 	statOwner func(path string) (uid, gid uint32, err error)
+	// chown sets a folder's owner (-1 leaves one as it is), with everything
+	// in it when recursive; a seam for tests.
+	chown func(ctx context.Context, path string, uid, gid int, recursive bool) error
+	// places is where a folder can be made for a path variable; nil: nowhere.
+	places Places
+	idMu   sync.Mutex // held while a stack id is looked up or given
 	// listChannels reads the nixpkgs channels offered; a seam for tests.
 	listChannels func(ctx context.Context) ([]string, error)
 	// channels is the last list read, at channelsAt; guarded by mu.
@@ -102,6 +108,7 @@ func New(st *store.Store, src Source, host Host, notifier Notifier, log *slog.Lo
 		ops: map[string]*operation{}, ctx: context.Background(),
 		statDir: isDir, timeZone: HostTimeZone, statOwner: statOwner, statfs: diskRoom,
 	}
+	s.chown = chownPath(host.Runner)
 	s.resolveNixpkgs = func(ctx context.Context, spec string) (string, error) { return ResolveNixpkgs(ctx, s.r, spec) }
 	s.listChannels = func(ctx context.Context) ([]string, error) { return ListChannels(ctx, s.r) }
 	s.nixpkgsRelease = func(ctx context.Context, rev string) (NixpkgsRelease, error) {
@@ -491,6 +498,7 @@ func (s *Service) view(ctx context.Context, r store.Stack) (Stack, error) {
 	}
 	v.Variables, v.VariablesReady = variablesView(vars, approved, fetched, r.ApiTokenHash != "", s.builtins(fetched))
 	v.VariablesReady = v.VariablesReady && varsErr == nil
+	s.ownerView(ctx, r.Name, v.Variables)
 	gens, err := s.st.Queries().ListStackGenerations(ctx, r.Name)
 	if err != nil {
 		return Stack{}, err

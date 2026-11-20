@@ -268,3 +268,35 @@ func TestPartitionName(t *testing.T) {
 		}
 	}
 }
+
+func TestMakeFolder(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	h := newHarness(t)
+	st, _ := storetest.Open(t)
+	h.svc.UsePartitions(st)
+	h.svc.statfs = func(string) (uint64, uint64, error) { return 1000, 400, nil }
+	h.fake.On("lsblk").Reply(lsblk(true))
+	h.fake.On("lsblk", "-J", "-b", "-o", partCols).Reply(partLsblk("/var/mnt/cache"))
+	h.fake.On("bcachefs", "subvolume").Reply("")
+	h.svc.onBcachefs = func(p string) bool { return p == "/var/mnt/pool" }
+
+	places, err := h.svc.FolderPlaces(ctx)
+	if err != nil || !reflect.DeepEqual(places, []string{"/var/mnt/pool", "/var/mnt/cache"}) {
+		t.Fatalf("places = %v, %v", places, err)
+	}
+	// On a pool it is a subvolume.
+	path, err := h.svc.MakeFolder(ctx, "/var/mnt/pool", "immich")
+	if err != nil || path != "/var/mnt/pool/immich" {
+		t.Fatalf("made %q, %v", path, err)
+	}
+	if calls := h.fake.CallsMatching("bcachefs", "subvolume", "create"); len(calls) != 1 || calls[0].Args[2] != "/var/mnt/pool/immich" {
+		t.Fatalf("subvolume create = %+v", calls)
+	}
+	// Not a pool or a partition, and not one folder's name.
+	for _, c := range [][2]string{{"/var/lib", "x"}, {"/var/mnt", "pool"}, {"/var/mnt/pool", "a/b"}, {"/var/mnt/pool", ".."}, {"/var/mnt/pool", ""}} {
+		if _, err := h.svc.MakeFolder(ctx, c[0], c[1]); !errors.Is(err, ErrNotAPlace) {
+			t.Errorf("MakeFolder(%q, %q): err = %v", c[0], c[1], err)
+		}
+	}
+}

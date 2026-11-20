@@ -1222,6 +1222,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks-ids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** This host's ids for the users and groups its stacks declare. */
+        get: operations["getStackIDs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stacks-ids/{name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Pin the id of a user or group name. Folders made before keep the id they have. */
+        put: operations["setStackID"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks-lock": {
         parameters: {
             query?: never;
@@ -1458,6 +1492,40 @@ export interface paths {
         post?: never;
         /** Remove a stack variable, declared or not. */
         delete: operations["deleteStackVariable"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stacks/{name}/variables/{var}/folder": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Make the folder for a path variable, owned by the stack ids of its owner and group, and store it as the value. */
+        post: operations["createStackFolder"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stacks/{name}/variables/{var}/own": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Change the owner of a path variable's folder, and of everything in it, to the stack ids. It cannot be undone; the stack must be stopped. */
+        post: operations["ownStackFolder"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -3510,6 +3578,16 @@ export interface components {
             prepare: string;
             stack: string;
         };
+        StackFolderCreate: {
+            /** @description The folder's name there. Empty: the stack's name. */
+            folder?: string;
+            /** @description The pool or partition to make it on, by its directory (/var/mnt/pool). Empty: the host's only one. */
+            place?: string;
+        };
+        StackFolderOwn: {
+            /** @description The folder's path, typed to confirm: the change cannot be undone. */
+            confirm: string;
+        };
         StackGeneration: {
             /** Format: date-time */
             built_at: string;
@@ -3531,6 +3609,22 @@ export interface components {
             detail: string;
             /** @enum {string} */
             kind: "route" | "storage" | "gpu" | "egress" | "port" | "containers" | "api";
+        };
+        StackID: {
+            /** Format: int64 */
+            id: number;
+            name: string;
+        };
+        StackIDList: {
+            ids: components["schemas"]["StackID"][];
+            /** Format: int64 */
+            max: number;
+            /** Format: int64 */
+            min: number;
+        };
+        StackIDSet: {
+            /** Format: int64 */
+            id: number;
         };
         StackLock: {
             stacks: components["schemas"]["StackLockEntry"][];
@@ -3772,6 +3866,16 @@ export interface components {
             description: string;
             /** @description The values the manifest allows; any other is refused (version 7 env variables). */
             enum?: string[];
+            /**
+             * Format: int64
+             * @description For a path with an owner or group: the gid of the folder now.
+             */
+            folder_gid?: number;
+            /**
+             * Format: int64
+             * @description For a path with an owner or group: the uid that owns the folder now.
+             */
+            folder_uid?: number;
             /** @description The group in the stack that takes the gid of the path's host directory (version 8). Only for a path. */
             group?: string;
             /** @description The value (stored or default) is also a line of /run/secrets/env. A value with a line break, surrounding whitespace, a quote, a backslash or a $ is delivered only as its file. Never for a path, and from manifest version 7 never for a secret: the env file then overrides every service's environment. */
@@ -3786,6 +3890,11 @@ export interface components {
             name: string;
             /** @description The user in the stack that takes the uid of the path's host directory (version 8). Only for a path. */
             owner?: string;
+            /**
+             * @description For a path with an owner or group and a folder: ok (it has the stack ids), own (ids of its own, which the stack takes), root (owned by root: the stack cannot use it), group_differs (another stack's folder has another id for the same group).
+             * @enum {string}
+             */
+            owner_state?: "ok" | "own" | "root" | "group_differs";
             /** @description The path is bound read-only. Only for a path. */
             read_only?: boolean;
             /** @description An install or update waits until it has a value, stored or a default. False for the operator's own. */
@@ -3799,6 +3908,16 @@ export interface components {
              * @enum {string}
              */
             source: "stored" | "default" | "unset";
+            /**
+             * Format: int64
+             * @description This host's id for the path's group; absent until it has one.
+             */
+            stack_gid?: number;
+            /**
+             * Format: int64
+             * @description This host's id for the path's owner; absent until it has one.
+             */
+            stack_uid?: number;
             /**
              * @description What the value is, for the dashboard's input (version 7 env variables).
              * @enum {string}
@@ -9935,6 +10054,91 @@ export interface operations {
             };
         };
     };
+    getStackIDs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StackIDList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    setStackID: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description A user or group name a stack declares. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StackIDSet"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StackIDList"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     getStackLock: {
         parameters: {
             query?: never;
@@ -10622,6 +10826,102 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Stack"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    createStackFolder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name, as it was installed. */
+                name: string;
+                /** @description A path variable of the stack. */
+                var: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StackFolderCreate"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Stack"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    ownStackFolder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name, as it was installed. */
+                name: string;
+                /** @description A path variable of the stack. */
+                var: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StackFolderOwn"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

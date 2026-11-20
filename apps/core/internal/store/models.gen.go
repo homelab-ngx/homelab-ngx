@@ -246,6 +246,12 @@ type StackGeneration struct {
 	HostIds    string
 }
 
+type StackID struct {
+	Name      string
+	ID        int64
+	UpdatedAt int64
+}
+
 type StackUpdate struct {
 	ID             int64
 	Stack          string

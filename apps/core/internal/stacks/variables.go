@@ -508,6 +508,7 @@ func (s *Service) SetVariable(ctx context.Context, name, varName string, in Stac
 		if err := s.statDir(in.Value); err != nil {
 			return Stack{}, httpx.Unprocessable("invalid_path", "%s: %v", varName, err)
 		}
+		s.adoptEmpty(ctx, d, in.Value)
 	}
 	if declared && d.Kind == VarAddress {
 		_, value, err := ParseAddresses(in.Value)

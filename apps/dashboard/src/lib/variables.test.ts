@@ -82,7 +82,7 @@ describe("variableError", () => {
     const path = v("MEDIA_DIR", { kind: "path" });
     const bad = new ProblemError(422, "invalid_path", 'MEDIA_DIR: "/nope" is not on the host: stat /nope: no such file or directory');
     expect(variableError(bad, path)).toBe(
-      '"/nope" is not on the host: stat /nope: no such file or directory. Use an existing directory on the host.',
+      '"/nope" is not on the host: stat /nope: no such file or directory. Create the folder here, or name one that exists.',
     );
     const kind = new ProblemError(422, "kind_mismatch", "TZ cannot be made secret: the stack's manifest declares it as env");
     expect(variableError(kind, v("TZ"))).toBe("Declared as a setting; it cannot be made secret.");

@@ -186,6 +186,7 @@ func run(configPath string) error {
 	stor.UseStore(st)
 	stor.UsePartitions(st)
 	stor.UseStackFolders(stacksSvc)
+	stacksSvc.UsePlaces(stor)
 	// metrics.db sits next to homelab.db but outside its snapshots: it is
 	// throwaway telemetry. Without it the live charts still work.
 	mdb, err := metrics.OpenDB(ctx, filepath.Join(filepath.Dir(nix.Paths.DB), "metrics.db"))

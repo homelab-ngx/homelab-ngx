@@ -34,7 +34,7 @@ func BuildHostModule(m Manifest, paths map[string]string, stat func(string) (uin
 	h = &HostModule{Users: map[string]uint32{}, Groups: map[string]uint32{}}
 	take := func(kind, name, from string, id uint32, into map[string]uint32) error {
 		if id == 0 {
-			return fmt.Errorf("%s is owned by root; give it a %s of its own (chown) for the stack's %s %s", from, kind, kind, name)
+			return fmt.Errorf("%s is owned by root, and the stack's %s %s cannot be root: change its owner on the stack's page (the folder's menu), or with homelab stacks folder own", from, kind, name)
 		}
 		if old, ok := into[name]; ok && old != id {
 			return fmt.Errorf("the stack's %s %s would take two ids, %d and %d, from its folders", kind, name, old, id)

@@ -272,12 +272,117 @@ func stacksCmd() *cli.Command {
 					return nil
 				}), &cli.IntFlag{Name: "generation", Usage: "the generation to go back to"}),
 			stackVarCmd(),
+			stackFolderCmd(),
+			stackIDsCmd(),
 		},
 	}
 }
 
 // stackVarCmd is `homelab stacks var`: the values a stack gets at
 // /run/secrets. A value is read from stdin or a prompt, never argv.
+// stackFolderCmd makes and re-owns the folder of a stack's path variable.
+func stackFolderCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "folder",
+		Usage: "Make the folder of a stack's path variable, or change its owner to the stack ids",
+		Subcommands: []*cli.Command{
+			{
+				Name:      "create",
+				Usage:     "Make the folder (a subvolume on a pool), owned by the stack ids, and set it as the value",
+				ArgsUsage: "<stack> <NAME>",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "place", Usage: "the pool or partition, by its directory; needed when the host has more than one"},
+					&cli.StringFlag{Name: "name", Usage: "the folder's name there (default: the stack's name)"},
+				},
+				Action: func(c *cli.Context) error {
+					if err := requireArgs(c, 2, "homelab stacks folder create <stack> <NAME> [--place DIR] [--name FOLDER]"); err != nil {
+						return err
+					}
+					name, v := c.Args().Get(0), c.Args().Get(1)
+					body := stacks.StackFolderCreate{Place: c.String("place"), Folder: c.String("name")}
+					s, err := call[stacks.Stack](c.Context, http.MethodPost, stackVarPath(name, v)+"/folder", body)
+					if err != nil {
+						return err
+					}
+					return emit(c, s, "✔ "+v+" is "+stackVarValue(s, v))
+				},
+			},
+			{
+				Name:      "own",
+				Usage:     "Change the owner of the folder and everything in it to the stack ids; cannot be undone",
+				ArgsUsage: "<stack> <NAME>",
+				Flags:     []cli.Flag{&cli.StringFlag{Name: "confirm", Usage: "the folder's path, to confirm", Required: true}},
+				Action: func(c *cli.Context) error {
+					if err := requireArgs(c, 2, "homelab stacks folder own <stack> <NAME> --confirm <path>"); err != nil {
+						return err
+					}
+					name, v := c.Args().Get(0), c.Args().Get(1)
+					s, err := call[stacks.Stack](c.Context, http.MethodPost, stackVarPath(name, v)+"/own", stacks.StackFolderOwn{Confirm: c.String("confirm")})
+					if err != nil {
+						return err
+					}
+					return emit(c, s, "✔ "+stackVarValue(s, v)+" and everything in it has the stack ids")
+				},
+			},
+		},
+	}
+}
+
+func stackVarValue(s *stacks.Stack, name string) string {
+	for _, v := range s.Variables {
+		if v.Name == name {
+			return v.Value
+		}
+	}
+	return name
+}
+
+// stackIDsCmd lists and pins the host's ids for the names stacks declare.
+func stackIDsCmd() *cli.Command {
+	list := func(c *cli.Context, l *stacks.StackIDList) error {
+		if jsonFlag(c) {
+			return printJSON(l)
+		}
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+		fmt.Fprintln(w, "NAME\tID")
+		for _, e := range l.IDs {
+			fmt.Fprintf(w, "%s\t%d\n", e.Name, e.ID)
+		}
+		fmt.Fprintf(w, "(%d of %d to %d in use)\n", len(l.IDs), l.Min, l.Max)
+		return w.Flush()
+	}
+	return &cli.Command{
+		Name:  "ids",
+		Usage: "This host's ids for the users and groups its stacks declare (2000 to 2099)",
+		Action: func(c *cli.Context) error {
+			l, err := call[stacks.StackIDList](c.Context, http.MethodGet, "/stacks-ids", nil)
+			if err != nil {
+				return err
+			}
+			return list(c, l)
+		},
+		Subcommands: []*cli.Command{{
+			Name:      "set",
+			Usage:     "Pin a name's id; folders made before keep the id they have",
+			ArgsUsage: "<name> <id>",
+			Action: func(c *cli.Context) error {
+				if err := requireArgs(c, 2, "homelab stacks ids set <name> <id>"); err != nil {
+					return err
+				}
+				id, err := strconv.ParseInt(c.Args().Get(1), 10, 64)
+				if err != nil {
+					return fmt.Errorf("%q is not a number", c.Args().Get(1))
+				}
+				l, err := call[stacks.StackIDList](c.Context, http.MethodPut, "/stacks-ids/"+url.PathEscape(c.Args().Get(0)), stacks.StackIDSet{ID: id})
+				if err != nil {
+					return err
+				}
+				return list(c, l)
+			},
+		}},
+	}
+}
+
 func stackVarCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "var",

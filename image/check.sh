@@ -714,14 +714,28 @@ if api http://x/api/storage | jq -e 'has("partitions")' >/dev/null; then
 fi
 
 step "6. a stack from the drafts template"
-vssh "mkdir -p $pool/site /var/lib/stack-src/site && echo '<p>image-check</p>' > $pool/site/index.html"
+vssh "mkdir -p /var/lib/stack-src/site"
 for f in homelab-stack.json flake.nix; do
   sed 's/NAME/site/g' "$root/apps/core/internal/drafts/template/$f" | vssh "cat > /var/lib/stack-src/site/$f"
 done
 vssh 'cd /var/lib/stack-src/site && git init -q && git add -A && git -c user.name=check -c user.email=check@example.com commit -qm site'
 rev=$(vssh 'git -C /var/lib/stack-src/site rev-parse HEAD')
 api -X POST http://x/api/stacks -d "'{\"name\":\"site\",\"source\":\"git+file:///var/lib/stack-src/site\"}'" >/dev/null || die "install refused"
-api -X PUT http://x/api/stacks/site/variables/SITE_DIR -d "'{\"value\":\"$pool/site\"}'" >/dev/null || die "variable refused"
+# The stack's page makes the folder: a subvolume on the pool, owned by the
+# host's ids for the user and group the template declares (nginx, the first
+# name, so 2000). A version from before that takes a folder made by hand.
+madefolder=
+if api http://x/api/stacks-ids >/dev/null 2>&1; then
+  api -X POST http://x/api/stacks/site/variables/SITE_DIR/folder -d "'{\"place\":\"$pool\",\"folder\":\"site\"}'" >/dev/null || die "the folder was not made"
+  [ "$(vssh "stat -c %u:%g $pool/site")" = 2000:2000 ] || die "$pool/site is owned by $(vssh "stat -c %u:%g $pool/site"), not the stack ids 2000:2000"
+  vssh "bcachefs subvolume list $pool" | grep -qw site || die "$pool/site is not a subvolume"
+  [ "$(api http://x/api/stacks/site | jq -r '.variables[] | select(.name == "SITE_DIR") | "\(.value) \(.owner_state)"')" = "$pool/site ok" ] || die "SITE_DIR is not the made folder on the stack ids"
+  madefolder="; its folder a subvolume made from the API, owned by the stack ids"
+else
+  vssh "mkdir -p $pool/site && chown 2000:2000 $pool/site"
+  api -X PUT http://x/api/stacks/site/variables/SITE_DIR -d "'{\"value\":\"$pool/site\"}'" >/dev/null || die "variable refused"
+fi
+vssh "echo '<p>image-check</p>' > $pool/site/index.html"
 api -X POST http://x/api/stacks/site/approve -d "'{\"rev\":\"$rev\"}'" >/dev/null || die "approve refused"
 api -X POST http://x/api/stacks/site/start >/dev/null || die "start refused"
 for _ in $(seq 1 120); do
@@ -738,7 +752,8 @@ if [ -n "$onvar" ]; then
   st=$(api http://x/api/stacks-store)
   jq -e '.total_bytes > 0 and .free_bytes > 0 and (.own_partition | not)' <<<"$st" >/dev/null || die "the Nix store's disk is not reported: $st"
 fi
-ok "stack site built, serving the page from the pool at https://site.$domain$refused"
+[ -z "$madefolder" ] || grep -q '^nginx:x:2000:' <(vssh 'cat /var/lib/homelab/appdata/stacks/site/root/etc/passwd') || die "nginx in the stack does not have the id 2000"
+ok "stack site built, serving the page from the pool at https://site.$domain$refused$madefolder"
 
 step "7. host settings: VPN, tunnel, firewall, name and time zone"
 peer=$(vssh 'wg genkey | wg pubkey')

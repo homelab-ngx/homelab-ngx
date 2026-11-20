@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -310,4 +312,64 @@ func statfs(path string) (total, free uint64, err error) {
 		return 0, 0, err
 	}
 	return st.Blocks * uint64(st.Bsize), st.Bavail * uint64(st.Bsize), nil
+}
+
+// ErrNotAPlace is a folder asked for somewhere that is not a mounted pool
+// or partition, or under a name that is not one folder.
+var ErrNotAPlace = errors.New("a folder is made on a mounted pool or partition")
+
+var folderNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
+
+// FolderPlaces are the directories a folder can be made in: the mounted
+// pools, and the mounted partitions that are not read-only.
+func (s *Service) FolderPlaces(ctx context.Context) ([]string, error) {
+	st, err := s.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := []string{}
+	for _, p := range st.Pools {
+		if p.State == "mounted" && p.Mountdir != "" {
+			out = append(out, p.Mountdir)
+		}
+	}
+	for _, p := range st.Partitions {
+		if p.State == "mounted" && !p.ReadOnly {
+			out = append(out, p.Mountdir)
+		}
+	}
+	return out, nil
+}
+
+// MakeFolder makes place/name and returns its path: a subvolume when place
+// is a bcachefs pool, a plain folder on a partition. An empty folder that
+// is there already is used; one with something in it is refused.
+func (s *Service) MakeFolder(ctx context.Context, place, name string) (string, error) {
+	places, err := s.FolderPlaces(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !slices.Contains(places, place) {
+		return "", fmt.Errorf("%w: %s is neither", ErrNotAPlace, place)
+	}
+	if !folderNameRE.MatchString(name) {
+		return "", fmt.Errorf("%w: %q is not a folder name", ErrNotAPlace, name)
+	}
+	path := place + "/" + name
+	if entries, err := os.ReadDir(path); err == nil {
+		if len(entries) > 0 {
+			return "", fmt.Errorf("%s is there already and has files in it: set it as the folder instead", path)
+		}
+		return path, nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	if s.onBcachefs(place) {
+		if err := s.CreateSubvolume(ctx, path); err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+	defer s.invalidate()
+	return path, os.Mkdir(path, 0o755)
 }

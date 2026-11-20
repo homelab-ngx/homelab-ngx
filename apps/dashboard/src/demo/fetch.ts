@@ -242,6 +242,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
   "/stacks-manifest-schema": () => ({}),
   "/stacks-nixpkgs": () => ({ channels: ["nixos-26.05", "nixos-unstable"] }),
   "/stacks-store": (h) => ({ own_partition: true, collecting: false, total_bytes: 120 * GB, used_bytes: 47 * GB, free_bytes: 73 * GB, freed_bytes: 6 * GB, collected_at: iso(h.now() - DAY), measured_at: iso(h.now() - 10 * MIN) }),
+  "/stacks-ids": () => ({ min: 2000, max: 2099, ids: [{ name: "immich", id: 2000 }, { name: "media", id: 2001 }] }),
   "/stacks/{name}": (h, c) => stackOf(h, c.path.name!),
   "/storage": (h) => h.storage,
   "/storage/browse": (h, c) => listing(h, c.query.get("path") ?? "/"),

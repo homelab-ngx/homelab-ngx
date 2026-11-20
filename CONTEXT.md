@@ -154,6 +154,10 @@ _Avoid_: config copy, cache
 A bcachefs storage pool recorded by the daemon, including whether it is auto-mounted at boot; owned by the database, not Nix.
 _Avoid_: array, volume
 
+**Stack id**:
+The host's number for a user or group name its stacks declare, from 2000 to 2099: given to the folders the daemon makes for a path variable, the same for every stack that declares the name. A folder that came with another owner keeps it.
+_Avoid_: uid, service account
+
 **Partition**:
 A file system that is not a pool, mounted by the daemon under `/var/mnt` by a name and remembered by its UUID: a partition of a disk, or a whole disk formatted without a table. It is on one disk and has no parity.
 _Avoid_: volume, mount, drive

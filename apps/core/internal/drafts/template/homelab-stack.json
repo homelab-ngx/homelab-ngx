@@ -10,7 +10,9 @@
       "description": "The folder with the pages to serve.",
       "required": true,
       "mount": "/srv/site",
-      "read_only": true
+      "read_only": true,
+      "owner": "nginx",
+      "group": "nginx"
     }
   ],
   "backup": {

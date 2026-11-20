@@ -61,6 +61,23 @@ export function ownerText(v: StackVariable): string {
   return "";
 }
 
+/** Who owns a path's folder now, in words; "" when the stack takes no owner from it or it has none yet. */
+export function ownedText(v: StackVariable): string {
+  const who = `${v.folder_uid ?? "?"}:${v.folder_gid ?? "?"}`;
+  switch (v.owner_state) {
+    case "ok":
+      return `The folder has this host's ids for them (${who}).`;
+    case "own":
+      return `The folder came with ids of its own (${who}), and the stack uses those.`;
+    case "root":
+      return `The folder is owned by root (${who}), which the stack cannot use. Change owner, in the row's menu, gives it this host's ids.`;
+    case "group_differs":
+      return `Another stack's folder has another id for the group ${v.group} than this one (${who}), so the two do not share files.`;
+    default:
+      return "";
+  }
+}
+
 const kindWords: Record<VariableKind, string> = { env: "a setting", secret: "a secret", path: "a path", address: "an address" };
 
 /** A refused save in words, for the row it belongs to. */
@@ -70,7 +87,7 @@ export function variableError(e: unknown, v: Pick<StackVariable, "name" | "kind"
   const why = e.detail.startsWith(`${v.name}: `) ? e.detail.slice(v.name.length + 2) : e.detail;
   switch (e.code) {
     case "invalid_path":
-      return `${why}. Use an existing directory on the host.`;
+      return `${why}. Create the folder here, or name one that exists.`;
     case "invalid_address":
       return `${why}. Use IPv4 addresses or ranges, separated by commas.`;
     case "kind_mismatch":

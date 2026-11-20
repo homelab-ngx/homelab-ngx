@@ -56,6 +56,25 @@ type setVariableIn struct {
 	Body StackVariableSet
 }
 
+type folderCreateIn struct {
+	Name string `path:"name" doc:"The stack's name, as it was installed."`
+	Var  string `path:"var" doc:"A path variable of the stack."`
+	Body StackFolderCreate
+}
+
+type folderOwnIn struct {
+	Name string `path:"name" doc:"The stack's name, as it was installed."`
+	Var  string `path:"var" doc:"A path variable of the stack."`
+	Body StackFolderOwn
+}
+
+type stackIDsBody struct{ Body StackIDList }
+
+type stackIDIn struct {
+	Name string `path:"name" doc:"A user or group name a stack declares."`
+	Body StackIDSet
+}
+
 type queuedBody struct{ Body StackUpdateAll }
 
 type updatesIn struct {
@@ -199,6 +218,42 @@ func (h *HTTP) Register(a httpx.APIs) {
 				return nil, err
 			}
 			return &stackBody{Body: s}, nil
+		})
+	httpx.Register(a, httpx.ScopeOperator, op("createStackFolder", http.MethodPost, "/stacks/{name}/variables/{var}/folder",
+		"Make the folder for a path variable, owned by the stack ids of its owner and group, and store it as the value.", 0),
+		func(ctx context.Context, in *folderCreateIn) (*stackBody, error) {
+			s, err := h.svc.CreateFolder(ctx, in.Name, in.Var, in.Body)
+			if err != nil {
+				return nil, err
+			}
+			return &stackBody{Body: s}, nil
+		})
+	httpx.Register(a, httpx.ScopeOperator, op("ownStackFolder", http.MethodPost, "/stacks/{name}/variables/{var}/own",
+		"Change the owner of a path variable's folder, and of everything in it, to the stack ids. It cannot be undone; the stack must be stopped.", 0),
+		func(ctx context.Context, in *folderOwnIn) (*stackBody, error) {
+			s, err := h.svc.OwnFolder(ctx, in.Name, in.Var, in.Body)
+			if err != nil {
+				return nil, err
+			}
+			return &stackBody{Body: s}, nil
+		})
+	httpx.Register(a, httpx.ScopeRead, op("getStackIDs", http.MethodGet, "/stacks-ids",
+		"This host's ids for the users and groups its stacks declare.", 0),
+		func(ctx context.Context, _ *struct{}) (*stackIDsBody, error) {
+			l, err := h.svc.StackIDs(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &stackIDsBody{Body: l}, nil
+		})
+	httpx.Register(a, httpx.ScopeOperator, op("setStackID", http.MethodPut, "/stacks-ids/{name}",
+		"Pin the id of a user or group name. Folders made before keep the id they have.", 0),
+		func(ctx context.Context, in *stackIDIn) (*stackIDsBody, error) {
+			l, err := h.svc.SetStackID(ctx, in.Name, in.Body.ID)
+			if err != nil {
+				return nil, err
+			}
+			return &stackIDsBody{Body: l}, nil
 		})
 	httpx.Register(a, httpx.ScopeOperator, op("deleteStackVariable", http.MethodDelete, "/stacks/{name}/variables/{var}",
 		"Remove a stack variable, declared or not.", 0),
