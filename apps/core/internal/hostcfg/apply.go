@@ -230,6 +230,10 @@ func (a *ImageApplier) caddy(ctx context.Context, s Snapshot) error {
 
 // ── /etc through a confext ───────────────────────────────────────────────
 
+// DashboardFile is the dashboard's address in the homelab-host extension,
+// relative to its root.
+const DashboardFile = "etc/homelab/dashboard"
+
 // EtcFiles are the files of the homelab-host configuration extension,
 // relative to its root, and the symlinks (path → target).
 func EtcFiles(s Snapshot) (files map[string]string, links map[string]string) {
@@ -241,6 +245,12 @@ func EtcFiles(s Snapshot) (files map[string]string, links map[string]string) {
 	}
 	if s.Host.Timezone != "" {
 		links["etc/localtime"] = "../usr/share/zoneinfo/" + s.Host.Timezone
+	}
+	// The dashboard's address under the private domain, for the login
+	// greeting (usr/share/homelab/shell.bash). Without a domain the greeting
+	// names the host's .local name and address itself.
+	if h := DashboardHost(s.Domain); h != "" {
+		files[DashboardFile] = "https://" + h + "\n"
 	}
 	// A static address replaces the image's DHCP default (80-wired.network):
 	// networkd takes the first file that matches an interface.

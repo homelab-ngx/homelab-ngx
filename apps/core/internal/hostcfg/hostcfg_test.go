@@ -202,6 +202,9 @@ func TestRendered(t *testing.T) {
 		!strings.Contains(files["etc/systemd/network/50-wg-homelab.network"], "Address=10.10.0.1/24") {
 		t.Errorf("etc files = %v %v", files, links)
 	}
+	if want := "https://" + DashboardHost(s.Domain) + "\n"; s.Domain.Domain == "" || files[DashboardFile] != want {
+		t.Errorf("%s = %q, want %q", DashboardFile, files[DashboardFile], want)
+	}
 }
 
 // Apply writes every part under its root, reloads what changed, and removes
@@ -283,6 +286,10 @@ func TestImageApplier(t *testing.T) {
 // the settings, and a second apply keeps them.
 func TestAgentEtc(t *testing.T) {
 	files, links := EtcFiles(Snapshot{})
+	// No domain, no dashboard file: the greeting falls back to .local.
+	if f, ok := files[DashboardFile]; ok {
+		t.Errorf("%s without a domain = %q", DashboardFile, f)
+	}
 	for p, want := range map[string]string{
 		"etc/claude-code/CLAUDE.md":              "/usr/share/homelab/agent/brief.md",
 		"etc/claude-code/.claude/skills/homelab": "/usr/share/homelab/agent/skills/homelab",

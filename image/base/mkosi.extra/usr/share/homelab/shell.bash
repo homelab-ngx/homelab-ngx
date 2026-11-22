@@ -61,10 +61,31 @@ _hl_line() {
   fi
 }
 
-_hl_greet() {
-  local IMAGE_VERSION= host up load mem addr pool
+# _hl_versions: the image's version, or the image's and the core's when they
+# differ (an update half done), then the daemon's on a line of its own when
+# it still runs another core. The daemon is asked only by a user who may
+# open its socket, and for at most a second.
+_hl_versions() {
+  local IMAGE_VERSION='' core daemon sock=/run/homelab-daemon/daemon.sock
   # shellcheck disable=SC1091
   . /etc/os-release
+  core=$(readlink /var/lib/extensions/homelab-core.raw 2>/dev/null)
+  [[ $core =~ homelab-core_(.+)\.raw$ ]] && core=${BASH_REMATCH[1]} || core=
+  if [[ -z $core || $core == "$IMAGE_VERSION" ]]; then
+    _hl_v="homelab-ngx ${IMAGE_VERSION:-}"
+  else
+    _hl_v="image $IMAGE_VERSION · core $core"
+  fi
+  _hl_d=
+  if [[ -n $core && -w $sock ]]; then
+    daemon=$(curl -s --max-time 1 --unix-socket "$sock" http://localhost/api/version 2>/dev/null |
+      sed -n 's/.*"version":"\([^"]*\)".*/\1/p')
+    [[ -n $daemon && $daemon != "$core" ]] && _hl_d="daemon $daemon: it has not restarted into core $core"
+  fi
+}
+
+_hl_greet() {
+  local host up load mem addr dash m storage='' _hl_v _hl_d
   host=$(</proc/sys/kernel/hostname)
   read -r up _ </proc/uptime
   up=${up%.*}
@@ -74,13 +95,18 @@ _hl_greet() {
   read -r load _ </proc/loadavg
   mem=$(free -h 2>/dev/null | awk '/^Mem/ {print $3 " of " $2}')
   addr=$(ip -4 -o route get 1.1.1.1 2>/dev/null | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+  _hl_versions
   echo
-  _hl_line '󰒋' "$(printf '\e[1m%s\e[0m · homelab-ngx %s' "$host" "${IMAGE_VERSION:-}")"
+  _hl_line '󰒋' "$(printf '\e[1m%s\e[0m · %s' "$host" "$_hl_v")"
+  [[ -n $_hl_d ]] && _hl_line '󰀦' "$_hl_d"
   _hl_line '󰅐' "up $up · load $load · memory $mem"
-  if mountpoint -q /pool 2>/dev/null; then
-    pool=$(df -h --output=used,size /pool | awk 'NR == 2 {print $1 " of " $2}')
-    _hl_line '󰋊' "pool $pool"
-  fi
+  # Pools and disks are mounted under /var/mnt, each at its name.
+  for m in /var/mnt/*/; do
+    m=${m%/}
+    mountpoint -q "$m" 2>/dev/null || continue
+    storage+="${storage:+ · }$(df -h --output=used,size "$m" | awk -v n="${m##*/}" 'NR == 2 {print n " " $1 " of " $2}')"
+  done
+  [[ -n $storage ]] && _hl_line '󰋊' "$storage"
   if [[ -e /var/lib/homelab/installer ]]; then
     _hl_line '󰇚' "installer: open http://$host.local${addr:+ or http://$addr} in a browser"
     # The code that moves the installer to another browser (the daemon
@@ -92,6 +118,10 @@ _hl_greet() {
       echo
       qrencode -t UTF8 -m 2 "http://$addr" | sed 's/^/  /'
     fi
+  elif [[ -r /etc/homelab/dashboard ]] && read -r dash </etc/homelab/dashboard && [[ -n $dash ]]; then
+    # The daemon writes it when a private domain is set; plain HTTP to the
+    # host then redirects there.
+    _hl_line '󰖟' "dashboard: $dash"
   else
     _hl_line '󰖟' "dashboard: http://$host.local${addr:+ · http://$addr}"
   fi
