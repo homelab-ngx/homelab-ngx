@@ -1,6 +1,6 @@
 ---
 name: homelab
-description: Operate the stacks on this homelab-ngx host and read their logs - list, start, stop, update or roll back a stack, set its variables and folders, restart one of its services, check backups and host health, and find why a stack or service fails. Use for any question about a service, stack, backup or log on this machine.
+description: Operate the stacks on this homelab-ngx host and read their logs - list, start, stop, update or roll back a stack, set its variables and folders, restart one of its services, check backups and host health, and find why a stack or service fails. Also for a new service: find a public stack or write one in a local repo. Use for any question about a service, stack, backup or log on this machine.
 ---
 
 # Stacks on homelab-ngx
@@ -41,6 +41,7 @@ grants).
 | Folders | `homelab stacks folder list <stack>`; `folder add <stack> <host-folder> <mount> [--read-write]` | The stack sees a change at its next restart. |
 | Freeze, thaw | `homelab stacks freeze <stack>`, `thaw <stack>` | A frozen stack refuses start, update, rollback and service restarts until it is thawed. |
 | Start at boot | `homelab stacks autostart <stack> on` or `off` | |
+| Follow a moved repo | `homelab stacks source <stack> <source>` | What runs, the variables and the data stay. The commit found is approved by itself when it asks for nothing new. |
 
 Ask before you stop, remove or roll back a stack, approve a commit or
 change a variable. These change what the user's services do.
@@ -51,6 +52,12 @@ approvals. Its data in `/var/lib/homelab/appdata/stacks/<stack>` stays.
 A stack's NixOS config is in its repo, not on this host. To change it,
 change the repo (or its draft, for a stack written in the dashboard), then
 `fetch` and `update`. Editing files in the stack's root does not last.
+
+## A new service
+
+To add a service, read [new-stack.md](new-stack.md): find a public stack
+and install it, or write a new one in `~/stacks/stack-<name>`, build it and
+install it from there.
 
 ## Inside a stack
 

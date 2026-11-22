@@ -29,12 +29,13 @@ Don't:
   from its settings;
 - edit a stack's files under `/var/lib/homelab/appdata/stacks/<name>/root`
   to change its config; that is the stack's own system, rebuilt by an
-  update;
+  update. A stack is changed in its repo, and a new one is written in a
+  repo of its own;
 - open or write `/var/lib/homelab-daemon/homelab.db`;
 - put a secret on a command line: `homelab stacks var set <stack> <NAME>
   --value-stdin` reads it from stdin;
 - stop or restart `homelab-daemon`, `caddy` or `sshd` unless asked to;
 - start, stop or remove a stack, or reboot, without asking first.
 
-For stacks and their logs, use the `homelab` skill. Without skills, read
+For stacks, their logs and new services, use the `homelab` skill. Without skills, read
 `/usr/share/homelab/agent/skills/homelab/SKILL.md`.

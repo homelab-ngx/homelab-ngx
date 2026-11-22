@@ -23,11 +23,19 @@ import (
 //go:embed guide.md
 var guide string
 
-// Guide is the assistant's system prompt: the authoring guide and the
-// template. It is the same for every request, so a provider caches it.
+// StackRules is how to write a stack: the manifest's fields and the rules
+// for its module. The core also ships it to the coding agents on the host
+// (nix/pkgs/core-extension.nix), so it is written for any reader.
+//
+//go:embed stack-rules.md
+var StackRules string
+
+// Guide is the assistant's system prompt: the authoring guide with the
+// stack rules, and the template. It is the same for every request, so a
+// provider caches it.
 func Guide() string {
 	t := Template("example")
-	return guide + "\n" + fileBlock(stacks.ManifestFile, t[stacks.ManifestFile]) + "\n" + fileBlock(stacks.FlakeFile, t[stacks.FlakeFile])
+	return strings.Replace(guide, "{{stack-rules.md}}\n", StackRules, 1) + "\n" + fileBlock(stacks.ManifestFile, t[stacks.ManifestFile]) + "\n" + fileBlock(stacks.FlakeFile, t[stacks.FlakeFile])
 }
 
 func fileBlock(path, content string) string {

@@ -162,7 +162,7 @@ The third source (Add stack, "Write it here") is a draft: a git repo the daemon 
 
 An installed stack can be forked into a draft (Fork… on its page). The draft's first commit is a copy of the files of the stack's approved commit, read from its store copy (`nix flake prefetch` of the approved URL, so a private GitHub repo works with the host's token), committed as "Copy of <source> at <commit>"; the repo's history is not copied, and nothing pulls later commits of the original. `POST /drafts` with `from` makes a copy under a new name and leaves the stack on its source. `POST /stacks/{name}/fork` converts: it makes the draft under the stack's own name and moves the stack's source to it, then fetches. The manifest is the stack's own, so the commit is approved by itself and waits as an update; the running generation, the variables and the data stay. A stack that runs from a draft already is refused (`409 already_draft`), and a move that fails to fetch keeps the old source and drops the draft. The draft records the source and commit it came from (`forked_from`, `forked_rev`), and the stack's Source card shows them.
 
-The editor's assistant (Settings, AI assistant) gets `apps/core/internal/drafts/guide.md` as its system prompt, a condensed form of this document. Change the guide when the manifest or the base module changes.
+The editor's assistant (Settings, AI assistant) gets `apps/core/internal/drafts/guide.md` as its system prompt. Its rules for writing a stack, a condensed form of this document, are in `apps/core/internal/drafts/stack-rules.md`, which the core also ships with the template to the coding agents on the host (`/usr/share/homelab/agent`). Change `stack-rules.md` when the manifest or the base module changes.
 
 ### Operating one
 

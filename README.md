@@ -142,8 +142,9 @@ NIXPKGS_ALLOW_UNFREE=1 nix profile install --impure nixpkgs#claude-code
 The core ships them a guide to the host, its stacks and their logs, in
 `/usr/share/homelab/agent`. The daemon links it into each agent's system
 config under `/etc`, so an agent reads it with no setup, and it changes with
-each core update. It covers running stacks and reading logs, not changing
-the image.
+each core update. It covers running stacks, reading their logs, and adding
+a service from a public stack or from a new one written in a local git
+repo. It does not cover changing the image.
 
 ## Verification
 

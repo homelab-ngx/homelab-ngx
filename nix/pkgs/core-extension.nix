@@ -155,12 +155,20 @@ pkgs.runCommand "homelab-core-extension"
     done
     cp -r ${dashboard} $root/usr/share/homelab/dashboard
     cp -r ${../../image/core}/. $root/
+    # How to write a stack and the template every new stack starts from:
+    # the dashboard's draft assistant reads the same files (internal/drafts).
+    # The copy from the store is read-only.
+    chmod -R u+w $root/usr/share/homelab/agent
+    install -m644 ${../../apps/core/internal/drafts/stack-rules.md} $root/usr/share/homelab/agent/skills/homelab/stack-rules.md
+    install -Dm644 ${../../apps/core/internal/drafts/template/homelab-stack.json} $root/usr/share/homelab/agent/template/homelab-stack.json
+    install -Dm644 ${../../apps/core/internal/drafts/template/flake.nix} $root/usr/share/homelab/agent/template/flake.nix
     install -m644 ${defaultConfig} $root/usr/share/homelab/config.json
     ${daemonStatic}/bin/homelab-daemon check-config $root/usr/share/homelab/config.json
     # The coding agents' guidance, at the paths the host's /etc links to
     # (apps/core/internal/hostcfg/agents.go). A skill needs both fields.
     agent=$root/usr/share/homelab/agent
-    for f in brief.md skills/homelab/SKILL.md skills/homelab/logs.md; do
+    for f in brief.md skills/homelab/SKILL.md skills/homelab/logs.md skills/homelab/new-stack.md skills/homelab/stack-rules.md \
+             template/homelab-stack.json template/flake.nix; do
       [ -s "$agent/$f" ] || { echo "agent guidance lacks $f" >&2; exit 1; }
     done
     for k in 'name: homelab' 'description: '; do

@@ -231,4 +231,5 @@ the repo or uncommitted.
 `image/core/usr/share/homelab/agent` is product, not instructions for
 contributors. The core ships it to the agents a user runs on the host, and
 `apps/core/internal/hostcfg/agents.go` links it into their config under
-`/etc`. Change it when a `homelab` command or a log's place changes.
+`/etc`. Change it when a `homelab` command or a log's place changes. The
+stack rules and the template it ships come from `apps/core/internal/drafts`.
