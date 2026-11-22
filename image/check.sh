@@ -832,6 +832,9 @@ stackevidence() {
       journalctl -b -u homelab-daemon -o cat --no-pager | grep -E "\"module\":\"(stacks|hostcfg)\"" | grep -vF "\"kind\":\"cmd\"" | tail -15'
   } 2>&1 | sed 's/^/    /' >&2 || true
 }
+# stopped: for stackis, the stack is down and its stop has finished. The
+# daemon refuses a start (busy) until the stop's finished_at is set.
+stopped='.running == false and (.operation == null or .operation.finished_at != null)'
 # stackis FILTER WANT: jq's FILTER of the stack, as the daemon has it, is WANT.
 stackis() {
   local s
@@ -936,7 +939,7 @@ stackrace() {
   sleep 3
   stackup 0 "after systemd-networkd reconfigured the link"
   ask POST stacks/site/stop || die "stop refused"
-  wait_for 180 stackis .running false || die "the stack did not stop in 3 minutes"
+  wait_for 180 stackis "$stopped" true || die "the stack did not stop in 3 minutes"
   vssh 'for _ in $(seq 1 60); do networkctl reload; networkctl reconfigure ve-site 2>/dev/null; sleep 0.5; done' &
   racer=$!
   ask POST stacks/site/start || die "start refused"
@@ -1395,7 +1398,7 @@ if [ -n "$next" ]; then
     ask POST storage/mount '{"devices":["/dev/vdb","/dev/vdc"]}' || die "mount refused on $next"
     put stacks/site/variables/SITE_DIR "{\"value\":\"$pool/site\"}" || die "variable refused on $next"
     send POST stacks/site/stop >/dev/null 2>&1 || true
-    wait_for 90 stackis '.operation.running // false' false || die "the stack's stop did not end on $next"
+    wait_for 90 stackis "$stopped" true || die "the stack's stop did not end on $next"
     ask POST stacks/site/start || die "start refused on $next"
   fi
   hostcheck
