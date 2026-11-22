@@ -80,7 +80,7 @@ built, checked and signed in CI, and hosts check for them daily.
 
 ### Stacks anyone can install
 
-A stack's manifest (version 8) declares the variables it needs (env, secret,
+A stack's manifest (version 9) declares the variables it needs (env, secret,
 path or address), and the operator fills them in on the host. Route labels are
 served under the host's domain, and a path's owner and group take the host's
 ids. So a stack repo names no secret, host directory, hostname, LAN address or

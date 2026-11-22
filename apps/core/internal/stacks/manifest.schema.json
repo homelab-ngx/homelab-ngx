@@ -2,14 +2,14 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "homelab-stack.json",
   "title": "homelab-stack.json",
-  "description": "A stack's manifest, version 8: what the stack asks of the host. Each route, path, egress, port, GPU, containers and API entry is a grant the operator approves. The host's Check is the authority; this schema is for the editor.",
+  "description": "A stack's manifest, version 9: what the stack asks of the host. Each route, path, egress, port, GPU, containers and API entry is a grant the operator approves. The host's Check is the authority; this schema is for the editor.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "name", "nixpkgs"],
   "properties": {
     "version": {
-      "description": "The manifest format. Write 8.",
-      "const": 8
+      "description": "The manifest format. Write 9.",
+      "const": 9
     },
     "name": {
       "description": "The stack's suggested name: 1-12 characters of a-z, 0-9 and '-', starting with a letter. The operator picks the installed name.",
@@ -21,6 +21,15 @@
       "type": "string",
       "pattern": "^(nixos-(unstable|[0-9]{2}\\.[0-9]{2})|[0-9a-f]{40})$",
       "examples": ["nixos-unstable", "nixos-26.05"]
+    },
+    "icon": {
+      "description": "The stack's icon on the dashboard.",
+      "$ref": "#/definitions/icon"
+    },
+    "services": {
+      "description": "The stack's services as the dashboard shows them, each by its unit inside the stack.",
+      "type": "array",
+      "items": { "$ref": "#/definitions/service" }
     },
     "routes": {
       "description": "Hostnames the host's Caddy serves over HTTPS, each to a port in the stack.",
@@ -97,6 +106,21 @@
     }
   },
   "definitions": {
+    "icon": {
+      "description": "An https URL, a file in the stack's repo (.svg, .png or .webp, at most 256 KiB, such as icons/app.svg), or a name in the dashboard-icons set (such as jellyfin).",
+      "type": "string",
+      "minLength": 1,
+      "examples": ["jellyfin", "icons/app.svg", "https://example.org/app.svg"]
+    },
+    "service": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["unit", "icon"],
+      "properties": {
+        "unit": { "description": "The service's unit inside the stack, such as plex.service.", "type": "string", "pattern": "^[A-Za-z0-9:_.@-]+\\.service$" },
+        "icon": { "description": "The service's icon.", "$ref": "#/definitions/icon" }
+      }
+    },
     "portNumber": { "type": "integer", "minimum": 1, "maximum": 65535 },
     "proto": { "description": "tcp or udp.", "enum": ["tcp", "udp"] },
     "route": {

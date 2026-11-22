@@ -250,7 +250,10 @@ type StackManifest struct {
 	Egress     []StackManifestEgress `json:"egress"`
 	Gpu        bool                  `json:"gpu"`
 	Health     StackManifestHealth   `json:"health"`
-	Name       string                `json:"name"`
+
+	// Icon The stack's icon (version 9): an https URL, a file in the repo or an icon name.
+	Icon string `json:"icon,omitempty" doc:"The stack's icon (version 9): an https URL, a file in the stack's repo (such as icons/app.svg), or a name in the dashboard-icons set (such as jellyfin)."`
+	Name string `json:"name"`
 
 	// Nixpkgs The nixpkgs the repo recommends (version 7): a channel or a commit.
 	Nixpkgs string `json:"nixpkgs,omitempty" doc:"The nixpkgs the repo recommends (version 7): nixos-unstable, nixos-YY.MM or a NixOS/nixpkgs commit."`
@@ -265,10 +268,22 @@ type StackManifest struct {
 	Backup *StackManifestBackup `json:"backup,omitempty" doc:"What the stack recommends backing up, and the unit that prepares it (version 6)."`
 
 	// Ports Host ports forwarded to the stack for the named clients (version 2).
-	Ports   []StackManifestPort    `json:"ports" doc:"Host ports forwarded to the stack for the named clients (version 2)."`
-	Routes  []StackManifestRoute   `json:"routes"`
-	Storage []StackManifestStorage `json:"storage"`
-	Version int                    `json:"version"`
+	Ports  []StackManifestPort  `json:"ports" doc:"Host ports forwarded to the stack for the named clients (version 2)."`
+	Routes []StackManifestRoute `json:"routes"`
+
+	// Services What the manifest says about the stack's services, each by its unit (version 9).
+	Services []StackManifestService `json:"services,omitempty" doc:"What the manifest says about the stack's services, each by its unit inside the stack (version 9)."`
+	Storage  []StackManifestStorage `json:"storage"`
+	Version  int                    `json:"version"`
+}
+
+// StackManifestService is what a manifest says about one of its services.
+type StackManifestService struct {
+	// Icon The service's icon, in the same forms as the stack's.
+	Icon string `json:"icon" doc:"The service's icon, in the same forms as the stack's."`
+
+	// Unit The service's unit inside the stack, such as plex.service.
+	Unit string `json:"unit" doc:"The service's unit inside the stack, such as plex.service."`
 }
 
 // StackManifestBackup is a manifest's backup section.

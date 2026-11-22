@@ -116,6 +116,9 @@ func (b FileBuild) Run(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", ManifestFile, err)
 	}
+	if err := CheckIconFiles(f.StorePath, m); err != nil {
+		return "", fmt.Errorf("%s: %w", ManifestFile, err)
+	}
 	if name == "" {
 		name = m.Name
 	}

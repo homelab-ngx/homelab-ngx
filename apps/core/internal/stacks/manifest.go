@@ -25,8 +25,8 @@ const ManifestFile = "homelab-stack.json"
 // a type and allowed values instead of a default; version 8 adds route
 // labels under the host's domain, address variables that egress and port
 // clients can name, the owner and group of a path, and the GPU and firewall
-// from the host.
-const ManifestVersion = 8
+// from the host; version 9 adds the icons of the stack and its services.
+const ManifestVersion = 9
 
 // MinBuildVersion is the oldest manifest a stack is built from. Older
 // manifests still parse, since stored generations carry them.
@@ -78,6 +78,21 @@ type Manifest struct {
 	// unit that prepares it. Not a grant: nothing is backed up until the
 	// operator adds a folder to a backup. Absent when there is none.
 	Backup *Backup `json:"backup,omitempty"`
+	// Icon (version 9) is the stack's icon, for the dashboard: an https
+	// URL, a file in the repo or a slug (IconKind). Not a grant.
+	Icon string `json:"icon,omitempty"`
+	// Services (version 9) describe the stack's services, each by its unit
+	// inside the stack. Not a grant. Absent when there are none.
+	Services []ServiceMeta `json:"services,omitempty"`
+}
+
+// ServiceMeta is what a version 9 manifest says about one of its services,
+// for the dashboard.
+type ServiceMeta struct {
+	// Unit is the service's unit inside the stack, such as plex.service.
+	Unit string `json:"unit"`
+	// Icon is the service's icon, in the same forms as Manifest.Icon.
+	Icon string `json:"icon"`
 }
 
 // Backup is a version 6 manifest's backup section.
@@ -438,6 +453,9 @@ func (m *Manifest) normalize() {
 	if len(m.Variables) == 0 {
 		m.Variables = nil
 	}
+	if len(m.Services) == 0 {
+		m.Services = nil
+	}
 	if b := m.Backup; b != nil {
 		if b.Prepare == "" && len(b.Folders) == 0 {
 			m.Backup = nil
@@ -520,6 +538,9 @@ func (m Manifest) Validate() error {
 		return err
 	}
 	if err := m.validateNixpkgs(); err != nil {
+		return err
+	}
+	if err := m.validateIcons(); err != nil {
 		return err
 	}
 	if !ValidName(m.Name) {

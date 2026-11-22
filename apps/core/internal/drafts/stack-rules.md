@@ -2,11 +2,11 @@
 
 Every stack repo has `homelab-stack.json` (the manifest: what the stack asks of the host) and `flake.nix`, which exports the stack's NixOS module as `nixosModules.default`. A repo may hold more files the module imports or reads; keep to how it is laid out. The flake needs no inputs; for a new stack, write the module inline in flake.nix as `outputs = _: { nixosModules.default = { config, lib, pkgs, ... }: { … }; };`. The host builds the module on its own base module, with the nixpkgs the manifest names, so the whole stack uses one nixpkgs.
 
-## homelab-stack.json (manifest version 8)
+## homelab-stack.json (manifest version 9)
 
 Unknown fields are refused. Fields:
 
-- `"version": 8` and `"name"`: the stack's suggested name, 1-12 characters of a-z, 0-9 and '-', starting with a letter.
+- `"version": 9` and `"name"`: the stack's suggested name, 1-12 characters of a-z, 0-9 and '-', starting with a letter.
 - `"nixpkgs"` (required): `"nixos-unstable"`, `"nixos-YY.MM"` or a 40-character NixOS/nixpkgs commit.
 - `"routes"`: `[{ "host": "<label>", "port": <port in the stack>, "max_body": "50GB" (optional) }]`. A label such as `"photos"` is served privately as `photos.<the host's domain>` over HTTPS through the host's Caddy. Each route is a grant the person approves.
 - `"variables"`: values the host gives the stack. Each is `{ "name", "kind", "description", "required" }` plus fields by kind. Names match `^[A-Z][A-Z0-9_]{0,63}$`. Write `description` as one short sentence that says what the value is, with an example where it helps ("The tunnel address, such as 10.2.0.2/32."); the dashboard shows it as the help for that variable.
@@ -21,6 +21,7 @@ Unknown fields are refused. Fields:
 - `"containers": true`: podman may run in the stack.
 - `"api": ["read"]` and/or `"control"`: the stack may call the homelab daemon's API.
 - `"health"` (required in practice): `{ "units": ["<unit>.service", …], "http": { "port": <n>, "path": "/…" } }`. Every listed unit must be active and the HTTP probe must answer 2xx on the stack's address, or an update is rolled back. List every service that must be up.
+- `"icon"` and `"services"` (optional): icons the dashboard shows for the stack and for each service, `"services": [{ "unit": "<unit>.service", "icon": "…" }]`. An icon is a name in the dashboard-icons set (`"jellyfin"`), a file in the repo (`"icons/app.svg"`: .svg, .png or .webp, at most 256 KiB) or an `https://` URL. Not a grant.
 - `"backup"`: `{ "prepare": "<oneshot unit>" (optional), "folders": [{ "label", "path": "/var/lib/…" } or { "label", "variable": "<PATH VARIABLE>" }, with optional "exclude": [{ "pattern": "/cache/**", "reason": "…" }]] }`. Recommend data, not caches; patterns start with `/` or `**/`; `path` may not be `/`. For a database, dump it on a timer to a folder (`services.postgresqlBackup`) and name that unit as `prepare`.
 
 ## The NixOS module (flake.nix)

@@ -5782,6 +5782,10 @@
           "health": {
             "$ref": "#/components/schemas/StackManifestHealth"
           },
+          "icon": {
+            "description": "The stack's icon (version 9): an https URL, a file in the stack's repo (such as icons/app.svg), or a name in the dashboard-icons set (such as jellyfin).",
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
@@ -5806,6 +5810,13 @@
             "description": "Secrets the stack needs a value for, filled in on the host (version 4).",
             "items": {
               "$ref": "#/components/schemas/StackManifestSecret"
+            },
+            "type": "array"
+          },
+          "services": {
+            "description": "What the manifest says about the stack's services, each by its unit inside the stack (version 9).",
+            "items": {
+              "$ref": "#/components/schemas/StackManifestService"
             },
             "type": "array"
           },
@@ -6031,6 +6042,24 @@
         "required": [
           "description",
           "name"
+        ],
+        "type": "object"
+      },
+      "StackManifestService": {
+        "additionalProperties": false,
+        "properties": {
+          "icon": {
+            "description": "The service's icon, in the same forms as the stack's.",
+            "type": "string"
+          },
+          "unit": {
+            "description": "The service's unit inside the stack, such as plex.service.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "icon",
+          "unit"
         ],
         "type": "object"
       },
@@ -19347,7 +19376,7 @@
             "description": "Error"
           }
         },
-        "summary": "The JSON Schema of homelab-stack.json, version 8, for editors. Check and an install stay the authority.",
+        "summary": "The JSON Schema of homelab-stack.json, version 9, for editors. Check and an install stay the authority.",
         "tags": [
           "stacks"
         ]

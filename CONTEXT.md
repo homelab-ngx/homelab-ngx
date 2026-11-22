@@ -52,6 +52,10 @@ _Avoid_: generated config, overrides
 A version 8 route's `host` without a dot (`photos`), served as `photos.<the host's private domain>`; the stack reads the domain as `HOMELAB_DOMAIN`.
 _Avoid_: subdomain, vhost
 
+**Stack icon**:
+The icon a version 9 manifest names for the stack (`icon`) or for one of its services (`services`, by unit): an `https://` URL, a file in the stack's repo, or a name in the dashboard-icons set (`jellyfin`). For the dashboard only; not a grant.
+_Avoid_: logo, avatar
+
 **Address variable**:
 A stack variable of kind `address` (version 8): IPv4 addresses or CIDRs the operator gives. An egress destination or a port grant's client written `$NAME` opens to them, so the repo names no LAN address. Setting it is the approval.
 _Avoid_: host variable, IP setting

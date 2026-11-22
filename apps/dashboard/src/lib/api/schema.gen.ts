@@ -1449,7 +1449,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The JSON Schema of homelab-stack.json, version 8, for editors. Check and an install stay the authority. */
+        /** The JSON Schema of homelab-stack.json, version 9, for editors. Check and an install stay the authority. */
         get: operations["getManifestSchema"];
         put?: never;
         post?: never;
@@ -4191,6 +4191,8 @@ export interface components {
             egress: components["schemas"]["StackManifestEgress"][];
             gpu: boolean;
             health: components["schemas"]["StackManifestHealth"];
+            /** @description The stack's icon (version 9): an https URL, a file in the stack's repo (such as icons/app.svg), or a name in the dashboard-icons set (such as jellyfin). */
+            icon?: string;
             name: string;
             /** @description The nixpkgs the repo recommends (version 7): nixos-unstable, nixos-YY.MM or a NixOS/nixpkgs commit. */
             nixpkgs?: string;
@@ -4199,6 +4201,8 @@ export interface components {
             routes: components["schemas"]["StackManifestRoute"][];
             /** @description Secrets the stack needs a value for, filled in on the host (version 4). */
             secrets?: components["schemas"]["StackManifestSecret"][];
+            /** @description What the manifest says about the stack's services, each by its unit inside the stack (version 9). */
+            services?: components["schemas"]["StackManifestService"][];
             storage: components["schemas"]["StackManifestStorage"][];
             /** @description Env, secret and path values filled in on the host (version 5, which has no secrets or storage). */
             variables?: components["schemas"]["StackManifestVariable"][];
@@ -4267,6 +4271,12 @@ export interface components {
         StackManifestSecret: {
             description: string;
             name: string;
+        };
+        StackManifestService: {
+            /** @description The service's icon, in the same forms as the stack's. */
+            icon: string;
+            /** @description The service's unit inside the stack, such as plex.service. */
+            unit: string;
         };
         StackManifestStorage: {
             host_path: string;

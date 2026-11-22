@@ -449,6 +449,11 @@ func (s *Service) fetch(ctx context.Context, source, name string) (Fetched, Mani
 		return Fetched{}, Manifest{}, httpx.Unprocessable("invalid_manifest",
 			"%s at %s: a version 7 stack needs a %s that exposes nixosModules.default", ManifestFile, f.Rev, FlakeFile)
 	}
+	if f.StorePath != "" {
+		if err := CheckIconFiles(f.StorePath, m); err != nil {
+			return Fetched{}, Manifest{}, httpx.Unprocessable("invalid_manifest", "%s at %s: %v", ManifestFile, f.Rev, err)
+		}
+	}
 	for i, r := range m.Routes {
 		if IsLabel(r.Host) { // left a label: this host has no domain set
 			return Fetched{}, Manifest{}, httpx.Unprocessable("invalid_manifest",
