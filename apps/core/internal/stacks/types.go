@@ -131,6 +131,9 @@ type StackPatch struct {
 	// Nixpkgs The nixpkgs to build with (version 7). Empty: the manifest's.
 	Nixpkgs *string `json:"nixpkgs,omitempty" doc:"The nixpkgs a version 7 stack is built with: nixos-unstable, nixos-YY.MM or a 40-character NixOS/nixpkgs commit. Empty follows the one its manifest recommends. Takes effect on the next update."`
 
+	// Source The repo the stack is fetched from.
+	Source *string `json:"source,omitempty" doc:"Move the stack to another source, such as github:owner/repo, and fetch it there. The running generation, the variables and the data stay. The commit found is approved by itself when its manifest asks for nothing new, and waits as an update otherwise. When the fetch fails the stack keeps its source."`
+
 	// AllowDowngrade Accept a nixpkgs older than the running one.
 	AllowDowngrade bool `json:"allow_downgrade,omitempty" doc:"Accept a nixpkgs older than the one the stack runs. Without it such a choice is refused with nixpkgs_downgrade, since a newer version may already have upgraded the stack's data."`
 }

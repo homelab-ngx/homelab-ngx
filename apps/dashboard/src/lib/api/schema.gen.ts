@@ -1525,7 +1525,7 @@ export interface paths {
         delete: operations["removeStack"];
         options?: never;
         head?: never;
-        /** Change what the operator sets on a stack: its label, whether it starts after the host boots, and the nixpkgs a version 7 stack is built with. */
+        /** Change what the operator sets on a stack: its label, whether it starts after the host boots, the nixpkgs a version 7 stack is built with, and the source it is fetched from. */
         patch: operations["patchStack"];
         trace?: never;
     };
@@ -4324,6 +4324,8 @@ export interface components {
             label?: string;
             /** @description The nixpkgs a version 7 stack is built with: nixos-unstable, nixos-YY.MM or a 40-character NixOS/nixpkgs commit. Empty follows the one its manifest recommends. Takes effect on the next update. */
             nixpkgs?: string;
+            /** @description Move the stack to another source, such as github:owner/repo, and fetch it there. The running generation, the variables and the data stay. The commit found is approved by itself when its manifest asks for nothing new, and waits as an update otherwise. When the fetch fails the stack keeps its source. */
+            source?: string;
         };
         StackRestoreResult: {
             restored: string[];

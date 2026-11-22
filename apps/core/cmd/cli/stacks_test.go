@@ -146,6 +146,29 @@ func TestStackRollbackSendsTheGenerationOnlyWhenGiven(t *testing.T) {
 	}
 }
 
+func TestStackSourceSendsOnlyTheSource(t *testing.T) {
+	var body string
+	mux := http.NewServeMux()
+	mux.HandleFunc("PATCH /api/stacks/immich", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, stackJSON("null"))
+	})
+	serve(t, mux)
+	if _, err := captureStdout(t, func() error {
+		return runApp(t, "stacks", "source", "immich", "github:example/stack-immich")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if body != `{"source":"github:example/stack-immich"}` {
+		t.Errorf("body = %s", body)
+	}
+	if err := runApp(t, "stacks", "source", "immich"); err == nil {
+		t.Error("a missing source was accepted")
+	}
+}
+
 // TestStackVarSetReadsTheValueFromStdinOnly follows the --value-stdin
 // convention (docs/solutions/conventions/homelab-cli-automation.md): at most
 // one trailing LF or CRLF is dropped, every other byte is kept, and no TTY is

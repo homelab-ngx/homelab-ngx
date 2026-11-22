@@ -143,9 +143,12 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeRead, op("getStack", http.MethodGet, "/stacks/{name}",
 		"One stack.", 0), stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Get(ctx, n) }))
 	httpx.Register(a, httpx.ScopeOperator, op("patchStack", http.MethodPatch, "/stacks/{name}",
-		"Change what the operator sets on a stack: its label, whether it starts after the host boots, and the nixpkgs a version 7 stack is built with.", 0),
+		"Change what the operator sets on a stack: its label, whether it starts after the host boots, the nixpkgs a version 7 stack is built with, and the source it is fetched from.", 0),
 		func(ctx context.Context, in *patchIn) (*stackBody, error) {
 			s, err := h.svc.Get(ctx, in.Name)
+			if err == nil && in.Body.Source != nil {
+				s, err = h.svc.SetSource(ctx, in.Name, *in.Body.Source)
+			}
 			if err == nil && in.Body.Label != nil {
 				s, err = h.svc.SetLabel(ctx, in.Name, *in.Body.Label)
 			}

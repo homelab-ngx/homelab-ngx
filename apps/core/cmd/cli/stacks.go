@@ -204,6 +204,23 @@ func stacksCmd() *cli.Command {
 				},
 			},
 			{
+				Name:      "source",
+				Usage:     "Move a stack to another repo and fetch it there; what runs, its variables and its data stay",
+				ArgsUsage: "<name> <source>  (github:owner/repo[/branch], git+ssh://…, git+https://…)",
+				Action: func(c *cli.Context) error {
+					if err := requireArgs(c, 2, "homelab stacks source <name> <source>"); err != nil {
+						return err
+					}
+					source := c.Args().Get(1)
+					s, err := call[stacks.Stack](c.Context, http.MethodPatch, stackPath(c.Args().First(), ""),
+						stacks.StackPatch{Source: &source})
+					if err != nil {
+						return err
+					}
+					return printStack(c, *s)
+				},
+			},
+			{
 				Name:      "fetch",
 				Usage:     "Read the newest commit from the stack's repo; new grants wait for approval",
 				ArgsUsage: "<name>",

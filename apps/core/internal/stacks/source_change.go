@@ -36,8 +36,8 @@ func (s *Service) ApprovedTree(ctx context.Context, name string) (dir, source, r
 // SetSource moves the stack onto another source and fetches it there: the
 // commit it finds is approved by itself when it asks for nothing new, and
 // shows as an update otherwise. The running generation, the variables and
-// the data stay. Used by a fork; the API has no operation of its own for it.
-// When the fetch fails the stack keeps its old source.
+// the data stay. Used by a fork, and by patchStack when a stack's repo has
+// moved. When the fetch fails the stack keeps its old source.
 func (s *Service) SetSource(ctx context.Context, name, source string) (Stack, error) {
 	if !ValidSource(source) {
 		return Stack{}, httpx.Unprocessable("invalid_source", "%q is not a stack source", source)
