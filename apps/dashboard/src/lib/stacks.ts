@@ -117,6 +117,17 @@ export function describeSource(source: string): SourceParts {
   return { repo: base!, branch: ref || "default branch", local: false };
 }
 
+/** Web addresses for a stored source's repo and branch: GitHub's pages, or an https remote as is; null where there is none. */
+export function sourceHref(source: string): { repo: string | null; branch: string | null } {
+  if (source.startsWith("github:")) {
+    const [owner, repo, ...ref] = source.slice(7).split("/");
+    const base = `https://github.com/${owner}/${repo}`;
+    return { repo: base, branch: ref.length ? `${base}/tree/${ref.join("/")}` : null };
+  }
+  const https = source.match(/^(?:git\+)?(https:\/\/[^?]+)/);
+  return { repo: https ? https[1]! : null, branch: null };
+}
+
 /**
  * The source the daemon accepts for a git URL and branch. GitHub URLs, in
  * https or scp form, become github:owner/repo[/branch]; others git+https or

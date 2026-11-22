@@ -3,7 +3,7 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { api, call, describe, type Stack } from "#lib/api/client.ts";
-  import { busy, busyPoll, fetchDraft, fetchServices, fetchStack, fetchUpdates, idlePoll, keys } from "#lib/api/queries.ts";
+  import { busy, busyPoll, fetchDraft, fetchDrafts, fetchServices, fetchStack, fetchUpdates, idlePoll, keys } from "#lib/api/queries.ts";
   import Disclosure from "#lib/components/Disclosure.svelte";
   import HistoryDialog from "#lib/components/HistoryDialog.svelte";
   import LogsDialog from "#lib/components/LogsDialog.svelte";
@@ -15,10 +15,9 @@
   import StackTable from "#lib/components/StackTable.svelte";
   import ReviewDialog from "#lib/components/ReviewDialog.svelte";
   import StackNixpkgs from "#lib/components/StackNixpkgs.svelte";
-  import StackFolders from "#lib/components/StackFolders.svelte";
-  import StackVariables from "#lib/components/StackVariables.svelte";
+  import StackMappings from "#lib/components/StackMappings.svelte";
   import { shortRev, stamp } from "#lib/format.ts";
-  import { describeSource, draftOf, grants, logId, nixpkgsOnly, removedGrants, routeLinks, runningNixpkgs, servicesOf, stackTitle } from "#lib/stacks.ts";
+  import { describeSource, draftOf, grants, logId, nixpkgsOnly, removedGrants, routeLinks, runningNixpkgs, servicesOf, sourceHref, stackTitle } from "#lib/stacks.ts";
   import { missingVariables } from "#lib/variables.ts";
 
   const name = $derived(page.params.name ?? "");
@@ -37,6 +36,9 @@
     queryFn: () => fetchDraft(draftName!),
     enabled: draftName !== null,
   }));
+  /** Drafts forked from this stack, for the Source box's Fork row. */
+  const drafts = createQuery(() => ({ queryKey: keys.drafts, queryFn: fetchDrafts, enabled: !!stack.data }));
+  const forks = $derived((drafts.data ?? []).filter((d) => stack.data && d.forked_from === stack.data.source));
   const attempts = createQuery(() => ({
     queryKey: keys.updates(name),
     queryFn: () => fetchUpdates(name, 100),
@@ -143,6 +145,10 @@
 
 </script>
 
+{#snippet maybeLink(href: string | null, text: string)}
+  {#if href}<a class="link" {href} target="_blank" rel="noreferrer">{text}</a>{:else}{text}{/if}
+{/snippet}
+
 <svelte:head><title>{stack.data ? stackTitle(stack.data) : name} · Stacks · Homelab-ngx</title></svelte:head>
 
 <p class="text-muted"><a class="link" href="/stacks">Stacks</a> /</p>
@@ -152,6 +158,7 @@
 {:else if stack.data}
   {@const s = stack.data}
   {@const src = describeSource(s.source)}
+  {@const href = sourceHref(s.source)}
   {@const title = stackTitle(s)}
   {@const access = grants(s.approved?.manifest)}
   <div class="mt-1 flex flex-wrap items-center justify-between gap-3">
@@ -273,23 +280,34 @@
     <StackTable stacks={[s]} services={services.data ?? []} expandAll />
   </section>
 
-  <div class="mt-5"><StackVariables stack={s} /></div>
-  <div class="mt-4"><StackFolders stack={s} /></div>
+  <div class="mt-5"><StackMappings stack={s} /></div>
 
   <!-- Looked at rarely: closed until opened, and an opened one stays open on this device. -->
   <section class="card mt-4" aria-label="Source">
     <Disclosure section label="Source" summary={src.repo} remember="stack-source">
       <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5">
         <dt class="text-muted">{src.local ? "Folder" : "Repo"}</dt>
-        <dd class="break-all">{src.repo}</dd>
+        <dd class="break-all">{@render maybeLink(href.repo, src.repo)}</dd>
         <dt class="text-muted">Branch</dt>
-        <dd>{src.branch}</dd>
+        <dd class="break-all">{@render maybeLink(href.branch, src.branch)}</dd>
         <dt class="text-muted">Pinned</dt>
         <dd>{s.approved ? `${shortRev(s.approved.rev)} · ${stamp(s.approved.at)}` : "nothing approved"}</dd>
         {#if draft.data?.forked_from}
           <dt class="text-muted">Forked from</dt>
-          <dd class="break-all">{draft.data.forked_from} · {shortRev(draft.data.forked_rev ?? "")}</dd>
+          <dd class="break-all">
+            {@render maybeLink(sourceHref(draft.data.forked_from).repo, describeSource(draft.data.forked_from).repo)} · {shortRev(draft.data.forked_rev ?? "")}
+          </dd>
         {/if}
+        <dt class="text-muted">Fork</dt>
+        <dd>
+          {#if forks.length}
+            <ul>
+              {#each forks as f (f.name)}<li><a class="link" href="/stacks/drafts/{f.name}">{f.name}</a></li>{/each}
+            </ul>
+          {:else}
+            <button type="button" class="link" disabled={!s.approved} onclick={() => (forking = true)}>Fork…</button>
+          {/if}
+        </dd>
       </dl>
       {#if s.source_dirty}
         <p class="mt-3 text-warn">Uncommitted changes in the folder are not installed.</p>
@@ -297,8 +315,8 @@
     </Disclosure>
   </section>
 
-  <section class="card mt-4" aria-label="Access">
-    <Disclosure section label="Access" summary={accessSummary(access)} remember="stack-access">
+  <section class="card mt-4" aria-label="Approved grants">
+    <Disclosure section label="Approved grants" summary={accessSummary(access)} remember="stack-access">
       {#snippet help()}
         What this stack may reach outside its own container: host folders, web addresses, ports, the GPU. Each was approved here.
         Anything not listed is blocked, including the LAN and Tailscale.

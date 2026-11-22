@@ -4,7 +4,7 @@
   import { api, call, type Schema, type Stack } from "#lib/api/client.ts";
   import { keys } from "#lib/api/queries.ts";
   import { stamp } from "#lib/format.ts";
-  import { browseHref } from "#lib/storage.ts";
+  import { browseHref, trimSlash } from "#lib/storage.ts";
   import {
     declaredReadOnly,
     generateKey,
@@ -16,11 +16,11 @@
     needsValue,
     variableError,
     type StackVariable,
-    type VariableKind,
   } from "#lib/variables.ts";
   import { FolderOpen } from "@lucide/svelte";
   import Disclosure from "./Disclosure.svelte";
   import Modal from "./Modal.svelte";
+  import PathInput from "./PathInput.svelte";
   import Pill, { type Tone } from "./Pill.svelte";
   import RowMenu, { type MenuItem } from "./RowMenu.svelte";
 
@@ -34,10 +34,14 @@
   /** Values this host fills in have their own fold; the rest group by kind. */
   const groups = $derived(groupVariables(stack.variables.filter((v) => !v.builtin)));
   const host = $derived(stack.variables.filter((v) => v.builtin));
+  /** Env mappings: values the stack reads; settings, addresses and secrets it declares, then the operator's own. */
+  const envRows = $derived([...groups.env, ...groups.address, ...groups.secret, ...groups.own.filter((v) => v.kind !== "path")]);
+  /** Path mappings: host folders bound into the stack, the declared ones first, then the added folders. */
+  const pathRows = $derived([...groups.path, ...groups.own.filter((v) => v.kind === "path")]);
+  const folders = $derived(stack.folders ?? []);
   /** From manifest version 7 an unset env variable keeps the value the stack's own config gives. */
   const ownDefaults = $derived((stack.fetched?.manifest.version ?? 0) >= 7);
   const stackValue = (v: StackVariable) => ownDefaults && v.declared && v.kind === "env" && v.source === "unset";
-  const declaresAny = $derived(groups.path.length + groups.address.length + groups.env.length + groups.secret.length > 0);
 
   /** Unsaved input per variable; a stored plain value or path shows until edited. */
   let drafts = $state<Record<string, string>>({});
@@ -97,19 +101,40 @@
     });
   }
 
+  // The Add mapping form: one row for either kind, shown on demand.
+  let adding = $state(false);
+  let newType = $state<"env" | "path">("env");
   let newName = $state("");
   let newValue = $state("");
   let newSecret = $state(false);
+  let newPath = $state("");
+  let newMount = $state("");
+  let newReadOnly = $state(true);
+  /** The mount last filled in from the host folder; one the operator typed is kept. */
+  let filledMount = "";
   const newProblem = $derived(nameProblem(newName) || (stack.variables.some((v) => v.name === newName) ? `${newName} already exists.` : ""));
+  const canAdd = $derived(newType === "env" ? !!newName && !newProblem && !!newValue : !!trimSlash(newPath.trim()) && !!newMount.trim());
   /** The key the Add form's errors are filed under; no variable name has a space. */
-  const NEW = "new variable";
+  const NEW = "new mapping";
 
-  const sections: { kind: VariableKind; title: string }[] = [
-    { kind: "path", title: "Paths" },
-    { kind: "address", title: "Addresses" },
-    { kind: "env", title: "Settings" },
-    { kind: "secret", title: "Secrets" },
-  ];
+  /** /mnt/<folder name> for a host folder, or "" for none. */
+  const mountFor = (p: string) => {
+    const name = trimSlash(p.trim()).split("/").pop();
+    return name ? `/mnt/${name}` : "";
+  };
+  /** Follow the host folder in the mount field until the operator types a mount of their own. */
+  function fillMount(p: string) {
+    if (newMount !== filledMount) return;
+    newMount = filledMount = mountFor(p);
+  }
+
+  function closeAdd() {
+    adding = false;
+    newName = newValue = newPath = newMount = filledMount = "";
+    newSecret = false;
+    newReadOnly = true;
+    delete errors[NEW];
+  }
 
   const isChanged = (v: StackVariable) => {
     const d = drafts[v.name];
@@ -173,18 +198,56 @@
     });
   }
 
+  // Added folders: every change sends the whole list, and the daemon checks each folder and mount.
+  type Folder = Schema<"StackFolder">;
+  const asIn = (f: Folder): Schema<"StackFolderIn"> => ({ path: f.path, mount: f.mount, read_only: f.read_only });
+  const saveFolders = (key: string, list: Schema<"StackFolderIn">[]) =>
+    send(key, { name: key, kind: "path" }, () => call<Stack>(api.PUT("/stacks/{name}/folders", { params: { path: { name: stack.name } }, body: { folders: list } })));
+
   function add(e: SubmitEvent) {
     e.preventDefault();
     e.stopPropagation();
-    if (!newName || newProblem || !newValue) return;
-    const name = newName;
-    void act(async () => {
-      if (!(await put({ name, kind: newSecret ? "secret" : "env" }, newValue, newSecret || undefined, NEW))) return "";
-      newName = "";
-      newValue = "";
-      newSecret = false;
-      return `${name} added.`;
-    });
+    if (!canAdd) return;
+    if (newType === "env") {
+      const name = newName;
+      void act(async () => {
+        if (!(await put({ name, kind: newSecret ? "secret" : "env" }, newValue, newSecret || undefined, NEW))) return "";
+        closeAdd();
+        return `${name} added.`;
+      });
+    } else {
+      const path = trimSlash(newPath.trim());
+      const mount = newMount.trim();
+      void act(async () => {
+        if (!(await saveFolders(NEW, [...folders.map(asIn), { path, mount, read_only: newReadOnly }]))) return "";
+        closeAdd();
+        return `${path} added at ${mount}. It is bound from the next restart.`;
+      });
+    }
+  }
+
+  function folderMenu(f: Folder): MenuItem[] {
+    const key = `folder ${f.mount}`;
+    return [
+      {
+        label: f.read_only ? "Allow writes" : "Make read-only",
+        onSelect: () =>
+          void act(async () =>
+            (await saveFolders(
+              key,
+              folders.map((o) => (o.mount === f.mount ? { ...asIn(o), read_only: !f.read_only } : asIn(o))),
+            ))
+              ? `${f.mount} ${f.read_only ? "writable" : "read-only"} from the next restart.`
+              : "",
+          ),
+      },
+      {
+        label: "Remove",
+        danger: true,
+        onSelect: () =>
+          void act(async () => ((await saveFolders(key, folders.filter((o) => o.mount !== f.mount).map(asIn))) ? `${f.mount} removed. The folder stays.` : "")),
+      },
+    ];
   }
 
   /** What removing does, for the confirmation. */
@@ -291,14 +354,20 @@
           <option value="" disabled>{stackValue(v) ? "The stack's own value" : "Choose…"}</option>
           {#each choices as c (c)}<option value={c}>{c}</option>{/each}
         </select>
+      {:else if v.kind === "path"}
+        <PathInput
+          aria-label="Host path for {v.name}"
+          aria-invalid={err ? "true" : undefined}
+          placeholder={v.default ?? "/var/mnt/pool/…"}
+          bind:value={() => draft ?? v.value ?? "", (x) => (drafts[v.name] = x)}
+        />
       {:else}
         <input
           class="input min-w-0"
           type={v.type === "number" ? "number" : "text"}
-          aria-label={v.kind === "path" ? `Host path for ${v.name}` : v.kind === "address" ? `Addresses for ${v.name}` : `Value of ${v.name}`}
+          aria-label={v.kind === "address" ? `Addresses for ${v.name}` : `Value of ${v.name}`}
           aria-invalid={err ? "true" : undefined}
-          placeholder={v.default ??
-            (v.kind === "path" ? "/var/mnt/pool/…" : v.kind === "address" ? "192.168.1.20, 192.168.1.0/24" : stackValue(v) ? "The stack's own value" : "Value")}
+          placeholder={v.default ?? (v.kind === "address" ? "192.168.1.20, 192.168.1.0/24" : stackValue(v) ? "The stack's own value" : "Value")}
           autocomplete="off"
           spellcheck="false"
           value={draft ?? v.value ?? ""}
@@ -320,31 +389,53 @@
   </li>
 {/snippet}
 
+{#snippet folderRow(f: Schema<"StackFolder">)}
+  {@const err = errors[`folder ${f.mount}`] ?? ""}
+  <li class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 py-2 lg:grid-cols-[minmax(0,16rem)_6rem_minmax(0,1fr)_4rem]">
+    <Help label={f.mount} class="break-all">
+      <span class="block">An added folder: bound into the stack on this host, with no change to its repo.</span>
+      {#if f.shadowed_by}<span class="block">Not bound: {f.shadowed_by} in the manifest claims this mount.</span>{/if}
+      {#if f.updated_at}<span class="block">Set {stamp(f.updated_at)}</span>{/if}
+    </Help>
+    {#if f.shadowed_by}
+      <Pill tone="warn">not bound</Pill>
+    {:else}
+      <Pill tone="ok">{f.read_only ? "read-only" : "writable"}</Pill>
+    {/if}
+    <span class="break-all">{f.path}</span>
+    <span class="flex justify-end gap-1">
+      <a class="btn btn-sm px-1.5" href={browseHref(f.path)} aria-label="Browse {f.path}" title="Browse files">
+        <FolderOpen class="size-4" aria-hidden="true" />
+      </a>
+      <RowMenu name={f.mount} items={folderMenu(f)} />
+    </span>
+    {#if err}<p role="alert" class="order-2 col-span-full text-bad">{err}</p>{/if}
+  </li>
+{/snippet}
+
 <section class="card" aria-labelledby="{id}-h">
   <h2 id="{id}-h" class="mb-3 font-semibold">
-    <Help label="Variables">
-      Values this stack reads, stored encrypted on this host. A path is a host folder mounted into the stack. An address opens
-      network access to or from the devices named. A service reads each value from /run/secrets/NAME; settings and addresses are
-      also in /run/secrets/env.
+    <Help label="Mappings">
+      What this stack reads from this host. An env mapping is a value, stored encrypted; a service reads it from
+      /run/secrets/NAME, and settings and addresses are also in /run/secrets/env. A path mapping is a host folder mounted into
+      the stack. Folder changes apply at the next restart.
     </Help>
   </h2>
 
   <form onsubmit={apply}>
-    {#each sections as sec (sec.kind)}
-      {#if groups[sec.kind].length}
-        <!-- A band from edge to edge of the card, like a table's header row. -->
-        <h3 class="label -mx-4 border-y border-line bg-sunken px-4 py-1.5">{sec.title}</h3>
-        <ul class="divide-y divide-line">
-          {#each groups[sec.kind] as v (v.name)}
-            {@render row(v)}
-          {/each}
-        </ul>
-      {/if}
-    {/each}
-    {#if !declaresAny}<p class="mt-3 text-muted">The stack declares no variables.</p>{/if}
-
+    <!-- Bands from edge to edge of the card, like a table's header row. -->
+    <h3 class="label -mx-4 border-y border-line bg-sunken px-4 py-1.5">Env mappings</h3>
+    {#if envRows.length}
+      <ul class="divide-y divide-line">
+        {#each envRows as v (v.name)}
+          {@render row(v)}
+        {/each}
+      </ul>
+    {:else}
+      <p class="py-2 text-muted">None.</p>
+    {/if}
     {#if host.length}
-      <Disclosure label="From the host" summary={String(host.length)} remember="variables-host" class="mt-3 border-t border-line pt-3">
+      <Disclosure label="From the host" summary={String(host.length)} remember="variables-host" class="border-t border-line py-2">
         <ul class="divide-y divide-line">
           {#each host as v (v.name)}
             {@render row(v)}
@@ -353,53 +444,94 @@
       </Disclosure>
     {/if}
 
-    <Disclosure label="Custom" summary={String(groups.own.length)} remember="variables-custom" class="mt-3 border-t border-line pt-3">
-      {#snippet help()}Variables added on this host, and ones the stack no longer declares. They stay until removed.{/snippet}
+    <h3 class="label -mx-4 border-y border-line bg-sunken px-4 py-1.5">Path mappings</h3>
+    {#if pathRows.length || folders.length}
       <ul class="divide-y divide-line">
-        {#each groups.own as v (v.name)}
+        {#each pathRows as v (v.name)}
           {@render row(v)}
         {/each}
+        {#each folders as f (f.mount)}
+          {@render folderRow(f)}
+        {/each}
       </ul>
-      <div class="flex flex-wrap items-center gap-2 py-2">
-        <input
-          class="input w-auto min-w-0 flex-1 basis-40"
-          aria-label="New variable name"
-          aria-invalid={newProblem ? "true" : undefined}
-          placeholder="NAME"
-          autocomplete="off"
-          spellcheck="false"
-          maxlength="64"
-          form="{id}-add"
-          value={newName}
-          oninput={(e) => (newName = e.currentTarget.value.toUpperCase())}
-        />
-        <input
-          class="input w-auto min-w-0 flex-[2] basis-56"
-          type={newSecret ? "password" : "text"}
-          aria-label="New variable value"
-          placeholder="Value"
-          autocomplete={newSecret ? "new-password" : "off"}
-          spellcheck="false"
-          form="{id}-add"
-          bind:value={newValue}
-        />
-        <label class="flex items-center gap-1.5">
-          <input type="checkbox" form="{id}-add" bind:checked={newSecret} />
-          Secret
-        </label>
-        <button type="submit" form="{id}-add" class="btn btn-sm" disabled={pending || !newName || !!newProblem || !newValue}>Add</button>
-      </div>
-      {#if newProblem}<p class="text-warn">{newProblem}</p>{/if}
-      {#if errors[NEW]}<p role="alert" class="text-bad">{errors[NEW]}</p>{/if}
-    </Disclosure>
+    {:else}
+      <p class="py-2 text-muted">None.</p>
+    {/if}
 
-    <div class="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-line pt-3">
-      {#if note}<p role="status" class="mr-auto text-muted">{note}</p>{/if}
+    {#if adding}
+      <div id="{id}-new" class="flex flex-wrap items-center gap-2 border-t border-line py-3">
+        <select class="input w-auto" aria-label="Mapping type" form="{id}-add" bind:value={newType}>
+          <option value="env">Env</option>
+          <option value="path">Path</option>
+        </select>
+        {#if newType === "env"}
+          <input
+            class="input w-auto min-w-0 flex-1 basis-40"
+            aria-label="New variable name"
+            aria-invalid={newProblem ? "true" : undefined}
+            placeholder="NAME"
+            autocomplete="off"
+            spellcheck="false"
+            maxlength="64"
+            form="{id}-add"
+            value={newName}
+            oninput={(e) => (newName = e.currentTarget.value.toUpperCase())}
+          />
+          <input
+            class="input w-auto min-w-0 flex-[2] basis-56"
+            type={newSecret ? "password" : "text"}
+            aria-label="New variable value"
+            placeholder="Value"
+            autocomplete={newSecret ? "new-password" : "off"}
+            spellcheck="false"
+            form="{id}-add"
+            bind:value={newValue}
+          />
+          <label class="flex w-24 items-center gap-1.5">
+            <input type="checkbox" form="{id}-add" bind:checked={newSecret} />
+            Secret
+          </label>
+        {:else}
+          <PathInput
+            class="flex-[2] basis-56"
+            aria-label="Host folder"
+            placeholder="/var/mnt/pool/…"
+            form="{id}-add"
+            bind:value={newPath}
+            oninput={(e) => fillMount(e.currentTarget.value)}
+            onpick={fillMount}
+          />
+          <input
+            class="input w-auto min-w-0 flex-1 basis-40"
+            aria-label="Mount in the stack"
+            placeholder="/mnt/library"
+            autocomplete="off"
+            spellcheck="false"
+            form="{id}-add"
+            bind:value={newMount}
+          />
+          <label class="flex w-24 items-center gap-1.5">
+            <input type="checkbox" form="{id}-add" bind:checked={newReadOnly} />
+            Read-only
+          </label>
+        {/if}
+        <button type="submit" form="{id}-add" class="btn btn-sm" disabled={pending || !canAdd}>Add</button>
+      </div>
+      {#if newType === "env" && newProblem}<p class="text-warn">{newProblem}</p>{/if}
+      {#if errors[NEW]}<p role="alert" class="text-bad">{errors[NEW]}</p>{/if}
+    {/if}
+
+    <div class="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-3">
+      <!-- It stays in place and folds the form away again, like a fold's label. -->
+      <button type="button" class="btn mr-auto" aria-expanded={adding} aria-controls="{id}-new" onclick={() => (adding ? closeAdd() : (adding = true))}>
+        Add mapping
+      </button>
+      {#if note}<p role="status" class="text-muted">{note}</p>{/if}
       <button type="button" class="btn" disabled={pending || (changed.length === 0 && Object.keys(drafts).length === 0)} onclick={reset}>Reset</button>
       <button type="submit" class="btn btn-primary" disabled={pending || changed.length === 0}>{pending ? "Applying…" : "Apply"}</button>
     </div>
   </form>
-  <!-- The Add row's own form: its fields sit inside the fold above and point here. -->
+  <!-- The Add form's own form: its fields sit inside the form above and point here. -->
   <form id="{id}-add" onsubmit={add}></form>
 </section>
 

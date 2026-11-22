@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ServiceInfo, Stack } from "./api/client.ts";
-import { describeSource, draftOf, folderSource, gitSource, grants, health, nixpkgsLabel, nixpkgsOnly, removedGrants, runningNixpkgs, stackTitle, stackTitles, stepOf, validStackName } from "./stacks.ts";
+import { describeSource, draftOf, folderSource, gitSource, grants, health, nixpkgsLabel, nixpkgsOnly, removedGrants, runningNixpkgs, sourceHref, stackTitle, stackTitles, stepOf, validStackName } from "./stacks.ts";
 
 const unit = (name: string, active_state: string): ServiceInfo =>
   ({ name, stack: "media", active_state, sub_state: "", type: "Native", description: "", unit_name: name, started_at: null }) as ServiceInfo;
@@ -156,5 +156,16 @@ describe("draftOf", () => {
     expect(draftOf("git+file:///var/lib/homelab-daemon/drafts/site?ref=HEAD")).toBe("site");
     expect(draftOf("git+file:///home/me/repos/site")).toBeNull();
     expect(draftOf("github:o/drafts")).toBeNull();
+  });
+});
+
+describe("sourceHref", () => {
+  it("links GitHub's repo and branch pages, an https remote as is, and nothing else", () => {
+    expect(sourceHref("github:example/stack-media/dev")).toEqual({ repo: "https://github.com/example/stack-media", branch: "https://github.com/example/stack-media/tree/dev" });
+    expect(sourceHref("github:example/stack-media")).toEqual({ repo: "https://github.com/example/stack-media", branch: null });
+    expect(sourceHref("git+https://git.example.com/me/stack.git?ref=main")).toEqual({ repo: "https://git.example.com/me/stack.git", branch: null });
+    expect(sourceHref("https://git.example.com/me/stack")).toEqual({ repo: "https://git.example.com/me/stack", branch: null });
+    expect(sourceHref("git+ssh://git@git.example.com/me/stack?ref=main")).toEqual({ repo: null, branch: null });
+    expect(sourceHref("git+file:///srv/stacks/paperless")).toEqual({ repo: null, branch: null });
   });
 });

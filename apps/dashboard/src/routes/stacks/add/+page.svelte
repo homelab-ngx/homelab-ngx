@@ -6,12 +6,13 @@
   import { busy, busyPoll, fetchStack, fetchUpdates, keys } from "#lib/api/queries.ts";
   import Help from "#lib/components/Help.svelte";
   import OperationCard from "#lib/components/OperationCard.svelte";
-  import StackVariables from "#lib/components/StackVariables.svelte";
+  import PathInput from "#lib/components/PathInput.svelte";
+  import StackMappings from "#lib/components/StackMappings.svelte";
   import { describeSource, draftOf, folderSource, gitSource, grants, stackTitle, validStackName } from "#lib/stacks.ts";
   import { missingVariables } from "#lib/variables.ts";
 
   type Kind = "git" | "folder" | "write";
-  const STEPS = ["Source", "Variables", "Review access", "Install"] as const;
+  const STEPS = ["Source", "Mappings", "Review access", "Install"] as const;
   const KINDS: [Kind, string][] = [
     ["git", "Git repository"],
     ["folder", "Local folder"],
@@ -61,7 +62,7 @@
     refetchInterval: stack.data && busy(stack.data) ? busyPoll : false,
   }));
 
-  /** Variables is the step while a required variable has none. */
+  /** Mappings is the step while a required variable has none. */
   const step = $derived(installing ? 3 : name ? (stack.data && !stack.data.variables_ready ? 1 : 2) : 0);
   const needsValues = $derived(
     (stack.data?.fetched.manifest.variables ?? []).length > 0 || (stack.data?.fetched.manifest.secrets ?? []).length > 0,
@@ -136,9 +137,9 @@
         ? 'border-accent font-semibold text-accent'
         : i < step
           ? 'border-line text-ok'
-          : 'border-line text-muted'} {label === 'Variables' && !needsValues ? 'border-dashed' : ''}"
+          : 'border-line text-muted'} {label === 'Mappings' && !needsValues ? 'border-dashed' : ''}"
     >
-      {i + 1} · {label}{#if label === "Variables" && step > 1 && !needsValues}&nbsp;(none){/if}
+      {i + 1} · {label}{#if label === "Mappings" && step > 1 && !needsValues}&nbsp;(none){/if}
     </li>
   {/each}
 </ol>
@@ -178,7 +179,7 @@
     {:else if kind === "folder"}
       <label class="flex flex-col gap-1">
         <span class="label">Path</span>
-        <input class="input" bind:value={folder} placeholder="/srv/stacks/paperless" autocomplete="off" spellcheck="false" required />
+        <PathInput bind:value={folder} placeholder="/srv/stacks/paperless" required />
       </label>
     {/if}
     {#if sourceHint}<p class="text-warn">{sourceHint}</p>{/if}
@@ -241,7 +242,7 @@
       {#if s.source_dirty}<p class="mt-2 text-warn">Uncommitted changes in the folder are not installed.</p>{/if}
     </section>
 
-    <div class="mt-4"><StackVariables stack={s} /></div>
+    <div class="mt-4"><StackMappings stack={s} /></div>
 
     {#if !s.variables_ready}
       <p class="mt-4 text-warn">
