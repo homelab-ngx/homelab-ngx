@@ -156,12 +156,16 @@ done
 [ -e "${HOMELAB_OVMF:-}/OVMF_CODE.fd" ] && [ -e "${HOMELAB_OVMF:-}/OVMF_VARS.fd" ] ||
   refuse "HOMELAB_OVMF does not name the firmware's folder (the image shell sets it)"
 [ -r /dev/kvm ] && [ -w /dev/kvm ] || refuse "no KVM: /dev/kvm cannot be opened"
-# needs VERSION FILE...: the files of a version that a step reads.
+# needs VERSION FILE...: the files of a version that a step reads. FILE may
+# be a pattern. (Not compgen: the image shell's bash is built without it.)
 needs() {
-  local v=$1 f
+  local v=$1 f g hit
   shift
   for f in "$@"; do
-    compgen -G "$out/$f" >/dev/null || refuse "image $v is incomplete in $out: no $f (run make image again)"
+    hit=
+    # shellcheck disable=SC2231
+    for g in "$out"/$f; do [ -e "$g" ] && hit=1; done
+    [ -n "$hit" ] || refuse "image $v is incomplete in $out: no $f (run make image again)"
   done
 }
 needs "$version" "homelab_$version.raw" "core/homelab-core_$version.raw"
