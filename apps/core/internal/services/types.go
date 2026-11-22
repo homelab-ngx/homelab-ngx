@@ -10,7 +10,10 @@ import (
 type ServiceInfo struct {
 	ActiveState string `json:"active_state"`
 	Description string `json:"description"`
-	Name        string `json:"name"`
+
+	// Masked The operator disabled the unit: it stays stopped and cannot be started until it is enabled again.
+	Masked bool   `json:"masked" doc:"The operator disabled the unit: it stays stopped, across restarts and updates of its stack, and cannot be started until it is enabled again. Its stack's health check leaves it out. Always false for a core unit."`
+	Name   string `json:"name"`
 
 	// Stack The stack the unit runs in; only these units can be started, stopped and restarted. Absent for a core unit on the host.
 	Stack string `json:"stack,omitempty" doc:"The stack the unit runs in; only these units can be started, stopped and restarted. Absent for a core unit on the host."`

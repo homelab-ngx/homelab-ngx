@@ -32,6 +32,7 @@ type fakeHost struct {
 	gens      []string // system path per generation, index 0 is generation 1
 	current   int      // generation the profile points at
 	unhealthy map[string]bool
+	deadUnits map[string]bool // units inside the stack that are not active
 	caddyDown bool
 	noSwitch  bool // switch-to-configuration fails
 	noStop    bool // systemctl stop fails and the container keeps running
@@ -111,7 +112,7 @@ func builtRev(c cmdrunner.Cmd) string {
 }
 
 func newFakeHost() *fakeHost {
-	h := &fakeHost{Fake: cmdrunnertest.NewFake(), unhealthy: map[string]bool{}, problems: map[string]string{}}
+	h := &fakeHost{Fake: cmdrunnertest.NewFake(), unhealthy: map[string]bool{}, deadUnits: map[string]bool{}, problems: map[string]string{}}
 	locked := func(fn func(c cmdrunner.Cmd) (cmdrunner.Result, error)) func(cmdrunner.Cmd) (cmdrunner.Result, error) {
 		return func(c cmdrunner.Cmd) (cmdrunner.Result, error) {
 			h.mu.Lock()
@@ -216,11 +217,11 @@ func newFakeHost() *fakeHost {
 		}
 		return ok("")
 	}))
-	h.On("systemctl", "--machine=immich", "is-active").Do(locked(func(cmdrunner.Cmd) (cmdrunner.Result, error) {
+	h.On("systemctl", "--machine=immich", "is-active").Do(locked(func(c cmdrunner.Cmd) (cmdrunner.Result, error) {
 		if h.frozen {
 			return fail(1, "Failed to connect to bus: Connection timed out")
 		}
-		if !h.running || h.unhealthy[h.currentSystem()] {
+		if !h.running || h.unhealthy[h.currentSystem()] || h.deadUnits[c.Args[len(c.Args)-1]] {
 			return fail(3, "failed\n")
 		}
 		return ok("active\n")

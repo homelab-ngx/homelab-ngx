@@ -376,6 +376,8 @@ export function newHost(now: () => number = Date.now): Host {
   home.fetched = { ...home.approved!, rev: home.commits[0]!.rev, at: home.commits[0]!.at, manifest: asked };
   home.new_grants = [{ kind: "port", detail: "5353/udp from $IOT" }];
 
+  // The operator disabled one of Downloads' services.
+  const disabled = (stack: string, u: string) => stack === "downloads" && u === "prowlarr";
   const services = SEEDS.flatMap((s, i) =>
     s.units.map((u, k) => ({
       name: u,
@@ -383,11 +385,12 @@ export function newHost(now: () => number = Date.now): Host {
       description: `${s.label}: ${u}`,
       stack: s.name,
       type: "Native" as const,
-      active_state: "active",
-      sub_state: "running",
-      started_at: iso(t - (i + 2) * 3 * DAY + k * 4000),
+      masked: disabled(s.name, u),
+      active_state: disabled(s.name, u) ? "inactive" : "active",
+      sub_state: disabled(s.name, u) ? "dead" : "running",
+      started_at: disabled(s.name, u) ? null : iso(t - (i + 2) * 3 * DAY + k * 4000),
       // The first unit is the service itself; the rest are its helpers.
-      usage: { cpu_percent: +(s.cpu * share(k, s.units.length)).toFixed(1), memory_bytes: Math.round(s.memory * share(k, s.units.length)) },
+      ...(disabled(s.name, u) ? {} : { usage: { cpu_percent: +(s.cpu * share(k, s.units.length)).toFixed(1), memory_bytes: Math.round(s.memory * share(k, s.units.length)) } }),
     })),
   );
 
@@ -593,10 +596,23 @@ const busy = (s: Stack) => !!s.operation && !s.operation.finished_at;
 
 function setRunning(h: Host, s: Stack, running: boolean) {
   s.running = running;
-  for (const u of h.services.filter((x) => x.stack === s.name)) {
+  for (const u of h.services.filter((x) => x.stack === s.name && !x.masked)) {
     u.active_state = running ? "active" : "inactive";
     u.sub_state = running ? "running" : "dead";
     u.started_at = running ? iso(h.now()) : null;
+  }
+}
+
+/** A stack's service disabled (stopped now, kept stopped) or enabled again (not started). */
+export function maskService(h: Host, unit: string, on: boolean) {
+  const u = h.services.find((x) => x.unit_name === unit || x.unit_name === `${unit}.service`);
+  if (!u?.stack) throw new DemoProblem(404, "unknown_unit", `No stack has a service unit named "${unit}".`);
+  if (on && !u.masked && h.services.filter((x) => x.stack === u.stack && !x.masked).length <= 1)
+    throw new DemoProblem(409, "last_unit", `${unit} is the last enabled service of stack "${u.stack}"; stop the stack instead.`);
+  u.masked = on;
+  if (on) {
+    Object.assign(u, { active_state: "inactive", sub_state: "dead", started_at: null });
+    delete u.usage;
   }
 }
 

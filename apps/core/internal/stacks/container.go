@@ -71,6 +71,10 @@ type Host struct {
 	// ProcSys is the kernel's /proc/sys, where a stack's start turns IPv4
 	// forwarding on. Empty: it does not.
 	ProcSys string
+	// UnitsDir holds one directory per stack with the links that mask its
+	// disabled services (masks.go). On tmpfs, like VarsDir. Empty: no
+	// service can be disabled.
+	UnitsDir string
 }
 
 // GPU is the host's graphics stack as a version 8 stack gets it with the GPU
@@ -88,7 +92,7 @@ func DefaultHost(r cmdrunner.Runner) Host {
 		BuildsDir: "/var/lib/homelab-daemon/stack-builds",
 		StoreDir:  "/nix/store", StoreFile: "/var/lib/homelab-daemon/nix-store.json",
 		VarsDir: "/run/homelab-stack-vars", AgeKeyFile: "/var/lib/sops-age/keys.txt",
-		NetworkDir: "/run/systemd/network", ProcSys: "/proc/sys",
+		NetworkDir: "/run/systemd/network", ProcSys: "/proc/sys", UnitsDir: "/run/homelab-stack-units",
 	}
 }
 
@@ -230,8 +234,9 @@ func shadowedBy(m Manifest, mount string) string {
 // its variables at /run/secrets; keyed off the version, so the update to
 // version 4 changes the arguments and restarts the container, which gains
 // the bind. Storage and path binds give the same flag, so moving one to the
-// other changes nothing here.
-func nspawnArgs(name, stateDir, profileDir, varsDir string, m Manifest, binds []hostBind) []string {
+// other changes nothing here. unitsDir, when not empty, is the directory of
+// the stack's disabled services, bound where its systemd reads masks.
+func nspawnArgs(name, stateDir, profileDir, varsDir, unitsDir string, m Manifest, binds []hostBind) []string {
 	a := []string{
 		"--unit=" + strings.TrimSuffix(unitName(name), ".service"),
 		"--description=Stack " + name,
@@ -273,6 +278,9 @@ func nspawnArgs(name, stateDir, profileDir, varsDir string, m Manifest, binds []
 		}
 		a = append(a, flag+b.Host+":"+b.Mount+":idmap")
 	}
+	if unitsDir != "" {
+		a = append(a, "--bind-ro="+unitsDir+":"+stackMaskDir)
+	}
 	// No journal link: with a user namespace nspawn links the host's
 	// /var/log/journal/<id> to a temporary path that is gone after the
 	// stop. `journalctl -M <name>` reads the stack's journal without it.
@@ -282,21 +290,22 @@ func nspawnArgs(name, stateDir, profileDir, varsDir string, m Manifest, binds []
 // sameBoot reports whether two boot command lines boot the same container.
 // Only the arguments from systemd-nspawn on count: the unit's properties
 // before them (timeouts, ordering) change no container, and a stack is not
-// restarted for them.
+// restarted for them. Nor is it for the bind of its disabled services: a
+// service is disabled or enabled in the running stack at once (maskLive).
 func sameBoot(a, b []string) bool {
 	return slices.Equal(nspawnPart(a), nspawnPart(b))
 }
 
 func nspawnPart(args []string) []string {
 	if i := slices.Index(args, "systemd-nspawn"); i >= 0 {
-		return args[i:]
+		args = args[i:]
 	}
-	return args
+	return slices.DeleteFunc(slices.Clone(args), isMaskBind)
 }
 
 // bootArgs is the command line the stack boots m with under the values
 // stored now.
-func (s *Service) bootArgs(name string, m Manifest) ([]string, error) {
+func (s *Service) bootArgs(ctx context.Context, name string, m Manifest) ([]string, error) {
 	vars, folders, err := s.loadBinds(name)
 	if err != nil {
 		return nil, err
@@ -305,7 +314,11 @@ func (s *Service) bootArgs(name string, m Manifest) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	return nspawnArgs(name, s.stateDir(name), s.profileDir(name), s.varsDir(name), m, binds), nil
+	unitsDir := ""
+	if s.host.UnitsDir != "" && len(s.stackMasks(ctx, name, m)) > 0 {
+		unitsDir = s.unitsDir(name)
+	}
+	return nspawnArgs(name, s.stateDir(name), s.profileDir(name), s.varsDir(name), unitsDir, m, binds), nil
 }
 
 // bootedArgs are the arguments the stack's container was last booted with,
@@ -462,7 +475,12 @@ func (s *Service) boot(ctx context.Context, name, subnet string, m Manifest) err
 	// A path the approval could not store gets its default stored now, so
 	// the directory booted with is the one kept.
 	s.materializePathsLogged(name, m)
-	args, err := s.bootArgs(name, m)
+	// The disabled services are written again on every boot too, for the
+	// same reason, and so is a manifest that dropped one of them.
+	if err := s.writeMasks(name, s.stackMasks(ctx, name, m)); err != nil {
+		return fmt.Errorf("writing the stack's disabled services: %w", err)
+	}
+	args, err := s.bootArgs(ctx, name, m)
 	if err != nil {
 		return fmt.Errorf("binding the stack's paths: %w", err)
 	}
@@ -574,9 +592,10 @@ func (s *Service) switchSystem(ctx context.Context, name string) error {
 }
 
 // checkHealth runs the manifest's health check once. A manifest without one
-// is healthy as soon as the container is up.
+// is healthy as soon as the container is up. A disabled service is not
+// checked: it is meant to be stopped.
 func (s *Service) checkHealth(ctx context.Context, name, addr string, h Health) error {
-	for _, u := range h.Units {
+	for _, u := range enabled(h.Units, s.stackMasks(ctx, name, Manifest{Health: h})) {
 		res, _ := s.r.Run(ctx, cmdrunner.Cmd{
 			Module: "stacks", Name: "systemctl", Args: []string{"--machine=" + name, "is-active", "--", u}, ExpectExit: []int{1, 3, 4},
 		})

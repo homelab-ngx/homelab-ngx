@@ -19,7 +19,7 @@ func TestAddedFoldersAreBoundAfterTheManifestsAndYieldToIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := nspawnArgs("immich", "/state/immich", "/profiles/immich", "/vars/immich", m, b)
+	a := nspawnArgs("immich", "/state/immich", "/profiles/immich", "/vars/immich", "", m, b)
 	for _, want := range []string{"--bind=/pool/immich:/pool/immich:idmap", "--bind-ro=/pool/music:/music:idmap", "--bind=/pool/share:/share:idmap"} {
 		if !slices.Contains(a, want) {
 			t.Errorf("no %s in %v", want, a)
@@ -40,7 +40,7 @@ func TestTheOperatorNarrowsADeclaredPathToReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a := nspawnArgs("immich", "/s", "/p", "/v", m, b); !slices.Contains(a, "--bind-ro=/pool/immich:/pool/immich:idmap") {
+	if a := nspawnArgs("immich", "/s", "/p", "/v", "", m, b); !slices.Contains(a, "--bind-ro=/pool/immich:/pool/immich:idmap") {
 		t.Errorf("args = %v", a)
 	}
 }

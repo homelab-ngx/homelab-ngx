@@ -71,8 +71,9 @@ export function servicesOf(all: ServiceInfo[] | undefined, stack: string): Servi
   return (all ?? []).filter((s) => s.stack === stack).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** A stack's state from its container and its service units. */
-export function health(s: Stack, services: ServiceInfo[]): Health {
+/** A stack's state from its container and its service units. A disabled unit is left out: it is meant to be stopped. */
+export function health(s: Stack, all: ServiceInfo[]): Health {
+  const services = all.filter((u) => !u.masked);
   const active = services.filter((u) => u.active_state === "active").length;
   const failed = services.filter((u) => u.active_state === "failed");
   let state: StackState;

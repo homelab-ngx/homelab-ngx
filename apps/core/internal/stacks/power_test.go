@@ -75,7 +75,7 @@ func TestUnitPropertiesOrderTheStopAndRestartNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	a := nspawnArgs("immich", "/state/immich", "/profiles/immich", "/vars/immich", m, b)
+	a := nspawnArgs("immich", "/state/immich", "/profiles/immich", "/vars/immich", "", m, b)
 	if !slices.Contains(a, "WantsMountsFor=/var/mnt/media/photos") || !slices.Contains(a, "TimeoutStopSec=120") {
 		t.Fatalf("args = %v", a)
 	}

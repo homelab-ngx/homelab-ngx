@@ -7,7 +7,7 @@ import (
 )
 
 // Measured is a built stack and the service units its manifest's health
-// check names: what the metrics sampler reads.
+// check names, without the disabled ones: what the metrics sampler reads.
 type Measured struct {
 	Name  string
 	Units []string
@@ -27,7 +27,7 @@ func (s *Service) Measured(ctx context.Context) []Measured {
 		}
 		mv := Measured{Name: r.Name}
 		if m, err := decode(g.Manifest); err == nil {
-			mv.Units = m.Health.Units
+			mv.Units = enabled(m.Health.Units, liveMasks(r, m))
 		}
 		out = append(out, mv)
 	}

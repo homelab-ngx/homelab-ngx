@@ -43,6 +43,7 @@ func newServiceOn(t *testing.T) (*Service, *fakeSource, *fakeHost) {
 	svc := New(st, src, Host{
 		Runner: h, StateDir: filepath.Join(dir, "state"), ProfilesDir: filepath.Join(dir, "profiles"), RoutesDir: filepath.Join(dir, "routes"),
 		VarsDir: filepath.Join(dir, "vars"), AgeKeyFile: hostKey(t, dir), BuildsDir: filepath.Join(dir, "builds"),
+		UnitsDir: filepath.Join(dir, "units"),
 	}, h, nil)
 	svc.now = func() time.Time { return time.UnixMilli(1_700_000_000_000) }
 	svc.timeZone = func() string { return "Europe/Stockholm" }

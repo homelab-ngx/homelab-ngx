@@ -6,7 +6,7 @@
  */
 import type { paths } from "#lib/api/schema.gen.ts";
 import type { Schema } from "#lib/api/client.ts";
-import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerStatus, freezeThaw, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
+import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerStatus, freezeThaw, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
 import { history } from "./metrics.ts";
 
 type JsonOf<P extends keyof paths> = paths[P] extends { get: { responses: { 200: { content: { "application/json": infer R } } } } } ? R : never;
@@ -188,7 +188,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
   "/backups/{id}/runs": (h, c) => h.backups.find((x) => x.id === Number(c.path.id))?.recent_runs ?? [],
   "/config": (h) => ({ core_services: ["homelab-daemon.service", "caddy.service"], generation: 42, loaded_at: iso(h.now() - 6 * DAY), pools: h.storage.pools.map((p) => ({ name: p.name, uuid: p.uuid, mountpoint: p.mountdir, auto_mount: p.auto_mount, options: "" })) }),
   "/core-services": (h) =>
-    ["homelab-daemon", "caddy", "cloudflared", "tailscaled"].map((name) => ({ name, unit_name: `${name}.service`, description: name, type: "Native" as const, active_state: "active", sub_state: "running", started_at: iso(h.now() - 6 * DAY) })),
+    ["homelab-daemon", "caddy", "cloudflared", "tailscaled"].map((name) => ({ name, unit_name: `${name}.service`, description: name, type: "Native" as const, masked: false, active_state: "active", sub_state: "running", started_at: iso(h.now() - 6 * DAY) })),
   "/drafts": () => [],
   "/drafts/{name}": () => {
     throw missing("draft");
@@ -297,8 +297,14 @@ const posts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknow
   "/storage/pools/{uuid}/disks": (h, c) => (addPoolDisk(h, c.path.uuid!, c.body), { status: 204 }),
 };
 
-/** The deletes it acts out: a pool, a pool's disk, and a removal that is stopped. */
+/** The puts it acts out: disabling a stack's service. */
+const puts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknown }> = {
+  "/services/{unit}/mask": (h, c) => (maskService(h, c.path.unit!, true), { status: 204 }),
+};
+
+/** The deletes it acts out: a pool, a pool's disk, a removal that is stopped, and enabling a disabled service. */
 const deletes: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknown }> = {
+  "/services/{unit}/mask": (h, c) => (maskService(h, c.path.unit!, false), { status: 204 }),
   "/storage/pools/{uuid}": (h, c) => (deletePool(h, c.path.uuid!, c.query.get("confirm")), { status: 204 }),
   "/storage/pools/{uuid}/disks": (h, c) => ({ status: 202, body: removePoolDisk(h, c.path.uuid!, c.query.get("disk") ?? "") }),
   "/storage/pools/{uuid}/operation": (h, c) => (endRemoval(h, c.path.uuid!), { status: 204 }),
@@ -322,6 +328,7 @@ function compile(table: Record<string, (h: Host, c: Ctx) => unknown>, wrap: (v: 
 
 const getRoutes = compile(gets, (body) => ({ status: 200, body }));
 const postRoutes = compile(posts, (v) => v as { status: number; body?: unknown });
+const putRoutes = compile(puts, (v) => v as { status: number; body?: unknown });
 const deleteRoutes = compile(deletes, (v) => v as { status: number; body?: unknown });
 
 const json = (status: number, body: unknown, type = "application/json") => new Response(JSON.stringify(body), { status, headers: { "Content-Type": type } });
@@ -336,7 +343,7 @@ export function demoFetchFor(h: Host) {
     tick(h);
     // A host that reboots answers nothing, as a browser sees it.
     if (h.now() < h.downUntil) throw new TypeError("Failed to fetch");
-    for (const r of get ? getRoutes : input.method === "POST" ? postRoutes : input.method === "DELETE" ? deleteRoutes : []) {
+    for (const r of get ? getRoutes : input.method === "POST" ? postRoutes : input.method === "PUT" ? putRoutes : input.method === "DELETE" ? deleteRoutes : []) {
       const m = r.re.exec(path);
       if (!m) continue;
       const ctx: Ctx = { path: Object.fromEntries(r.names.map((n, i) => [n, decodeURIComponent(m[i + 1]!)])), query: url.searchParams, body: {} };

@@ -9,6 +9,7 @@
   import { health, logId, nixpkgsOnly, routeLinks, servicesOf, shortName, stackTitle, type StackState } from "#lib/stacks.ts";
   import AskDialog from "./ask/AskDialog.svelte";
   import LogsDialog from "./LogsDialog.svelte";
+  import Modal from "./Modal.svelte";
   import Pill, { type Tone } from "./Pill.svelte";
   import ReviewDialog from "./ReviewDialog.svelte";
   import RowMenu from "./RowMenu.svelte";
@@ -29,6 +30,9 @@
   /** The stack and service whose logs are open. */
   let logsOf = $state<{ stack: string; title: string; unit: string } | null>(null);
   let reviewing = $state<Stack | null>(null);
+  /** The service the operator is asked to confirm disabling. */
+  let disabling = $state<{ title: string; unit: string } | null>(null);
+  let maskError = $state("");
   /** The failed service the assistant is asked about. */
   let askOf = $state<{ title: string; unit: string } | null>(null);
   const assistant = createQuery(() => ({ queryKey: keys.assistant, queryFn: fetchAssistant }));
@@ -77,6 +81,37 @@
     onError: (e) => (actionError = describe(e)),
     onSettled: () => client.invalidateQueries({ queryKey: keys.all }),
   }));
+
+  const mask = createMutation(() => ({
+    mutationFn: ({ unit, on }: { unit: string; on: boolean }) => {
+      const params = { params: { path: { unit } } };
+      return on ? call(api.PUT("/services/{unit}/mask", params)) : call(api.DELETE("/services/{unit}/mask", params));
+    },
+    onMutate: () => ((actionError = ""), (maskError = "")),
+    onSuccess: () => (disabling = null),
+    onError: (e, v) => (v.on ? (maskError = describe(e)) : (actionError = describe(e))),
+    onSettled: () => client.invalidateQueries({ queryKey: keys.all }),
+  }));
+
+  /** A service's menu: a disabled one can only be enabled again. */
+  function unitItems(s: Stack, u: ServiceInfo, svcs: ServiceInfo[]) {
+    if (u.masked) return [{ label: "Enable", disabled: mask.isPending, onSelect: () => mask.mutate({ unit: u.name, on: false }) }];
+    const items =
+      u.active_state === "active"
+        ? [
+            { label: "Restart", disabled: action.isPending, onSelect: () => action.mutate({ unit: u.name, verb: "restart" as const }) },
+            { label: "Stop", disabled: action.isPending, onSelect: () => action.mutate({ unit: u.name, verb: "stop" as const }) },
+          ]
+        : [
+            { label: "Start", disabled: action.isPending || !s.running, onSelect: () => action.mutate({ unit: u.name, verb: "start" as const }) },
+            ...(assistantOn && u.active_state === "failed"
+              ? [{ label: "Ask…", onSelect: () => (askOf = { title: shortName(s.name, u.name), unit: logId(u.name) }) }]
+              : []),
+          ];
+    // The last enabled service is not disabled: that is stopping the stack.
+    const last = svcs.filter((x) => !x.masked).length <= 1;
+    return [...items, { label: "Disable…", danger: true, disabled: last, onSelect: () => ((maskError = ""), (disabling = { title: shortName(s.name, u.name), unit: u.name })) }];
+  }
 
   const update = createMutation(() => ({
     mutationFn: (name: string) => call(api.POST("/stacks/{name}/update", { params: { path: { name } } })),
@@ -200,7 +235,9 @@
           {#each row.services as u (u.name)}
             <tr id="svc-{u.name}" class="border-b border-line last:border-0 {expandAll ? '' : 'bg-sunken'}">
               <td class="py-1.5 pr-3 {expandAll ? 'pl-3' : 'pl-8 md:pl-10'}">{shortName(s.name, u.name)}</td>
-              <td class="px-3 py-1.5"><Pill tone={unitTone(u)}>{u.active_state}</Pill></td>
+              <td class="px-3 py-1.5">
+                {#if u.masked}<Pill tone="idle">disabled</Pill>{:else}<Pill tone={unitTone(u)}>{u.active_state}</Pill>{/if}
+              </td>
               {#if !expandAll}
                 <td class="px-3 py-1.5 max-md:hidden"></td>
                 <td class="px-3 py-1.5"></td>
@@ -210,20 +247,7 @@
               {#if !expandAll}<td class="px-3 py-1.5 max-md:hidden"></td>{/if}
               <td class="px-3 py-1.5 whitespace-nowrap"><span class="flex justify-end gap-1">
                 <button type="button" class="btn btn-sm" onclick={() => (logsOf = { stack: s.name, title: stackTitle(s), unit: logId(u.name) })}>Logs</button>
-                <RowMenu
-                  name={shortName(s.name, u.name)}
-                  items={u.active_state === "active"
-                    ? [
-                        { label: "Restart", disabled: action.isPending, onSelect: () => action.mutate({ unit: u.name, verb: "restart" }) },
-                        { label: "Stop", disabled: action.isPending, onSelect: () => action.mutate({ unit: u.name, verb: "stop" }) },
-                      ]
-                    : [
-                        { label: "Start", disabled: action.isPending || !s.running, onSelect: () => action.mutate({ unit: u.name, verb: "start" }) },
-                        ...(assistantOn && u.active_state === "failed"
-                          ? [{ label: "Ask…", onSelect: () => (askOf = { title: shortName(s.name, u.name), unit: logId(u.name) }) }]
-                          : []),
-                      ]}
-                />
+                <RowMenu name={shortName(s.name, u.name)} items={unitItems(s, u, row.services)} />
               </span></td>
             </tr>
           {:else}
@@ -236,6 +260,21 @@
     </tbody>
   </table>
 </div>
+
+<Modal
+  open={disabling !== null}
+  onOpenChange={(o) => {
+    if (!o) disabling = null;
+  }}
+  title="Disable {disabling?.title}?"
+  description="Stops now and stays stopped after restarts and updates."
+>
+  <p class="text-muted">A route or health check it serves stops answering. Enable brings it back.</p>
+  {#if maskError}<p role="alert" class="mt-2 text-bad">{maskError}</p>{/if}
+  {#snippet actions()}
+    <button type="button" class="btn btn-danger" disabled={mask.isPending} onclick={() => disabling && mask.mutate({ unit: disabling.unit, on: true })}>Disable</button>
+  {/snippet}
+</Modal>
 
 {#if askOf}
   {@const a = askOf}

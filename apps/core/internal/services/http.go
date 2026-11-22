@@ -23,7 +23,9 @@ type unitIn struct {
 }
 
 // Register adds the services operations: the lists are read, start, stop
-// and restart of a stack's unit are control.
+// and restart of a stack's unit are control, and disabling or enabling one
+// is operator: it is a setting, which a stack with the control grant must
+// not change.
 func (h *HTTP) Register(a httpx.APIs) {
 	tags := []string{"services"}
 	httpx.Register(a, httpx.ScopeRead, huma.Operation{
@@ -48,6 +50,24 @@ func (h *HTTP) Register(a httpx.APIs) {
 			return nil, h.act(ctx, in.Unit, action)
 		})
 	}
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "maskService", Method: http.MethodPut, Path: "/services/{unit}/mask", Tags: tags,
+		Summary:       "Disable a service unit inside a stack.",
+		Description:   "Masks the unit: it stops now, stays stopped across restarts and updates of its stack, and cannot be started (409 unit_masked) until it is enabled again. The stack's health check leaves it out. The stack's last enabled unit cannot be disabled (409 last_unit). Disabling a disabled unit changes nothing.",
+		DefaultStatus: http.StatusNoContent,
+		Errors:        []int{http.StatusNotFound, http.StatusConflict},
+	}, func(ctx context.Context, in *unitIn) (*struct{}, error) {
+		return nil, problem(h.svc.Mask(ctx, in.Unit, true))
+	})
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "unmaskService", Method: http.MethodDelete, Path: "/services/{unit}/mask", Tags: tags,
+		Summary:       "Enable a disabled service unit inside a stack.",
+		Description:   "Unmasks the unit. It is not started: start it, or restart the stack.",
+		DefaultStatus: http.StatusNoContent,
+		Errors:        []int{http.StatusNotFound, http.StatusConflict},
+	}, func(ctx context.Context, in *unitIn) (*struct{}, error) {
+		return nil, problem(h.svc.Mask(ctx, in.Unit, false))
+	})
 }
 
 func (h *HTTP) listServices(ctx context.Context, _ *struct{}) (*listOut, error) {

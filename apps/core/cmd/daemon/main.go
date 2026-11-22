@@ -405,7 +405,7 @@ func (a stackUnits) Units(ctx context.Context) []services.StackUnit {
 	in := a.Service.Units(ctx)
 	out := make([]services.StackUnit, len(in))
 	for i, u := range in {
-		out[i] = services.StackUnit{Stack: u.Stack, Unit: u.Unit, Name: u.Name, ActiveState: u.ActiveState, SubState: u.SubState, StartedAt: u.StartedAt, Usage: u.Usage}
+		out[i] = services.StackUnit{Stack: u.Stack, Unit: u.Unit, Name: u.Name, ActiveState: u.ActiveState, SubState: u.SubState, StartedAt: u.StartedAt, Usage: u.Usage, Masked: u.Masked}
 	}
 	return out
 }

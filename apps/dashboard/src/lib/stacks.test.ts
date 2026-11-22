@@ -53,6 +53,11 @@ describe("health", () => {
     expect([h.active, h.total]).toEqual([8, 9]);
     expect(h.failed.map((u) => u.name)).toEqual(["media-sonarr"]);
   });
+  it("leaves a disabled service out", () => {
+    const h = health(stack(), [unit("media-plex", "active"), { ...unit("media-sonarr", "inactive"), masked: true }]);
+    expect(h.state).toBe("running");
+    expect([h.active, h.total]).toEqual([1, 1]);
+  });
   it("tells stopped, starting and not installed apart", () => {
     expect(health(stack({ running: false, want_running: false }), []).state).toBe("stopped");
     expect(health(stack({ running: false }), []).state).toBe("starting");

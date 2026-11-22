@@ -120,7 +120,7 @@ func (q *Queries) FinishStackUpdate(ctx context.Context, arg FinishStackUpdatePa
 }
 
 const getStack = `-- name: GetStack :one
-SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids, autostart FROM stacks WHERE name = ?
+SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids, autostart, masked_units FROM stacks WHERE name = ?
 `
 
 func (q *Queries) GetStack(ctx context.Context, name string) (Stack, error) {
@@ -154,6 +154,7 @@ func (q *Queries) GetStack(ctx context.Context, name string) (Stack, error) {
 		&i.BootedVars,
 		&i.HostIds,
 		&i.Autostart,
+		&i.MaskedUnits,
 	)
 	return i, err
 }
@@ -374,7 +375,7 @@ func (q *Queries) ListStackUpdates(ctx context.Context, arg ListStackUpdatesPara
 }
 
 const listStacks = `-- name: ListStacks :many
-SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids, autostart FROM stacks ORDER BY name
+SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids, autostart, masked_units FROM stacks ORDER BY name
 `
 
 func (q *Queries) ListStacks(ctx context.Context) ([]Stack, error) {
@@ -414,6 +415,7 @@ func (q *Queries) ListStacks(ctx context.Context) ([]Stack, error) {
 			&i.BootedVars,
 			&i.HostIds,
 			&i.Autostart,
+			&i.MaskedUnits,
 		); err != nil {
 			return nil, err
 		}
@@ -474,9 +476,9 @@ func (q *Queries) PreviousStackGeneration(ctx context.Context, arg PreviousStack
 
 const restoreStack = `-- name: RestoreStack :exec
 INSERT INTO stacks (name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at,
-    approved_rev, approved_url, approved_manifest, approved_at, want_running, autostart, subnet, label, nixpkgs_rev, nixpkgs)
+    approved_rev, approved_url, approved_manifest, approved_at, want_running, autostart, subnet, label, nixpkgs_rev, nixpkgs, masked_units)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?3,
-    ?4, ?5, ?6, ?3, ?7, ?8, ?9, ?10, ?11, ?12)
+    ?4, ?5, ?6, ?3, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
 `
 
 type RestoreStackParams struct {
@@ -492,6 +494,7 @@ type RestoreStackParams struct {
 	Label       string
 	NixpkgsRev  string
 	Nixpkgs     string
+	MaskedUnits string
 }
 
 // Puts a stack back from the lock: its approved commit is also the fetched
@@ -510,6 +513,7 @@ func (q *Queries) RestoreStack(ctx context.Context, arg RestoreStackParams) erro
 		arg.Label,
 		arg.NixpkgsRev,
 		arg.Nixpkgs,
+		arg.MaskedUnits,
 	)
 	return err
 }
@@ -648,6 +652,20 @@ type SetStackLabelParams struct {
 
 func (q *Queries) SetStackLabel(ctx context.Context, arg SetStackLabelParams) error {
 	_, err := q.db.ExecContext(ctx, setStackLabel, arg.Label, arg.Name)
+	return err
+}
+
+const setStackMaskedUnits = `-- name: SetStackMaskedUnits :exec
+UPDATE stacks SET masked_units = ?1 WHERE name = ?2
+`
+
+type SetStackMaskedUnitsParams struct {
+	MaskedUnits string
+	Name        string
+}
+
+func (q *Queries) SetStackMaskedUnits(ctx context.Context, arg SetStackMaskedUnitsParams) error {
+	_, err := q.db.ExecContext(ctx, setStackMaskedUnits, arg.MaskedUnits, arg.Name)
 	return err
 }
 

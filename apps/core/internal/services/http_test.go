@@ -84,3 +84,65 @@ func TestHTTPLists(t *testing.T) {
 		}
 	}
 }
+
+func TestHTTPMaskIsForTheOperatorOnly(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, []string{"sshd.service"}, StackUnit{Stack: "media", Unit: "plex.service", Name: "media-plex.service"})
+	api := NewHTTP(h.svc)
+
+	if w, _ := serveAPI(t, api, "", "PUT", "/api/services/media-plex/mask"); w.Code != http.StatusNoContent {
+		t.Fatalf("mask: %d %s", w.Code, w.Body)
+	}
+	if w, _ := serveAPI(t, api, "", "DELETE", "/api/services/media-plex.service/mask"); w.Code != http.StatusNoContent {
+		t.Fatalf("unmask: %d %s", w.Code, w.Body)
+	}
+	if got := h.stacks.calls; len(got) != 2 || got[0] != "mask media-plex" || got[1] != "unmask media-plex.service" {
+		t.Fatalf("stack calls = %v", got)
+	}
+	for _, unit := range []string{"sshd", "nope"} {
+		if w, m := serveAPI(t, api, "", "PUT", "/api/services/"+unit+"/mask"); w.Code != 404 || m["code"] != "unknown_unit" {
+			t.Fatalf("mask %s: %d %s", unit, w.Code, w.Body)
+		}
+	}
+	h.stacks.err = httpx.Conflict("last_unit", "media-plex is the last enabled service")
+	if w, m := serveAPI(t, api, "", "PUT", "/api/services/media-plex/mask"); w.Code != 409 || m["code"] != "last_unit" {
+		t.Fatalf("last unit: %d %s", w.Code, w.Body)
+	}
+
+	h.stacks.err = nil
+
+	// The stack API has the unit actions but not the mask: a stack with
+	// the control grant cannot disable a service.
+	opMux, stackMux := http.NewServeMux(), http.NewServeMux()
+	api.Register(httpx.APIs{Operator: httpx.NewAPI(opMux, "t", "1"), Stack: httpx.NewAPI(stackMux, "t", "1")})
+	for _, req := range []*http.Request{
+		httptest.NewRequest("PUT", "/api/services/media-plex/mask", nil),
+		httptest.NewRequest("DELETE", "/api/services/media-plex/mask", nil),
+	} {
+		w := httptest.NewRecorder()
+		stackMux.ServeHTTP(w, req.WithContext(httpx.WithCallerStack(req.Context(), "ha")))
+		if w.Code != http.StatusNotFound && w.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s %s on the stack API: %d", req.Method, req.URL.Path, w.Code)
+		}
+	}
+	w := httptest.NewRecorder()
+	stackMux.ServeHTTP(w, httptest.NewRequest("POST", "/api/services/media-plex/stop", nil))
+	if w.Code != http.StatusNoContent {
+		t.Errorf("stop on the stack API: %d %s", w.Code, w.Body)
+	}
+}
+
+func TestHTTPListShowsADisabledUnit(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t, nil,
+		StackUnit{Stack: "media", Unit: "plex.service", Name: "media-plex.service", ActiveState: "active"},
+		StackUnit{Stack: "media", Unit: "sonarr.service", Name: "media-sonarr.service", Masked: true})
+	w, _ := serveAPI(t, NewHTTP(h.svc), "", "GET", "/api/services")
+	var got []ServiceInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil || len(got) != 2 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if got[0].Masked || !got[1].Masked || got[1].ActiveState != "inactive" {
+		t.Errorf("list = %+v", got)
+	}
+}

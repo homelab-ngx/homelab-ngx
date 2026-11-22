@@ -48,6 +48,7 @@ type StackUnits interface {
 	Units(ctx context.Context) []StackUnit
 	UnitStack(ctx context.Context, name string) (stack, unit string, ok bool)
 	UnitAction(ctx context.Context, name, action string) error
+	MaskUnit(ctx context.Context, name string, mask bool) error
 }
 
 // StackUnit is one service unit inside a stack.
@@ -57,6 +58,7 @@ type StackUnit struct {
 	ActiveState, SubState string
 	StartedAt             time.Time // zero unless active
 	Usage                 *Usage    // nil unless running
+	Masked                bool      // the operator disabled it
 }
 
 // SetStacks adds the units inside stacks to the service list and its
@@ -86,6 +88,14 @@ func (s *Service) Stop(ctx context.Context, name string) error { return s.act(ct
 // Restart restarts a stack's unit.
 func (s *Service) Restart(ctx context.Context, name string) error {
 	return s.act(ctx, name, "restart")
+}
+
+// Mask disables a stack's unit (mask) or enables it again.
+func (s *Service) Mask(ctx context.Context, name string, mask bool) error {
+	if !s.inStack(ctx, name) {
+		return fmt.Errorf("%w: %q", ErrUnknownUnit, name)
+	}
+	return s.stacks.MaskUnit(ctx, name, mask)
 }
 
 func (s *Service) act(ctx context.Context, name, action string) error {

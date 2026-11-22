@@ -36,6 +36,7 @@ type LockedStack struct {
 	Name        string          `json:"name"`
 	Autostart   *bool           `json:"autostart,omitempty"`
 	Label       string          `json:"label,omitempty"`
+	MaskedUnits []string        `json:"masked_units,omitempty"`
 	NixpkgsRev  string          `json:"nixpkgs_rev,omitempty"`
 	Nixpkgs     string          `json:"nixpkgs,omitempty"`
 	Source      string          `json:"source"`
@@ -62,7 +63,7 @@ func (s *Service) CurrentLock(ctx context.Context) (Lock, error) {
 		l.Stacks = append(l.Stacks, LockedStack{
 			Name: r.Name, Label: r.Label, NixpkgsRev: r.NixpkgsRev, Nixpkgs: r.Nixpkgs, Source: r.Source, Rev: r.ApprovedRev, URL: r.ApprovedUrl,
 			Manifest: json.RawMessage(r.ApprovedManifest), Subnet: r.Subnet, WantRunning: r.WantRunning != 0,
-			Autostart: new(r.Autostart != 0),
+			Autostart: new(r.Autostart != 0), MaskedUnits: storedMasks(r),
 		})
 	}
 	return l, nil
@@ -177,6 +178,7 @@ func (s *Service) restoreOne(ctx context.Context, e LockedStack) error {
 		return q.RestoreStack(ctx, store.RestoreStackParams{
 			Name: e.Name, Source: e.Source, Now: s.now().UnixMilli(),
 			Rev: e.Rev, Url: e.URL, Manifest: encode(m), WantRunning: want, Autostart: want, Subnet: subnet, Label: label, NixpkgsRev: e.NixpkgsRev, Nixpkgs: e.Nixpkgs,
+			MaskedUnits: encodeMasks(inOrder(m.Health.Units, e.MaskedUnits)),
 		})
 	})
 	if err != nil {

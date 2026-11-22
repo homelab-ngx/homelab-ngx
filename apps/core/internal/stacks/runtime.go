@@ -609,11 +609,11 @@ func (s *Service) activate(ctx context.Context, o *operation, r store.Stack, fro
 	}
 	booted := bootedArgs(cur)
 	if booted == nil {
-		if booted, err = s.bootArgs(name, from); err != nil {
+		if booted, err = s.bootArgs(ctx, name, from); err != nil {
 			return err
 		}
 	}
-	next, err := s.bootArgs(name, m)
+	next, err := s.bootArgs(ctx, name, m)
 	if err != nil {
 		return fmt.Errorf("binding the stack's paths: %w", err)
 	}
@@ -896,11 +896,11 @@ func (s *Service) rollback(ctx context.Context, o *operation, name string, to in
 }
 
 // forget removes what the runtime keeps for a stack outside the database:
-// its routes, its rules and its profile, which leaves its generations to
-// the next collection of the store (nixstore.go). The state directory
-// stays: it holds the stack's data.
+// its routes, its rules, its disabled services' links and its profile,
+// which leaves its generations to the next collection of the store
+// (nixstore.go). The state directory stays: it holds the stack's data.
 func (s *Service) forget(ctx context.Context, name string) error {
-	return errors.Join(s.removeRoutes(ctx, name), s.removeRules(ctx, name), os.RemoveAll(s.profileDir(name)))
+	return errors.Join(s.removeRoutes(ctx, name), s.removeRules(ctx, name), s.removeMasks(name), os.RemoveAll(s.profileDir(name)))
 }
 
 func short(rev string) string {

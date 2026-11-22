@@ -270,8 +270,8 @@ func TestNspawnArgsBindVariablesFromVersionFour(t *testing.T) {
 	t.Parallel()
 	v3 := mustParse(t, `{"version":3,"name":"mail"}`)
 	v4 := mustParse(t, `{"version":4,"name":"mail"}`)
-	a3 := nspawnArgs("mail", "/state/mail", "/profiles/mail", "/run/homelab-stack-vars/mail", v3, nil)
-	a4 := nspawnArgs("mail", "/state/mail", "/profiles/mail", "/run/homelab-stack-vars/mail", v4, nil)
+	a3 := nspawnArgs("mail", "/state/mail", "/profiles/mail", "/run/homelab-stack-vars/mail", "", v3, nil)
+	a4 := nspawnArgs("mail", "/state/mail", "/profiles/mail", "/run/homelab-stack-vars/mail", "", v4, nil)
 	bind := "--bind-ro=/run/homelab-stack-vars/mail:/run/secrets:idmap"
 	if slices.Contains(a3, bind) || !slices.Contains(a4, bind) {
 		t.Errorf("version 3: %v\nversion 4: %v", a3, a4)

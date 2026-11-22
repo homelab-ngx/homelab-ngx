@@ -591,7 +591,7 @@ func (s *Service) restartNeeded(r store.Stack, gens []store.StackGeneration, var
 		if err != nil {
 			return false
 		}
-		return !sameBoot(booted, nspawnArgs(r.Name, s.stateDir(r.Name), s.profileDir(r.Name), s.varsDir(r.Name), m, binds))
+		return !sameBoot(booted, nspawnArgs(r.Name, s.stateDir(r.Name), s.profileDir(r.Name), s.varsDir(r.Name), "", m, binds))
 	}
 	return false
 }

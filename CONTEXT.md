@@ -96,6 +96,10 @@ _Avoid_: public API, stack API server
 A service unit inside a stack, listed on the host as `<stack>-<unit>` (`players-plex`), with start, stop, restart and logs going into the stack.
 _Avoid_: managed service
 
+**Disabled service**:
+A stack unit the operator masked. It stops at once, stays stopped across restarts and updates of its stack, and cannot be started until it is enabled again. The health check, the monitor and the metrics leave it out. A stack's last enabled unit cannot be disabled.
+_Avoid_: paused, removed, turned off
+
 **Update attempt**:
 One install, update or rollback of a stack, kept in `stack_updates` with its result (healthy, rolled back, build failed, failed, interrupted), reason, log and package changes. A stack's History dialog on its dashboard page reads them.
 _Avoid_: deployment, release

@@ -191,7 +191,7 @@ func TestStorageAndPathBindsGiveTheSameArguments(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return nspawnArgs("immich", "/state/immich", "/profiles/immich", "/vars/immich", m, b)
+		return nspawnArgs("immich", "/state/immich", "/profiles/immich", "/vars/immich", "", m, b)
 	}
 	a4 := args(v4, nil)
 	if !slices.Equal(a4, args(v5, nil)) || !slices.Equal(a4, args(v5, []storedVar{{Name: "PHOTOS", Value: "/pool/immich"}})) {

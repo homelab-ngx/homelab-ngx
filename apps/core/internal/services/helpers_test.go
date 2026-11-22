@@ -44,6 +44,15 @@ func (f *fakeStacks) UnitAction(_ context.Context, name, action string) error {
 	return f.err
 }
 
+func (f *fakeStacks) MaskUnit(_ context.Context, name string, mask bool) error {
+	verb := "unmask"
+	if mask {
+		verb = "mask"
+	}
+	f.calls = append(f.calls, verb+" "+name)
+	return f.err
+}
+
 type harness struct {
 	t      *testing.T
 	svc    *Service

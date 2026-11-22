@@ -25,6 +25,8 @@ type Unit struct {
 	StartedAt time.Time
 	// Usage is its CPU and memory; nil when unknown.
 	Usage *services.Usage
+	// Masked: the operator disabled it (masks.go).
+	Masked bool
 }
 
 // unitsTTL bounds how often the service views, which poll, make the daemon
@@ -58,6 +60,7 @@ func (s *Service) Units(ctx context.Context) []Unit {
 		if err != nil || len(m.Health.Units) == 0 {
 			continue
 		}
+		masks := liveMasks(r, m)
 		state := map[string]Unit{}
 		if s.isRunning(ctx, r.Name) {
 			if s.frozen(ctx, r.Name) {
@@ -73,7 +76,7 @@ func (s *Service) Units(ctx context.Context) []Unit {
 			if !ok {
 				st = Unit{ActiveState: "inactive", SubState: "dead"}
 			}
-			st.Stack, st.Unit = r.Name, u
+			st.Stack, st.Unit, st.Masked = r.Name, u, slices.Contains(masks, u)
 			out = append(out, st)
 		}
 	}
@@ -149,7 +152,8 @@ func (s *Service) UnitStack(ctx context.Context, name string) (stack, unit strin
 	return "", "", false
 }
 
-// UnitAction starts, stops or restarts one of a stack's service units.
+// UnitAction starts, stops or restarts one of a stack's service units. A
+// disabled one cannot be started or restarted.
 func (s *Service) UnitAction(ctx context.Context, name, action string) error {
 	stack, unit, ok := s.UnitStack(ctx, name)
 	if !ok {
@@ -157,6 +161,9 @@ func (s *Service) UnitAction(ctx context.Context, name, action string) error {
 	}
 	if action != "start" && action != "stop" && action != "restart" {
 		return httpx.BadRequest("invalid_action", "%q is not start, stop or restart", action)
+	}
+	if action != "stop" && s.unitMasked(ctx, stack, unit) {
+		return maskedProblem(name)
 	}
 	if !s.isRunning(ctx, stack) {
 		return httpx.Conflict("stack_stopped", "stack %q is not running; start the stack first", stack)

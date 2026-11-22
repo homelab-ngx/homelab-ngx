@@ -225,6 +225,7 @@ type Stack struct {
 	BootedVars       string
 	HostIds          string
 	Autostart        int64
+	MaskedUnits      string
 }
 
 type StackDraft struct {
