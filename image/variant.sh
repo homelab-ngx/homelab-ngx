@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # variant.sh FROM VERSION: a second version from a built one, in seconds
-# instead of a build. image/check.sh needs a version only to install it and
+# instead of a build. The image check needs a version only to install it and
 # break it (step 11), and a build for that is the same system anyway.
 #
 # The update files of FROM in image/out are copied as VERSION's:

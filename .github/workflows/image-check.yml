@@ -1,4 +1,4 @@
-# The full image check (image/check.sh, all its steps): the newest release
+# The full image check (make image-check, all its steps): the newest release
 # from the release server boots, updates to a build of this commit, and a
 # third, broken version (a copy of that build) falls back by itself. A
 # release (release.yml) boots its own version alone and leaves these steps to
@@ -112,14 +112,16 @@ jobs:
       - name: make image-check
         run: make image-check CPUS="$(nproc)"
 
-      # A failed check leaves the VMs' serial logs behind (image/out/vm). They
-      # tell a slow boot from one that hung, so they outlive the runner.
+      # A failed check leaves its logs behind (image/out/vm/logs, a folder per
+      # scenario): each boot's serial log, QEMU's log with the machine's
+      # events, and the failed machine's journal. They tell a slow boot from
+      # one that hung, so they outlive the runner.
       - name: Collect the check's logs
         if: ${{ failure() }}
         run: |
           logs=$RUNNER_TEMP/check-logs && mkdir -p "$logs"
-          cp image/out/vm/*.log "$logs/" 2>/dev/null || echo "no serial logs in image/out/vm"
-          { df -h /; echo; ls -l image/out image/out/vm; } > "$logs/disk.txt" 2>&1 || true
+          cp -r image/out/vm/logs/. "$logs/" 2>/dev/null || echo "no logs in image/out/vm/logs"
+          { df -h /; echo; ls -lR image/out/vm; } > "$logs/disk.txt" 2>&1 || true
 
       - name: Keep the check's logs
         if: ${{ failure() }}

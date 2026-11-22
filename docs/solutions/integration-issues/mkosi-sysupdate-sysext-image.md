@@ -344,7 +344,7 @@ Such a machine starts the kernel and then waits for a root that never shows.
 
 `mkosi.conf` names the rest by path. To see what a build has, look in the
 UKI: the modules are an uncompressed cpio after the main initrd, so
-`grep -a 'kernel/drivers/scsi/' homelab_<v>.efi` lists them. `image/check.sh`
+`grep -a 'kernel/drivers/scsi/' homelab_<v>.efi` lists them. The image check
 does that for one module of each kind, and boots with the system disk
 behind three of QEMU's controllers (pvscsi, megasas, usb-uas). The check's
 OVMF reads none of them, so its boot loader starts from a copy of the ESP on
@@ -469,8 +469,9 @@ on 2026-11-18:
 - The prompt's icons are literal UTF-8 in `usr/share/homelab/shell.bash`:
   bash expands `$'\U...'` only in a UTF-8 locale, and `/etc/profile.d`
   sets the locale after `homelab.sh`.
-- In `image/check.sh`, an ssh opened while the VM reboots hangs forever
-  without `ServerAliveInterval`: QEMU's port forward keeps the connection.
+- The image check sends SSH keepalives every 5 s and drops a connection
+  that misses them. An SSH connection open while the VM reboots never ends
+  otherwise: QEMU's port forward keeps it open.
 - The check attaches the stick as USB storage where it runs next to an
   install: with virtio disks only, every disk appears at once and nothing
   has to wait. To start the stick there, QEMU gives the firmware a boot

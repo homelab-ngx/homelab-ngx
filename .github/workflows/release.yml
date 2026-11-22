@@ -5,7 +5,7 @@
 # hosted runner (the image spike workflow proved it).
 #
 # The check here boots this version alone: the installer, the installs and the
-# installed disk (image/check.sh steps 1-8, 13-18). The update from the
+# installed disk (make image-check's steps 1-8, 13-19). The update from the
 # release before and the fall back from a broken image (steps 9-11) are in
 # image-check.yml. Run it before tagging, unless the build machine passed the
 # full check on the same commit (CONTRIBUTING.md, Releasing).
@@ -124,14 +124,16 @@ jobs:
         if: ${{ steps.uploaded.outputs.already != 'true' }}
         run: make image-check CPUS="$(nproc)"
 
-      # A failed check leaves the VMs' serial logs behind (image/out/vm). They
-      # tell a slow boot from one that hung, so they outlive the runner.
+      # A failed check leaves its logs behind (image/out/vm/logs, a folder per
+      # scenario): each boot's serial log, QEMU's log with the machine's
+      # events, and the failed machine's journal. They tell a slow boot from
+      # one that hung, so they outlive the runner.
       - name: Collect the check's logs
         if: ${{ failure() }}
         run: |
           logs=$RUNNER_TEMP/check-logs && mkdir -p "$logs"
-          cp image/out/vm/*.log "$logs/" 2>/dev/null || echo "no serial logs in image/out/vm"
-          { df -h /; echo; ls -l image/out image/out/vm; } > "$logs/disk.txt" 2>&1 || true
+          cp -r image/out/vm/logs/. "$logs/" 2>/dev/null || echo "no logs in image/out/vm/logs"
+          { df -h /; echo; ls -lR image/out/vm; } > "$logs/disk.txt" 2>&1 || true
 
       - name: Keep the check's logs
         if: ${{ failure() }}

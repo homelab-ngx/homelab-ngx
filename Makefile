@@ -45,7 +45,7 @@ help:
 	make sh-check          shellcheck on the image's scripts (image/*.sh)
 	make image             build the image host (mkosi) and the core extension into image/out  [VERSION=]
 	make image-variant     a second version copied from a built one, for image-check's fall back  [FROM= VERSION=]
-	make image-check       boot the built image in a VM: pool, a stack, install onto a second disk
+	make image-check       boot the built image in VMs and check it end to end  [ONLY= RESUME=1 JOBS= KEEP=1 BUILD=1]
 	make gen               regenerate sqlc, the daemon's OpenAPI document and the dashboard's schema
 	make gen-check         gen, then fail if generated code differs from what is committed
 	EOF
@@ -79,6 +79,7 @@ daemon-test:
 	unformatted=$$(gofmt -l .)
 	if [ -n "$$unformatted" ]; then echo "gofmt needed:"; echo "$$unformatted"; exit 1; fi
 	go vet $(PKG)
+	go vet -tags imagecheck ./internal/imagecheck/...
 	go test -race $(if $(RUN),-run '$(RUN)') $(PKG)
 	go build ./cmd/daemon/ ./cmd/cli/
 
@@ -196,8 +197,14 @@ image:
 image-variant:
 	nix develop .#image -c image/variant.sh $(FROM) $(VERSION)
 
+# The check is a Go test (apps/core/internal/imagecheck, behind the
+# imagecheck build tag): built here, in the root shell, which has Go, and run
+# in the image shell, which has QEMU and the firmware.
 image-check:
 	$(core_host_guard)
-	nix develop .#image -c env KEEP=$(KEEP) BUILD=$(BUILD) CPUS=$(CPUS) MEM=$(MEM) image/check.sh
+	(cd apps/core && go test -c -tags imagecheck -o ../../image/out/imagecheck.test ./internal/imagecheck)
+	nix develop .#image -c env HOMELAB_ROOT="$(CURDIR)" KEEP=$(KEEP) BUILD=$(BUILD) CPUS=$(CPUS) MEM=$(MEM) \
+	  ONLY=$(ONLY) RESUME=$(RESUME) JOBS=$(JOBS) NOVSOCK=$(NOVSOCK) VERSIONS="$(VERSIONS)" \
+	  image/out/imagecheck.test -test.timeout=8h
 
 endif

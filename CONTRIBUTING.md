@@ -39,8 +39,8 @@ x86_64 Linux and on Apple silicon Macs; the image builds only on Linux.
   needs.
 - `make verify-changed` runs the checks the changed files call for.
   `make verify` runs all of them.
-- `make image-check` boots the image in a VM. Run it for anything that
-  changes the image or the daemon's start.
+- `make image-check` boots the image in VMs and checks it end to end. Run it
+  for anything that changes the image or the daemon's start.
 - `scripts/run -- <cmd>` runs a long command and keeps its full output in a
   log under `~/.local/state/homelab/runs/`.
 - `make image` and `make image-check` are heavy. `scripts/builder <target>`
@@ -169,18 +169,66 @@ to main publishes it (`.github/workflows/demo.yml`).
 - `make demo-check` loads every page of the demo in a browser and fails on
   an error.
 
+## The image check
+
+`make image-check` boots the images in `image/out` in QEMU and checks them in
+19 steps. It is a Go test in `apps/core/internal/imagecheck`, behind the build
+tag `imagecheck`.
+
+It uses the newest three versions in `image/out`, or the ones `VERSIONS`
+names. The first is installed, the second is the update to it, and the third
+is installed broken to see the host fall back. With one version, steps 9 to 11
+are left out.
+
+The steps run in five scenarios. A scenario starts from fresh disks, or from
+the snapshot another one saved: its disks, powered off, and the firmware's
+variables.
+
+| Scenario | Steps | Starts from |
+| --- | --- | --- |
+| `installer` | 1-3 | fresh disks; saves `installed` |
+| `host` | 4-8 | `installed`; saves `configured` |
+| `updates` | 9-12 | `configured` |
+| `beside` | 13 | `installed` |
+| `under` | 14-19 | fresh disks and firmware |
+
+Make variables change a run:
+
+- `ONLY=updates` runs that scenario, and first the ones whose snapshots it
+  needs.
+- `RESUME=1` keeps the snapshots, and starts from one made from the same image
+  files.
+- `JOBS=2` runs two scenarios at once, with twice the memory.
+- `KEEP=1` leaves a failed scenario's VM running and prints the SSH command.
+- `BUILD=1` adds step 12: the host builds an update from this commit, twice.
+- `CPUS` and `MEM` (MiB) size each VM: 4 and 4096, or 6144 with `BUILD=1`.
+- `NOVSOCK=1` is for a host without `/dev/vhost-vsock`: SSH then goes over a
+  forwarded port.
+
+The check reaches each VM's sshd over vsock, and counts the VM's boots by
+QEMU's reset events. A boot is up when its SSH answers. A failed scenario
+leaves its logs in `image/out/vm/logs/<scenario>`: a serial log per boot,
+QEMU's log with the VM's events, and the VM's journal.
+
+On a build machine with 16 cores (`CPUS=8 MEM=8192 JOBS=2`) a full run with
+`BUILD=1` takes 23 minutes, 12 of them in step 11.
+
+A release from before a feature has that part of a step left out, and the
+last line lists what was. On the version under test, a missing feature fails
+the run.
+
 ## Releasing
 
 A tag `vX.Y.Z` on main publishes a release (`.github/workflows/release.yml`).
-Its check boots the new version alone (`image/check.sh` steps 1-8 and
-13-18). It does not check the update from the release before or the fall back
-from a broken image (steps 9-11).
+Its check boots the new version alone (steps 1-8 and 13-19). It does not
+check the update from the release before or the fall back from a broken image
+(steps 9-11).
 
 So before you tag, the full check must have passed on the commit you tag.
 Run it one of two ways:
 
 - on the build machine: `scripts/builder image-check`, with three versions
-  in its `image/out` (see `image/check.sh`);
+  in its `image/out` (see [The image check](#the-image-check));
 - in Actions: **image check** > Run workflow, on main. It updates from the
   newest published release, and publishes nothing.
 

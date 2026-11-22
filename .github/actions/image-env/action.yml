@@ -9,7 +9,7 @@
 # main saves (save: true): a cache saved on a tag is seen by that tag alone,
 # one saved on main by every ref. image-check.yml saves; release.yml reads.
 name: image build environment
-description: Room, KVM, systemd-nspawn, Nix and the build caches for make image and make image-check
+description: Room, KVM, vsock, systemd-nspawn, Nix and the build caches for make image and make image-check
 inputs:
   save:
     description: Save the Nix store at the end of a green job, and purge the older Nix caches (needs actions write). The image cache is saved by the caller (image-cache-key).
@@ -42,11 +42,16 @@ runs:
         wait
         df -h / | tail -1
 
-    - name: KVM and systemd-nspawn
+    # The check's machines tell the runner they have started over vsock,
+    # which /dev/vhost-vsock gives them.
+    - name: KVM, vsock and systemd-nspawn
       shell: bash
       run: |
         echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
-        sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+        echo 'KERNEL=="vhost-vsock", MODE="0666", OPTIONS+="static_node=vhost-vsock"' | sudo tee /etc/udev/rules.d/99-vsock4all.rules >/dev/null
+        sudo modprobe vhost_vsock
+        sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm && sudo udevadm trigger --name-match=vhost-vsock
+        ls -l /dev/kvm /dev/vhost-vsock
         sudo apt-get update -qq && sudo apt-get install -y -qq systemd-container >/dev/null
 
     - uses: cachix/install-nix-action@v31
