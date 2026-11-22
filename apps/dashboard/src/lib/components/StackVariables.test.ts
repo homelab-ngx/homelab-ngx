@@ -96,8 +96,11 @@ describe("StackVariables", () => {
     expect(screen.getAllByText("required")).toHaveLength(1);
     expect(screen.getAllByText("default")).toHaveLength(1);
     expect(screen.getAllByText("set")).toHaveLength(2);
-    // Required and unset rows have nothing to clear, so only the secret has a menu (Generate).
-    expect(screen.getAllByRole("button", { name: /^More actions for/ }).map((b) => b.getAttribute("aria-label"))).toEqual(["More actions for API_KEY"]);
+    // Required and unset rows have nothing to clear: the set path has a menu (Make read-only), and the secret (Generate).
+    expect(screen.getAllByRole("button", { name: /^More actions for/ }).map((b) => b.getAttribute("aria-label"))).toEqual([
+      "More actions for MEDIA_DIR",
+      "More actions for API_KEY",
+    ]);
   });
 
   it("lets an optional setting with a stored value be cleared", async () => {
@@ -145,5 +148,26 @@ describe("StackVariables", () => {
     expect(screen.getByText("host")).toBeTruthy();
     expect(screen.queryByLabelText("New value for HOMELAB_API_TOKEN")).toBeNull();
     expect(screen.queryByRole("button", { name: /^More actions for/ })).toBeNull();
+  });
+
+  it("narrows a writable path to read-only from its menu, and not one the stack binds read-only", async () => {
+    const put = vi.spyOn(api, "PUT").mockResolvedValue({ data: stack([]), response: new Response(null, { status: 200 }) } as never);
+    try {
+      const path = (name: string, over: Partial<StackVariable>) =>
+        variable(name, { declared: true, kind: "path", mount: "/data", in_env: false, value: "/var/mnt/pool/x", ...over });
+      render(Harness, {
+        props: { client: new QueryClient(), stack: stack([path("DATA", { read_only: false }), path("LIB", { read_only: true })]) },
+      });
+      await fireEvent.keyDown(screen.getByRole("button", { name: "More actions for LIB" }), { key: "Enter" });
+      expect(screen.queryByRole("menuitem", { name: "Make read-only" })).toBeNull();
+      await fireEvent.keyDown(screen.getByRole("button", { name: "More actions for DATA" }), { key: "Enter" });
+      await fireEvent.click(await screen.findByRole("menuitem", { name: "Make read-only" }));
+      expect(put).toHaveBeenCalledWith("/stacks/{name}/variables/{var}", {
+        params: { path: { name: "media", var: "DATA" } },
+        body: { value: "/var/mnt/pool/x", read_only: true },
+      });
+    } finally {
+      put.mockRestore();
+    }
   });
 });

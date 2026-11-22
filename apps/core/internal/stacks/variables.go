@@ -49,11 +49,25 @@ type storedVar struct {
 	Secret bool   `json:"secret"`
 	// UpdatedAt is in unix milliseconds.
 	UpdatedAt int64 `json:"updated_at"`
+	// ReadOnly binds a declared path read-only although the manifest asks
+	// for read-write: the operator's narrowing.
+	ReadOnly bool `json:"read_only,omitempty"`
+}
+
+// storedFolder is an added folder as variables.age holds it: a host folder
+// the operator binds into the stack on top of its manifest.
+type storedFolder struct {
+	Host     string `json:"host"`
+	Mount    string `json:"mount"`
+	ReadOnly bool   `json:"read_only"`
+	// UpdatedAt is in unix milliseconds.
+	UpdatedAt int64 `json:"updated_at"`
 }
 
 type varsFile struct {
-	Version   int         `json:"version"`
-	Variables []storedVar `json:"variables"`
+	Version   int            `json:"version"`
+	Variables []storedVar    `json:"variables"`
+	Folders   []storedFolder `json:"folders,omitempty"`
 }
 
 func (s *Service) varsFile(name string) string { return filepath.Join(s.stateDir(name), varsFileName) }
@@ -62,33 +76,75 @@ func (s *Service) varsDir(name string) string  { return filepath.Join(s.host.Var
 // loadVars reads the stack's stored variables. No file is no variables, and
 // needs no key. The caller holds s.varsMu.
 func (s *Service) loadVars(name string) ([]storedVar, error) {
+	f, err := s.loadVarsFile(name)
+	return f.Variables, err
+}
+
+// loadFolders reads the stack's added folders. The caller holds s.varsMu.
+func (s *Service) loadFolders(name string) ([]storedFolder, error) {
+	f, err := s.loadVarsFile(name)
+	return f.Folders, err
+}
+
+// loadBinds reads what the stack's binds come from: its stored variables
+// and its added folders. It takes s.varsMu.
+func (s *Service) loadBinds(name string) ([]storedVar, []storedFolder, error) {
+	s.varsMu.Lock()
+	defer s.varsMu.Unlock()
+	f, err := s.loadVarsFile(name)
+	return f.Variables, f.Folders, err
+}
+
+func (s *Service) loadVarsFile(name string) (varsFile, error) {
 	b, err := os.ReadFile(s.varsFile(name))
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
+		return varsFile{}, nil
 	}
 	if err != nil {
-		return nil, err
+		return varsFile{}, err
 	}
 	plain, err := agefile.Open(s.host.AgeKeyFile, b)
 	if err != nil {
-		return nil, fmt.Errorf("decrypting %s: %w", s.varsFile(name), err)
+		return varsFile{}, fmt.Errorf("decrypting %s: %w", s.varsFile(name), err)
 	}
 	var f varsFile
 	if err := json.Unmarshal(plain, &f); err != nil {
-		return nil, fmt.Errorf("reading %s: %w", s.varsFile(name), err)
+		return varsFile{}, fmt.Errorf("reading %s: %w", s.varsFile(name), err)
 	}
 	if f.Version != varsFormat {
-		return nil, fmt.Errorf("reading %s: format %d is not supported", s.varsFile(name), f.Version)
+		return varsFile{}, fmt.Errorf("reading %s: format %d is not supported", s.varsFile(name), f.Version)
 	}
-	return f.Variables, nil
+	return f, nil
 }
 
-// saveVars encrypts the variables to the host's key and replaces the
-// stack's file atomically. The caller holds s.varsMu.
+// saveVars stores the variables, keeping the added folders. The caller
+// holds s.varsMu.
 func (s *Service) saveVars(name string, vars []storedVar) error {
-	vars = slices.Clone(vars)
+	f, err := s.loadVarsFile(name)
+	if err != nil {
+		return err
+	}
+	f.Variables = vars
+	return s.saveVarsFile(name, f)
+}
+
+// saveFolders stores the added folders, keeping the variables. The caller
+// holds s.varsMu.
+func (s *Service) saveFolders(name string, folders []storedFolder) error {
+	f, err := s.loadVarsFile(name)
+	if err != nil {
+		return err
+	}
+	f.Folders = folders
+	return s.saveVarsFile(name, f)
+}
+
+// saveVarsFile encrypts f to the host's key and replaces the stack's file
+// atomically. The caller holds s.varsMu.
+func (s *Service) saveVarsFile(name string, f varsFile) error {
+	vars := slices.Clone(f.Variables)
 	sort.Slice(vars, func(i, j int) bool { return vars[i].Name < vars[j].Name })
-	plain, err := json.Marshal(varsFile{Version: varsFormat, Variables: vars})
+	plain, err := json.Marshal(varsFile{Version: varsFormat, Variables: vars, Folders: f.Folders})
 	if err != nil {
 		return err
 	}
@@ -396,8 +452,9 @@ func variablesView(vars []storedVar, approved, fetched Manifest, tokenSet bool, 
 			Type: d.Type, Enum: d.Enum,
 		}
 		if d.Kind == VarPath {
-			ro := d.ReadOnly
+			ro := d.ReadOnly || (set && v.ReadOnly)
 			sv.Mount, sv.ReadOnly = d.Mount, &ro
+			sv.ReadOnlyByOperator = !d.ReadOnly && set && v.ReadOnly
 			sv.Owner, sv.Group = d.Owner, d.Group
 		}
 		value, src := resolve(d, vars)
@@ -500,6 +557,12 @@ func (s *Service) SetVariable(ctx context.Context, name, varName string, in Stac
 	if declared && len(d.Enum) > 0 && !slices.Contains(d.Enum, in.Value) {
 		return Stack{}, httpx.Unprocessable("invalid_value", "%s must be one of %s", varName, strings.Join(d.Enum, ", "))
 	}
+	if in.ReadOnly != nil && (!declared || d.Kind != VarPath) {
+		return Stack{}, httpx.Unprocessable("not_a_path", "%s is not a path variable; only a path is bound read-only", varName)
+	}
+	if in.ReadOnly != nil && !*in.ReadOnly && d.ReadOnly {
+		return Stack{}, httpx.Unprocessable("declared_read_only", "%s stays read-only: the stack's manifest binds it so", varName)
+	}
 	if declared && d.Kind == VarPath {
 		in.Value = storage.Canonical(in.Value)
 		if err := validHostPath(in.Value); err != nil {
@@ -547,6 +610,12 @@ func (s *Service) SetVariable(ctx context.Context, name, varName string, in Stac
 			return httpx.Unprocessable("secret_stays_secret", "%s cannot be made plain: %s", varName, why)
 		}
 		v := storedVar{Name: varName, Value: in.Value, Secret: secret, UpdatedAt: s.now().UnixMilli()}
+		if declared && d.Kind == VarPath {
+			v.ReadOnly = i >= 0 && vars[i].ReadOnly
+			if in.ReadOnly != nil {
+				v.ReadOnly = *in.ReadOnly && !d.ReadOnly
+			}
+		}
 		if i >= 0 {
 			vars[i] = v
 		} else {
@@ -558,7 +627,7 @@ func (s *Service) SetVariable(ctx context.Context, name, varName string, in Stac
 		if err := s.renderVarsLocked(name, delivered(running, vars, approved, fetched), secretsInEnv(running)); err != nil {
 			return fmt.Errorf("%s is stored but not delivered to the stack: %w", varName, err)
 		}
-		s.log.Info("stack variable set", "stack", name, "variable", varName, "secret", secret)
+		s.log.Info("stack variable set", "stack", name, "variable", varName, "secret", secret, "read_only", v.ReadOnly)
 		return nil
 	}()
 	if err != nil {

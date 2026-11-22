@@ -187,7 +187,7 @@ func TestStorageAndPathBindsGiveTheSameArguments(t *testing.T) {
 	v5 := mustParse(t, v5Manifest(photosPath))
 	args := func(m Manifest, vars []storedVar) []string {
 		t.Helper()
-		b, err := hostBinds(m, vars)
+		b, err := hostBinds(m, vars, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -212,7 +212,7 @@ func TestStorageAndPathBindsGiveTheSameArguments(t *testing.T) {
 		t.Errorf("a set optional path is not bound: %v", a)
 	}
 	req := mustParse(t, v5Manifest(`{"name":"DATA","kind":"path","required":true,"mount":"/data"}`))
-	if _, err := hostBinds(req, nil); err == nil || !strings.Contains(err.Error(), "DATA has no value") {
+	if _, err := hostBinds(req, nil, nil); err == nil || !strings.Contains(err.Error(), "DATA has no value") {
 		t.Errorf("err = %v", err)
 	}
 }

@@ -69,9 +69,7 @@ func (s *Service) BackupFolders(ctx context.Context) ([]BackupFolder, error) {
 		if len(dirs) == 0 {
 			continue
 		}
-		s.varsMu.Lock()
-		vars, verr := s.loadVars(r.Name)
-		s.varsMu.Unlock()
+		vars, folders, verr := s.loadBinds(r.Name)
 		running := s.isRunning(ctx, r.Name)
 		for _, d := range dirs {
 			f := BackupFolder{
@@ -84,7 +82,7 @@ func (s *Service) BackupFolders(ctx context.Context) ([]BackupFolder, error) {
 			if verr != nil && (d.Variable != "" || len(m.pathVars()) > 0) {
 				// Without the stored values a path's host directory is unknown.
 				f.Error = fmt.Sprintf("the stack's variables cannot be read: %v", verr)
-			} else if p, err := s.backupHostPath(r.Name, m, vars, d); err != nil {
+			} else if p, err := s.backupHostPath(r.Name, m, vars, folders, d); err != nil {
 				f.Error = err.Error()
 			} else {
 				f.HostPath = p
@@ -99,7 +97,7 @@ func (s *Service) BackupFolders(ctx context.Context) ([]BackupFolder, error) {
 // host: a variable's host directory, a path under a bind mapped through the
 // bind, or a path in the stack's root. The result has no symlinks in the
 // part that exists, and is inside the directory it was mapped into.
-func (s *Service) backupHostPath(name string, m Manifest, vars []storedVar, d BackupDir) (string, error) {
+func (s *Service) backupHostPath(name string, m Manifest, vars []storedVar, folders []storedFolder, d BackupDir) (string, error) {
 	if d.Variable != "" {
 		v, ok := m.Variable(d.Variable)
 		if !ok || v.Kind != VarPath {
@@ -113,7 +111,7 @@ func (s *Service) backupHostPath(name string, m Manifest, vars []storedVar, d Ba
 	}
 	// The longest mount at or above the path is the bind that holds it.
 	var bind *hostBind
-	for _, b := range lenientBinds(m, vars) {
+	for _, b := range lenientBinds(m, vars, folders) {
 		if _, ok := under(d.Path, []string{b.Mount}); ok && (bind == nil || len(b.Mount) > len(bind.Mount)) {
 			bind = &b
 		}
@@ -130,17 +128,17 @@ func (s *Service) backupHostPath(name string, m Manifest, vars []storedVar, d Ba
 
 // lenientBinds are hostBinds without its refusal: a path variable with no
 // value simply has no bind.
-func lenientBinds(m Manifest, vars []storedVar) []hostBind {
+func lenientBinds(m Manifest, vars []storedVar, folders []storedFolder) []hostBind {
 	var out []hostBind
 	for _, st := range m.Storage {
 		out = append(out, hostBind{st.HostPath, st.Mount, st.ReadOnly})
 	}
 	for _, d := range m.pathVars() {
 		if value, src := resolve(d, vars); src != SourceUnset {
-			out = append(out, hostBind{value, d.Mount, d.ReadOnly})
+			out = append(out, hostBind{value, d.Mount, d.ReadOnly || narrowed(d, vars)})
 		}
 	}
-	return out
+	return withFolders(m, out, folders)
 }
 
 // mountOf is the path variable without a value whose mount holds p. Its
@@ -272,13 +270,11 @@ func (s *Service) FolderUsers(ctx context.Context) (map[string][]string, error) 
 		if err != nil {
 			continue
 		}
-		s.varsMu.Lock()
-		vars, err := s.loadVars(r.Name)
-		s.varsMu.Unlock()
+		vars, folders, err := s.loadBinds(r.Name)
 		if err != nil {
 			continue
 		}
-		for _, b := range lenientBinds(m, vars) {
+		for _, b := range lenientBinds(m, vars, folders) {
 			out[r.Name] = append(out[r.Name], b.Host)
 		}
 	}
@@ -299,13 +295,11 @@ func (s *Service) HostFolders(ctx context.Context) ([]string, error) {
 		if err != nil {
 			continue
 		}
-		s.varsMu.Lock()
-		vars, err := s.loadVars(r.Name)
-		s.varsMu.Unlock()
+		vars, folders, err := s.loadBinds(r.Name)
 		if err != nil {
 			continue
 		}
-		for _, b := range lenientBinds(m, vars) {
+		for _, b := range lenientBinds(m, vars, folders) {
 			out = append(out, b.Host)
 		}
 	}

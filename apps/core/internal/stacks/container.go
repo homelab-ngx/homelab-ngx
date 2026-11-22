@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -128,17 +129,20 @@ func (s *Service) run(ctx context.Context, timeout time.Duration, name string, a
 }
 
 // hostBind is one host directory bound into a stack: a version 4 storage
-// grant, or a version 5 path variable with its resolved host path.
+// grant, a version 5 path variable with its resolved host path, or an added
+// folder.
 type hostBind struct {
 	Host, Mount string
 	ReadOnly    bool
 }
 
 // hostBinds are the binds manifest m gives with the stored values vars:
-// storage as declared, and each path variable at the host path it resolves
-// to. An optional path with no value has no bind; a required one is an
-// error, since the stack would write into its own root instead.
-func hostBinds(m Manifest, vars []storedVar) ([]hostBind, error) {
+// storage as declared, each path variable at the host path it resolves to
+// (read-only when the manifest or the operator says so), then the added
+// folders whose mount none of those claims. An optional path with no value
+// has no bind; a required one is an error, since the stack would write into
+// its own root instead.
+func hostBinds(m Manifest, vars []storedVar, folders []storedFolder) ([]hostBind, error) {
 	var out []hostBind
 	for _, st := range m.Storage {
 		out = append(out, hostBind{st.HostPath, st.Mount, st.ReadOnly})
@@ -151,9 +155,65 @@ func hostBinds(m Manifest, vars []storedVar) ([]hostBind, error) {
 			}
 			continue
 		}
-		out = append(out, hostBind{value, d.Mount, d.ReadOnly})
+		out = append(out, hostBind{value, d.Mount, d.ReadOnly || narrowed(d, vars)})
 	}
-	return out, nil
+	return withFolders(m, out, folders), nil
+}
+
+// narrowed reports whether the operator binds the declared path d
+// read-only.
+func narrowed(d Variable, vars []storedVar) bool {
+	i := slices.IndexFunc(vars, func(v storedVar) bool { return v.Name == d.Name })
+	return i >= 0 && vars[i].ReadOnly
+}
+
+// withFolders adds the added folders to the binds m gives. A folder whose
+// mount clashes with one the manifest claims is left out: the manifest wins.
+func withFolders(m Manifest, binds []hostBind, folders []storedFolder) []hostBind {
+	for _, f := range folders {
+		if shadowedBy(m, f.Mount) == "" {
+			binds = append(binds, hostBind{f.Host, f.Mount, f.ReadOnly})
+		}
+	}
+	return binds
+}
+
+// claimedMounts are the mounts manifest m binds or the host binds into
+// every stack it boots, each with what claims it.
+func claimedMounts(m Manifest) map[string]string {
+	out := map[string]string{stackVarsDir: "the stack's variables", stackAPIDir: "the stack's API token"}
+	for _, st := range m.Storage {
+		out[st.Mount] = "its storage at " + st.Mount
+	}
+	for _, d := range m.pathVars() {
+		out[d.Mount] = "its path " + d.Name
+	}
+	return out
+}
+
+// mountsClash reports whether a mount at a would be at, above or under one
+// at b.
+func mountsClash(a, b string) bool {
+	_, under1 := under(a, []string{b})
+	_, under2 := under(b, []string{a})
+	return under1 || under2
+}
+
+// shadowedBy is what in manifest m claims mount, or overlaps it; "" when
+// nothing does.
+func shadowedBy(m Manifest, mount string) string {
+	claimed := claimedMounts(m)
+	keys := make([]string, 0, len(claimed))
+	for k := range claimed {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		if mountsClash(mount, k) {
+			return claimed[k]
+		}
+	}
+	return ""
 }
 
 // nspawnArgs is the systemd-run command line that boots a stack as the
@@ -233,17 +293,11 @@ func nspawnPart(args []string) []string {
 // bootArgs is the command line the stack boots m with under the values
 // stored now.
 func (s *Service) bootArgs(name string, m Manifest) ([]string, error) {
-	var vars []storedVar
-	if len(m.pathVars()) > 0 {
-		s.varsMu.Lock()
-		var err error
-		vars, err = s.loadVars(name)
-		s.varsMu.Unlock()
-		if err != nil {
-			return nil, err
-		}
+	vars, folders, err := s.loadBinds(name)
+	if err != nil {
+		return nil, err
 	}
-	binds, err := hostBinds(m, vars)
+	binds, err := hostBinds(m, vars, folders)
 	if err != nil {
 		return nil, err
 	}

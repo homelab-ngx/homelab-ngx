@@ -491,9 +491,7 @@ func (s *Service) view(ctx context.Context, r store.Stack) (Stack, error) {
 		SourceDirty: readInfo(r).Dirty,
 		Usage:       s.usageOf(r.Name),
 	}
-	s.varsMu.Lock()
-	vars, varsErr := s.loadVars(r.Name)
-	s.varsMu.Unlock()
+	vars, folders, varsErr := s.loadBinds(r.Name)
 	if varsErr != nil {
 		// A store that cannot be read shows no values rather than failing
 		// the whole view.
@@ -502,12 +500,13 @@ func (s *Service) view(ctx context.Context, r store.Stack) (Stack, error) {
 	v.Variables, v.VariablesReady = variablesView(vars, approved, fetched, r.ApiTokenHash != "", s.builtins(fetched))
 	v.VariablesReady = v.VariablesReady && varsErr == nil
 	s.ownerView(ctx, r.Name, v.Variables)
+	v.Folders = s.foldersView(ctx, r, folders)
 	gens, err := s.st.Queries().ListStackGenerations(ctx, r.Name)
 	if err != nil {
 		return Stack{}, err
 	}
 	if v.Running && varsErr == nil {
-		v.RestartNeeded = s.restartNeeded(r, gens, vars)
+		v.RestartNeeded = s.restartNeeded(r, gens, vars, folders)
 	}
 	for _, g := range gens {
 		v.Generations = append(v.Generations, StackGeneration{
@@ -545,7 +544,7 @@ func (s *Service) view(ctx context.Context, r store.Stack) (Stack, error) {
 // restartNeeded reports whether the running container was booted with other
 // arguments than its generation gives under the stored values vars. Not
 // known (booted before the record, or no arguments to compare) is false.
-func (s *Service) restartNeeded(r store.Stack, gens []store.StackGeneration, vars []storedVar) bool {
+func (s *Service) restartNeeded(r store.Stack, gens []store.StackGeneration, vars []storedVar, folders []storedFolder) bool {
 	if r.BootedVars != "" && r.BootedVars != s.deliveredDigest(r.Name) {
 		return true
 	}
@@ -561,7 +560,7 @@ func (s *Service) restartNeeded(r store.Stack, gens []store.StackGeneration, var
 		if err != nil {
 			return false
 		}
-		binds, err := hostBinds(m, vars)
+		binds, err := hostBinds(m, vars, folders)
 		if err != nil {
 			return false
 		}

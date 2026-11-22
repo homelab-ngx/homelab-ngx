@@ -68,6 +68,10 @@ _Avoid_: API key, secret (a stack variable is something else)
 A value a stack gets from the host instead of its repo. The manifest (version 5) declares each one with a kind: env (a plain value), secret (write-only, no default), path (a host directory the operator picks, bound at the variable's mount) or, from version 8, address (see Address variable). Each is required or optional, and env and path may have a default. The operator may add env variables of their own (plain unless marked secret). The value is the stored one, else the default, else unset; an install or update waits until every required one has a value. Stored age-encrypted in the stack's state directory; env and secret values are delivered at `/run/secrets/<NAME>` and, when env-safe, in `/run/secrets/env`, and a path as a bind.
 _Avoid_: stack secret key, env var (only the env-safe ones reach `env`)
 
+**Added folder**:
+A host folder the operator binds into an installed stack at a mount of their choosing, read-only unless writes are allowed, on top of what its manifest asks for. Not a grant: nothing in the repo changes and nothing is approved. Stored with the stack's variables; one whose mount the manifest comes to claim is not bound.
+_Avoid_: extra grant, custom path, volume
+
 **Stack listener**:
 The daemon's second API, on TCP 7781, which a stack reaches at its host address (`10.99.N.1`), serving only read and control operations to a stack whose token, source address and scope check out.
 _Avoid_: public API, stack API server

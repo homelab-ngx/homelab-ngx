@@ -19,7 +19,8 @@ func stackJSON(operation string) string {
 	rev := `{"rev":"aaaaaaa1","url":"github:o/r/aaaaaaa1","at":"2026-11-15T21:00:00Z","manifest":{"version":1,"name":"immich","routes":[],"storage":[],"gpu":false,"egress":[],"health":{"units":[]}}}`
 	return fmt.Sprintf(`{"name":"immich","source":"github:o/r","created_at":"2026-11-15T21:00:00Z","fetched":%s,"approved":%s,"new_grants":[],
 		"running":true,"want_running":true,"generation":1,"generations":[],"address":"10.99.0.2","operation":%s,
-		"variables_ready":false,"restart_needed":false,"variables":[
+		"variables_ready":false,"restart_needed":false,
+		"folders":[{"path":"/pool/music","mount":"/music","read_only":true,"updated_at":"2026-11-16T12:00:00Z"}],"variables":[
 		{"name":"DB_PASSWORD","description":"Database password","declared":true,"kind":"secret","required":true,"source":"stored","secret":true,"set":true,"in_env":true,"updated_at":"2026-11-16T12:00:00Z"},
 		{"name":"API_KEY","description":"","declared":true,"kind":"secret","required":true,"source":"unset","secret":true,"set":false,"in_env":false},
 		{"name":"MEDIA_DIR","description":"Library","declared":true,"kind":"path","required":true,"default":"/pool/media","mount":"/media","read_only":false,"source":"stored","secret":false,"set":true,"value":"/pool/films","in_env":false,"updated_at":"2026-11-16T12:00:00Z"},
@@ -227,5 +228,62 @@ func TestStackVarListNeverShowsASecret(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestStackFolderAddKeepsTheOthers(t *testing.T) {
+	var got stacks.StackFoldersSet
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/stacks/immich", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, stackJSON("null"))
+	})
+	mux.HandleFunc("PUT /api/stacks/immich/folders", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, stackJSON("null"))
+	})
+	serve(t, mux)
+	if _, err := captureStdout(t, func() error {
+		return runApp(t, "stacks", "folder", "add", "immich", "/pool/share", "/share", "--read-write")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []stacks.StackFolderIn{{Path: "/pool/music", Mount: "/music", ReadOnly: true}, {Path: "/pool/share", Mount: "/share"}}
+	if fmt.Sprint(got.Folders) != fmt.Sprint(want) {
+		t.Errorf("folders = %+v, want %+v", got.Folders, want)
+	}
+	if _, err := captureStdout(t, func() error { return runApp(t, "stacks", "folder", "rm", "immich", "/music") }); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Folders) != 0 {
+		t.Errorf("after rm: %+v", got.Folders)
+	}
+}
+
+func TestStackVarSetReadOnlyKeepsTheFolder(t *testing.T) {
+	var got stacks.StackVariableSet
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/stacks/immich", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, stackJSON("null"))
+	})
+	mux.HandleFunc("PUT /api/stacks/immich/variables/MEDIA_DIR", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, stackJSON("null"))
+	})
+	serve(t, mux)
+	if _, err := captureStdout(t, func() error {
+		return runApp(t, "stacks", "var", "set", "immich", "MEDIA_DIR", "--read-only")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got.Value != "/pool/films" || got.ReadOnly == nil || !*got.ReadOnly {
+		t.Errorf("sent %+v", got)
 	}
 }

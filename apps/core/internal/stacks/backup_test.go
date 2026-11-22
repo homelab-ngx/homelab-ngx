@@ -246,7 +246,7 @@ func TestBackupFoldersMapAStorageBindAndSkipStacksWithoutASection(t *testing.T) 
 			m.Variables[i].Default = &pool
 		}
 	}
-	p, err := svc.backupHostPath("immich", m, nil, BackupDir{Label: "l", Path: "/pool/immich/upload"})
+	p, err := svc.backupHostPath("immich", m, nil, nil, BackupDir{Label: "l", Path: "/pool/immich/upload"})
 	if err != nil || p != upload {
 		t.Errorf("under a storage bind = %q, %v", p, err)
 	}

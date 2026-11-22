@@ -51,7 +51,11 @@ export function groupVariables(vars: StackVariable[]): VariableGroups {
 export const needsValue = (v: StackVariable) => v.required && v.source === "unset";
 
 /** Where a path is mounted in the stack, and how. */
-export const mountText = (v: StackVariable) => `${v.mount ?? "?"} · ${v.read_only ? "read-only" : "read-write"}`;
+export const mountText = (v: StackVariable) =>
+  `${v.mount ?? "?"} · ${v.read_only_by_operator ? "read-only (set on this host)" : v.read_only ? "read-only" : "read-write"}`;
+
+/** The manifest itself binds the path read-only, so it cannot be made writable here. */
+export const declaredReadOnly = (v: StackVariable) => !!v.read_only && !v.read_only_by_operator;
 
 /** Who in the stack takes a path's owner and group, in words; "" when nobody does. */
 export function ownerText(v: StackVariable): string {

@@ -14,6 +14,7 @@
   import StackTable from "#lib/components/StackTable.svelte";
   import ReviewDialog from "#lib/components/ReviewDialog.svelte";
   import StackNixpkgs from "#lib/components/StackNixpkgs.svelte";
+  import StackFolders from "#lib/components/StackFolders.svelte";
   import StackVariables from "#lib/components/StackVariables.svelte";
   import { shortRev, stamp } from "#lib/format.ts";
   import { describeSource, draftOf, grants, logId, nixpkgsOnly, removedGrants, routeLinks, runningNixpkgs, servicesOf, stackTitle } from "#lib/stacks.ts";
@@ -109,11 +110,12 @@
     return parts.join(", ") || "none";
   }
 
-  /** The host directories a removal leaves alone: fixed storage and the paths' values. */
+  /** The host directories a removal leaves alone: fixed storage, the paths' values and the added folders. */
   function keptPaths(s: Stack): string[] {
     const fixed = (s.approved?.manifest.storage ?? []).map((st) => st.host_path);
     const chosen = s.variables.filter((v) => v.kind === "path" && v.value).map((v) => v.value!);
-    return [...new Set([...fixed, ...chosen])];
+    const added = (s.folders ?? []).map((f) => f.path);
+    return [...new Set([...fixed, ...chosen, ...added])];
   }
 
 </script>
@@ -232,6 +234,7 @@
   </section>
 
   <div class="mt-5"><StackVariables stack={s} /></div>
+  <div class="mt-4"><StackFolders stack={s} /></div>
 
   <!-- Looked at rarely: closed until opened, and an opened one stays open on this device. -->
   <section class="card mt-4" aria-label="Source">

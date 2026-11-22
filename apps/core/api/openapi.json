@@ -5210,6 +5210,13 @@
           "fetched": {
             "$ref": "#/components/schemas/StackRevision"
           },
+          "folders": {
+            "description": "The added folders: host folders the operator binds into the stack on top of its manifest, by mount. They need no approval.",
+            "items": {
+              "$ref": "#/components/schemas/StackFolder"
+            },
+            "type": "array"
+          },
           "generation": {
             "description": "The generation of the stack's system profile in use. 0 when nothing is built.",
             "format": "int64",
@@ -5308,6 +5315,7 @@
           "source",
           "source_dirty",
           "update_state",
+          "folders",
           "variables",
           "variables_ready",
           "want_running"
@@ -5389,6 +5397,48 @@
         ],
         "type": "object"
       },
+      "StackFolder": {
+        "additionalProperties": false,
+        "properties": {
+          "folder_gid": {
+            "description": "The folder's gid; absent when the folder cannot be read.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "folder_uid": {
+            "description": "The uid that owns the folder; absent when the folder cannot be read.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "mount": {
+            "description": "Where it is bound inside the stack.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The host folder.",
+            "type": "string"
+          },
+          "read_only": {
+            "description": "It is bound read-only.",
+            "type": "boolean"
+          },
+          "shadowed_by": {
+            "description": "What in the running manifest claims the same mount, or one above or under it. Such a folder is not bound: the manifest wins.",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "mount",
+          "read_only",
+          "updated_at"
+        ],
+        "type": "object"
+      },
       "StackFolderCreate": {
         "additionalProperties": false,
         "properties": {
@@ -5405,6 +5455,33 @@
         },
         "type": "object"
       },
+      "StackFolderIn": {
+        "additionalProperties": false,
+        "properties": {
+          "mount": {
+            "description": "Where to bind it inside the stack: an absolute path that no grant or other folder claims, nor one above or under it.",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "path": {
+            "description": "An existing folder on the host, under the same rules as a path variable's value.",
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "read_only": {
+            "description": "Bind it read-only.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "path",
+          "mount",
+          "read_only"
+        ],
+        "type": "object"
+      },
       "StackFolderOwn": {
         "additionalProperties": false,
         "properties": {
@@ -5417,6 +5494,23 @@
         },
         "required": [
           "confirm"
+        ],
+        "type": "object"
+      },
+      "StackFoldersSet": {
+        "additionalProperties": false,
+        "properties": {
+          "folders": {
+            "description": "Every added folder; one left out is no longer bound. A change takes effect at the stack's next restart.",
+            "items": {
+              "$ref": "#/components/schemas/StackFolderIn"
+            },
+            "maxItems": 32,
+            "type": "array"
+          }
+        },
+        "required": [
+          "folders"
         ],
         "type": "object"
       },
@@ -6287,7 +6381,11 @@
             "type": "string"
           },
           "read_only": {
-            "description": "The path is bound read-only. Only for a path.",
+            "description": "The path is bound read-only, by the manifest or by the operator. Only for a path.",
+            "type": "boolean"
+          },
+          "read_only_by_operator": {
+            "description": "The operator binds the path read-only although the manifest asks for read-write. Only for a path.",
             "type": "boolean"
           },
           "required": {
@@ -6356,6 +6454,10 @@
       "StackVariableSet": {
         "additionalProperties": false,
         "properties": {
+          "read_only": {
+            "description": "For a declared path: bind it read-only although the manifest asks for read-write; false binds it as the manifest says. Absent: unchanged. A path the manifest binds read-only stays read-only.",
+            "type": "boolean"
+          },
           "secret": {
             "description": "Make the variable write-only. A secret stays secret; false is refused for one. Absent: unchanged, and plain for a new variable the manifest does not declare. True is refused for a declared env or path variable.",
             "type": "boolean"
@@ -19733,6 +19835,87 @@
           }
         },
         "summary": "Read the newest commit and its manifest from the stack's source.",
+        "tags": [
+          "stacks"
+        ]
+      }
+    },
+    "/stacks/{name}/folders": {
+      "put": {
+        "operationId": "setStackFolders",
+        "parameters": [
+          {
+            "description": "The stack's name, as it was installed.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "The stack's name, as it was installed.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StackFoldersSet"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stack"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Replace the folders the operator binds into a stack on top of its manifest; the stack sees them at its next restart.",
         "tags": [
           "stacks"
         ]

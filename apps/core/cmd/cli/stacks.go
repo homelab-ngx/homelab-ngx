@@ -284,8 +284,67 @@ func stacksCmd() *cli.Command {
 func stackFolderCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "folder",
-		Usage: "Make the folder of a stack's path variable, or change its owner to the stack ids",
+		Usage: "Bind more host folders into a stack; make the folder of a path variable, or change its owner to the stack ids",
 		Subcommands: []*cli.Command{
+			{
+				Name:      "list",
+				Usage:     "List the folders you bind into a stack on top of its manifest",
+				ArgsUsage: "<stack>",
+				Action: func(c *cli.Context) error {
+					if err := requireArgs(c, 1, "homelab stacks folder list <stack>"); err != nil {
+						return err
+					}
+					s, err := getStack(c, c.Args().First())
+					if err != nil {
+						return err
+					}
+					if jsonFlag(c) {
+						return printJSON(s.Folders)
+					}
+					printStackFolders(s)
+					return nil
+				},
+			},
+			{
+				Name:      "add",
+				Usage:     "Bind a host folder into a stack at a mount, read-only unless --read-write; the stack sees it at its next restart",
+				ArgsUsage: "<stack> <host-folder> <mount>",
+				Flags:     []cli.Flag{&cli.BoolFlag{Name: "read-write", Usage: "let the stack write to the folder"}},
+				Action: func(c *cli.Context) error {
+					args, flags := argsAndBools(c, "read-write")
+					if len(args) < 3 {
+						return fmt.Errorf("usage: homelab stacks folder add <stack> <host-folder> <mount> [--read-write]")
+					}
+					name := args[0]
+					cur, err := getStack(c, name)
+					if err != nil {
+						return err
+					}
+					in := foldersIn(cur, "")
+					in = append(in, stacks.StackFolderIn{Path: args[1], Mount: args[2], ReadOnly: !flags["read-write"]})
+					return setStackFolders(c, name, in, fmt.Sprintf("✔ %s is bound at %s in %s.", args[1], args[2], name))
+				},
+			},
+			{
+				Name:      "rm",
+				Usage:     "Stop binding the folder at a mount; the stack loses it at its next restart, and the folder stays",
+				ArgsUsage: "<stack> <mount>",
+				Action: func(c *cli.Context) error {
+					if err := requireArgs(c, 2, "homelab stacks folder rm <stack> <mount>"); err != nil {
+						return err
+					}
+					name, mount := c.Args().Get(0), c.Args().Get(1)
+					cur, err := getStack(c, name)
+					if err != nil {
+						return err
+					}
+					in := foldersIn(cur, mount)
+					if len(in) == len(cur.Folders) {
+						return fmt.Errorf("%s binds no added folder at %s", name, mount)
+					}
+					return setStackFolders(c, name, in, fmt.Sprintf("✔ %s no longer binds a folder at %s.", name, mount))
+				},
+			},
 			{
 				Name:      "create",
 				Usage:     "Make the folder (a subvolume on a pool), owned by the stack ids, and set it as the value",
@@ -326,6 +385,51 @@ func stackFolderCmd() *cli.Command {
 			},
 		},
 	}
+}
+
+// foldersIn is the stack's added folders as a request, without the one at
+// mount drop.
+func foldersIn(s stacks.Stack, drop string) []stacks.StackFolderIn {
+	out := []stacks.StackFolderIn{}
+	for _, f := range s.Folders {
+		if f.Mount != drop {
+			out = append(out, stacks.StackFolderIn{Path: f.Path, Mount: f.Mount, ReadOnly: f.ReadOnly})
+		}
+	}
+	return out
+}
+
+func setStackFolders(c *cli.Context, name string, in []stacks.StackFolderIn, msg string) error {
+	s, err := call[stacks.Stack](c.Context, http.MethodPut, stackPath(name, "/folders"), stacks.StackFoldersSet{Folders: in})
+	if err != nil {
+		return err
+	}
+	if s != nil && s.RestartNeeded {
+		msg += fmt.Sprintf(" Restart the stack to apply it: homelab stacks stop %s && homelab stacks start %s", name, name)
+	}
+	return emit(c, s, msg)
+}
+
+// printStackFolders prints a stack's added folders as a table.
+func printStackFolders(s stacks.Stack) {
+	if len(s.Folders) == 0 {
+		fmt.Println("No added folders.")
+		return
+	}
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "MOUNT\tFOLDER\tMODE\tNOTES")
+	for _, f := range s.Folders {
+		mode := "read-write"
+		if f.ReadOnly {
+			mode = "read-only"
+		}
+		notes := ""
+		if f.ShadowedBy != "" {
+			notes = "not bound: overlaps " + f.ShadowedBy
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", f.Mount, f.Path, mode, notes)
+	}
+	_ = w.Flush()
 }
 
 func stackVarValue(s *stacks.Stack, name string) string {
@@ -414,21 +518,41 @@ func stackVarCmd() *cli.Command {
 				Flags: []cli.Flag{
 					&cli.BoolFlag{Name: "secret", Usage: "make the variable write-only (declared secrets always are; declared env and path ones cannot be)"},
 					&cli.BoolFlag{Name: "value-stdin", Usage: "read the value from stdin"},
+					&cli.BoolFlag{Name: "read-only", Usage: "bind a path read-only although the manifest asks for read-write; without a new value it keeps the folder"},
+					&cli.BoolFlag{Name: "writable", Usage: "bind a path as its manifest says again"},
 				},
 				Action: func(c *cli.Context) error {
-					args, flags := argsAndBools(c, "secret", "value-stdin")
+					args, flags := argsAndBools(c, "secret", "value-stdin", "read-only", "writable")
 					if len(args) < 2 {
-						return fmt.Errorf("usage: homelab stacks var set <stack> <NAME> [--secret] --value-stdin")
+						return fmt.Errorf("usage: homelab stacks var set <stack> <NAME> [--secret] [--read-only|--writable] --value-stdin")
 					}
 					name, v := args[0], args[1]
-					val, err := readSecretFor(name+" "+v, flags["value-stdin"])
-					if err != nil {
+					if flags["read-only"] && flags["writable"] {
+						return fmt.Errorf("give --read-only or --writable, not both")
+					}
+					mode := flags["read-only"] || flags["writable"]
+					var val string
+					var err error
+					if mode && !flags["value-stdin"] {
+						// Only the mode changes: keep the folder.
+						s, err := getStack(c, name)
+						if err != nil {
+							return err
+						}
+						if val = stackVarValue(&s, v); val == v {
+							return fmt.Errorf("%s has no folder set; give one with --value-stdin", v)
+						}
+					} else if val, err = readSecretFor(name+" "+v, flags["value-stdin"]); err != nil {
 						return err
 					}
 					body := stacks.StackVariableSet{Value: val}
 					if flags["secret"] {
 						t := true
 						body.Secret = &t
+					}
+					if mode {
+						ro := flags["read-only"]
+						body.ReadOnly = &ro
 					}
 					s, err := call[stacks.Stack](c.Context, http.MethodPut, stackVarPath(name, v), body)
 					if err != nil {
@@ -499,6 +623,9 @@ func printStackVars(s stacks.Stack) {
 			mode := "read-write"
 			if v.ReadOnly != nil && *v.ReadOnly {
 				mode = "read-only"
+			}
+			if v.ReadOnlyByOperator {
+				mode = "read-only (set by you)"
 			}
 			notes = append(notes, "at "+v.Mount+", "+mode)
 		} else if v.Source != stacks.StackVariableSourceUnset && !v.InEnv {

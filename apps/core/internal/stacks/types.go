@@ -69,6 +69,9 @@ type Stack struct {
 	// `commits_available`: the approved commit is not the one running.
 	UpdateState StackUpdateState `json:"update_state" enum:"up_to_date,commits_available,needs_approval" doc:"needs_approval: the fetched commit asks for new grants. commits_available: the approved commit is not the one running."`
 
+	// Folders The added folders.
+	Folders []StackFolder `json:"folders" doc:"The added folders: host folders the operator binds into the stack on top of its manifest, by mount. They need no approval."`
+
 	// Variables The stack's variables: the ones the approved and fetched
 	// manifests declare first, in manifest order, then the operator's own
 	// by name. A secret's value is never returned.
@@ -469,7 +472,11 @@ type StackVariable struct {
 	Group string `json:"group,omitempty" doc:"The group in the stack that takes the gid of the path's host directory (version 8). Only for a path."`
 
 	// ReadOnly A path is bound read-only.
-	ReadOnly *bool `json:"read_only,omitempty" doc:"The path is bound read-only. Only for a path."`
+	ReadOnly *bool `json:"read_only,omitempty" doc:"The path is bound read-only, by the manifest or by the operator. Only for a path."`
+
+	// ReadOnlyByOperator The operator binds a path read-only that the
+	// manifest asks to write.
+	ReadOnlyByOperator bool `json:"read_only_by_operator,omitempty" doc:"The operator binds the path read-only although the manifest asks for read-write. Only for a path."`
 
 	// FolderUID and FolderGID are who owns a path's folder now.
 	FolderUID *int64 `json:"folder_uid,omitempty" doc:"For a path with an owner or group: the uid that owns the folder now."`
@@ -533,6 +540,33 @@ type StackVariableSet struct {
 
 	// Value The value, stored as given.
 	Value string `json:"value" minLength:"1" maxLength:"65536" doc:"The value, stored as given. For a declared path, an existing directory on the host."`
+
+	// ReadOnly Bind a declared path read-only.
+	ReadOnly *bool `json:"read_only,omitempty" doc:"For a declared path: bind it read-only although the manifest asks for read-write; false binds it as the manifest says. Absent: unchanged. A path the manifest binds read-only stays read-only."`
+}
+
+// StackFolder is an added folder: a host folder the operator binds into the
+// stack on top of its manifest.
+type StackFolder struct {
+	Path       string    `json:"path" doc:"The host folder."`
+	Mount      string    `json:"mount" doc:"Where it is bound inside the stack."`
+	ReadOnly   bool      `json:"read_only" doc:"It is bound read-only."`
+	ShadowedBy string    `json:"shadowed_by,omitempty" doc:"What in the running manifest claims the same mount, or one above or under it. Such a folder is not bound: the manifest wins."`
+	FolderUID  *int64    `json:"folder_uid,omitempty" doc:"The uid that owns the folder; absent when the folder cannot be read."`
+	FolderGID  *int64    `json:"folder_gid,omitempty" doc:"The folder's gid; absent when the folder cannot be read."`
+	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+// StackFolderIn is one added folder in StackFoldersSet.
+type StackFolderIn struct {
+	Path     string `json:"path" minLength:"1" maxLength:"4096" doc:"An existing folder on the host, under the same rules as a path variable's value."`
+	Mount    string `json:"mount" minLength:"1" maxLength:"4096" doc:"Where to bind it inside the stack: an absolute path that no grant or other folder claims, nor one above or under it."`
+	ReadOnly bool   `json:"read_only" doc:"Bind it read-only."`
+}
+
+// StackFoldersSet replaces a stack's added folders.
+type StackFoldersSet struct {
+	Folders []StackFolderIn `json:"folders" maxItems:"32" doc:"Every added folder; one left out is no longer bound. A change takes effect at the stack's next restart."`
 }
 
 // StackUpdate is one install, update or rollback attempt.

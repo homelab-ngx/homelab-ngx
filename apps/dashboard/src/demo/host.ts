@@ -226,6 +226,7 @@ function seedStack(s: StackSeed, i: number, now: number): Stack {
     want_running: true,
     update_state: "up_to_date",
     usage: { cpu_percent: s.cpu, memory_bytes: Math.round(s.memory) },
+    folders: [],
     variables: s.variables ?? [],
     variables_ready: true,
   };

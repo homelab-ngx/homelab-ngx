@@ -71,7 +71,7 @@ func TestBusyNamesOperationsButNotHealthChecks(t *testing.T) {
 func TestUnitPropertiesOrderTheStopAndRestartNothing(t *testing.T) {
 	t.Parallel()
 	m := mustParse(t, v5Manifest(photosPath))
-	b, err := hostBinds(m, []storedVar{{Name: "PHOTOS", Value: "/var/mnt/media/photos"}})
+	b, err := hostBinds(m, []storedVar{{Name: "PHOTOS", Value: "/var/mnt/media/photos"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

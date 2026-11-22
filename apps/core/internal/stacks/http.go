@@ -56,6 +56,11 @@ type setVariableIn struct {
 	Body StackVariableSet
 }
 
+type foldersSetIn struct {
+	Name string `path:"name" doc:"The stack's name, as it was installed."`
+	Body StackFoldersSet
+}
+
 type folderCreateIn struct {
 	Name string `path:"name" doc:"The stack's name, as it was installed."`
 	Var  string `path:"var" doc:"A path variable of the stack."`
@@ -223,6 +228,15 @@ func (h *HTTP) Register(a httpx.APIs) {
 		"Make the folder for a path variable, owned by the stack ids of its owner and group, and store it as the value.", 0),
 		func(ctx context.Context, in *folderCreateIn) (*stackBody, error) {
 			s, err := h.svc.CreateFolder(ctx, in.Name, in.Var, in.Body)
+			if err != nil {
+				return nil, err
+			}
+			return &stackBody{Body: s}, nil
+		})
+	httpx.Register(a, httpx.ScopeOperator, op("setStackFolders", http.MethodPut, "/stacks/{name}/folders",
+		"Replace the folders the operator binds into a stack on top of its manifest; the stack sees them at its next restart.", 0),
+		func(ctx context.Context, in *foldersSetIn) (*stackBody, error) {
+			s, err := h.svc.SetFolders(ctx, in.Name, in.Body)
 			if err != nil {
 				return nil, err
 			}

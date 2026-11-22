@@ -1563,6 +1563,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks/{name}/folders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replace the folders the operator binds into a stack on top of its manifest; the stack sees them at its next restart. */
+        put: operations["setStackFolders"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks/{name}/rollback": {
         parameters: {
             query?: never;
@@ -3924,6 +3941,8 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             fetched: components["schemas"]["StackRevision"];
+            /** @description The added folders: host folders the operator binds into the stack on top of its manifest, by mount. They need no approval. */
+            folders: components["schemas"]["StackFolder"][];
             /**
              * Format: int64
              * @description The generation of the stack's system profile in use. 0 when nothing is built.
@@ -3986,15 +4005,49 @@ export interface components {
             prepare: string;
             stack: string;
         };
+        StackFolder: {
+            /**
+             * Format: int64
+             * @description The folder's gid; absent when the folder cannot be read.
+             */
+            folder_gid?: number;
+            /**
+             * Format: int64
+             * @description The uid that owns the folder; absent when the folder cannot be read.
+             */
+            folder_uid?: number;
+            /** @description Where it is bound inside the stack. */
+            mount: string;
+            /** @description The host folder. */
+            path: string;
+            /** @description It is bound read-only. */
+            read_only: boolean;
+            /** @description What in the running manifest claims the same mount, or one above or under it. Such a folder is not bound: the manifest wins. */
+            shadowed_by?: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         StackFolderCreate: {
             /** @description The folder's name there. Empty: the stack's name. */
             folder?: string;
             /** @description The pool or partition to make it on, by its directory (/var/mnt/pool). Empty: the host's only one. */
             place?: string;
         };
+        StackFolderIn: {
+            /** @description Where to bind it inside the stack: an absolute path that no grant or other folder claims, nor one above or under it. */
+            mount: string;
+            /** @description An existing folder on the host, under the same rules as a path variable's value. */
+            path: string;
+            /** @description Bind it read-only. */
+            read_only: boolean;
+        };
         StackFolderOwn: {
             /** @description The folder's path, typed to confirm: the change cannot be undone. */
             confirm: string;
+        };
+        StackFoldersSet: {
+            /** @description Every added folder; one left out is no longer bound. A change takes effect at the stack's next restart. */
+            folders: components["schemas"]["StackFolderIn"][];
         };
         StackGeneration: {
             /** Format: date-time */
@@ -4303,8 +4356,10 @@ export interface components {
              * @enum {string}
              */
             owner_state?: "ok" | "own" | "root" | "group_differs";
-            /** @description The path is bound read-only. Only for a path. */
+            /** @description The path is bound read-only, by the manifest or by the operator. Only for a path. */
             read_only?: boolean;
+            /** @description The operator binds the path read-only although the manifest asks for read-write. Only for a path. */
+            read_only_by_operator?: boolean;
             /** @description An install or update waits until it has a value, stored or a default. False for the operator's own. */
             required: boolean;
             /** @description Write-only: the value is never returned. A declared secret always is; a path never is. */
@@ -4340,6 +4395,8 @@ export interface components {
             value?: string;
         };
         StackVariableSet: {
+            /** @description For a declared path: bind it read-only although the manifest asks for read-write; false binds it as the manifest says. Absent: unchanged. A path the manifest binds read-only stays read-only. */
+            read_only?: boolean;
             /** @description Make the variable write-only. A secret stays secret; false is refused for one. Absent: unchanged, and plain for a new variable the manifest does not declare. True is refused for a declared env or path variable. */
             secret?: boolean;
             /** @description The value, stored as given. For a declared path, an existing directory on the host. */
@@ -11631,6 +11688,52 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Stack"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    setStackFolders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name, as it was installed. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StackFoldersSet"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {

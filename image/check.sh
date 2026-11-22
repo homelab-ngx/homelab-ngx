@@ -21,7 +21,8 @@
 #      /var/mnt/pool; unmounted, its directory takes no writes. A disk with
 #      another file system is offered as a partition and mounted by name
 #   6. a stack (the drafts template) is built by Nix and serves a page from
-#      the pool at its route under the domain. A second pool is made from
+#      the pool at its route under the domain, and reads a host folder added
+#      read-only, which it cannot write. A second pool is made from
 #      three more disks through the daemon, grown with a disk that held
 #      ext4, shrunk by one disk with its files kept, and deleted; the pool
 #      the stack uses is not
@@ -939,6 +940,15 @@ else
   api -X PUT http://x/api/stacks/site/variables/SITE_DIR -d "'{\"value\":\"$pool/site\"}'" >/dev/null || die "variable refused"
 fi
 vssh "echo '<p>image-check</p>' > $pool/site/index.html"
+# A folder bound on top of what the manifest asks for, read-only. A version
+# from before added folders has none.
+added=
+if api http://x/api/stacks/site | jq -e 'has("folders")' >/dev/null; then
+  vssh "mkdir -p $pool/library && echo shared > $pool/library/file"
+  api -X PUT http://x/api/stacks/site/folders -d "'{\"folders\":[{\"path\":\"$pool/library\",\"mount\":\"/library\",\"read_only\":true}]}'" >/dev/null ||
+    die "the added folder was refused"
+  added=1
+fi
 api -X POST http://x/api/stacks/site/approve -d "'{\"rev\":\"$rev\"}'" >/dev/null || die "approve refused"
 api -X POST http://x/api/stacks/site/start >/dev/null || die "start refused"
 for _ in $(seq 1 120); do
@@ -956,7 +966,16 @@ if [ -n "$onvar" ]; then
   jq -e '.total_bytes > 0 and .free_bytes > 0 and (.own_partition | not)' <<<"$st" >/dev/null || die "the Nix store's disk is not reported: $st"
 fi
 [ -z "$madefolder" ] || grep -q '^nginx:x:2000:' <(vssh 'cat /var/lib/homelab/appdata/stacks/site/root/etc/passwd') || die "nginx in the stack does not have the id 2000"
-ok "stack site built, serving the page from the pool at https://site.$domain$refused$madefolder"
+if [ -n "$added" ]; then
+  leader=$(vssh "machinectl show site -p Leader --value")
+  # Through the leader's root: the stack's mounts, read-only flag and all,
+  # without a binary of the host's inside the stack.
+  [ "$(vssh "cat /proc/$leader/root/library/file")" = shared ] || die "the added folder is not at /library in the stack"
+  ! vssh "touch /proc/$leader/root/library/new" 2>/dev/null || die "the stack wrote to the read-only added folder"
+  vssh "grep -q ' /library ro,' /proc/$leader/mountinfo" || die "/library is not mounted read-only in the stack"
+  added="; a host folder added read-only at /library"
+fi
+ok "stack site built, serving the page from the pool at https://site.$domain$refused$madefolder$added"
 pool_lifecycle
 
 step "7. host settings: VPN, tunnel, firewall, name and time zone"

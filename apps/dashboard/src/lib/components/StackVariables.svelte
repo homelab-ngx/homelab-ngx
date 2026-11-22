@@ -6,6 +6,7 @@
   import { stamp } from "#lib/format.ts";
   import { browseHref } from "#lib/storage.ts";
   import {
+    declaredReadOnly,
     generateKey,
     groupVariables,
     mountText,
@@ -211,6 +212,16 @@
     return { tone: "idle", word: "empty" };
   }
 
+  /** Bind a declared path read-only although the stack asks to write, or as it asks again. */
+  function setReadOnly(v: StackVariable, ro: boolean) {
+    void act(async () => {
+      const ok = await send(v.name, v, () =>
+        call<Stack>(api.PUT("/stacks/{name}/variables/{var}", { ...path(v.name), body: { value: v.value!, read_only: ro } })),
+      );
+      return ok ? `${v.name} ${ro ? "read-only" : "writable"} from the next restart.` : "";
+    });
+  }
+
   /** The row's rarer actions; a path's Browse is its one button. */
   function menuOf(v: StackVariable): MenuItem[] {
     const items: MenuItem[] = [];
@@ -218,6 +229,10 @@
     if (!v.declared && !v.secret && v.value) items.push({ label: "Make secret", onSelect: () => void act(async () => ((await put(v, v.value!, true)) ? `${v.name} is a secret now.` : "")) });
     if (!v.declared) items.push({ label: "Remove…", danger: true, onSelect: () => (removing = v) });
     else if (!v.required && v.set) items.push({ label: "Clear value…", danger: true, onSelect: () => (removing = v) });
+    if (v.kind === "path" && v.declared && v.set && v.value && !declaredReadOnly(v)) {
+      const ro = !v.read_only_by_operator;
+      items.push({ label: ro ? "Make read-only" : "Allow writes", onSelect: () => setReadOnly(v, ro) });
+    }
     if (v.kind === "path" && v.value && v.owner_state && v.owner_state !== "ok")
       items.push({ label: "Change owner…", danger: true, onSelect: () => ((owning = v), (typed = ""), delete errors[v.name]) });
     return items;
