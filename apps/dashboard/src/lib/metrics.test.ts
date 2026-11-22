@@ -133,7 +133,7 @@ describe("mood", () => {
     // Disks are further over their line (3x) than the processor (1.2x).
     expect(mood(withPressure(12, 0, 30))).toEqual({ mood: "heavy", waits: "disks" });
   });
-  it("calls a full processor nobody waits for medium load", () => {
+  it("counts 80% CPU use as medium load", () => {
     expect(mood(withPressure(0, 0, 0, 90))).toEqual({ mood: "medium" });
   });
 });

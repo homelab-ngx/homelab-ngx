@@ -198,8 +198,8 @@ export type Resource = "processor" | "memory" | "disks";
 /**
  * How the host is doing, from pressure over about the last minute: the
  * share of time some task had to wait for CPU, memory or disk. Nothing
- * waiting is idle under 10% CPU use and light load above it. A full CPU
- * nobody waits for is only medium load, and then `waits` is unset.
+ * waiting is idle under 10% CPU use and light load above it. CPU use of
+ * 80% or more is medium load on its own, and then `waits` is unset.
  */
 export function mood(f: Frames): { mood: Mood; waits?: Resource } | undefined {
   const n = Math.max(1, Math.round(60 / (f.step || 2)));
