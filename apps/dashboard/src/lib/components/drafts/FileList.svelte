@@ -11,12 +11,14 @@
     /** The paths with unsaved changes. */
     changed: string[];
     onOpen: (path: string) => void;
+    /** The files can be read, not made, renamed or deleted. */
+    readonly?: boolean;
     /** Make an empty file at path. */
-    onNew: (path: string) => void;
-    onRename: (from: string, to: string) => void;
-    onDelete: (path: string) => void;
+    onNew?: (path: string) => void;
+    onRename?: (from: string, to: string) => void;
+    onDelete?: (path: string) => void;
   }
-  let { buffer, open, changed, onOpen, onNew, onRename, onDelete }: Props = $props();
+  let { buffer, open, changed, readonly = false, onOpen, onNew, onRename, onDelete }: Props = $props();
 
   const rows = $derived(fileTree(Object.keys(buffer)));
 
@@ -40,8 +42,8 @@
     const { from } = naming;
     const path = naming.path.trim();
     naming = null;
-    if (from === null) onNew(path);
-    else if (path !== from) onRename(from, path);
+    if (from === null) onNew?.(path);
+    else if (path !== from) onRename?.(from, path);
   }
 
   function submit(e: SubmitEvent) {
@@ -79,9 +81,11 @@
 <nav aria-label="Files" class="flex min-h-0 flex-col">
   <div class="flex items-center gap-2 border-b border-line bg-sunken px-3 py-1">
     <h2 class="label">Files</h2>
-    <button type="button" class="ml-auto rounded-md p-1 text-muted hover:text-fg" aria-label="New file" title="New file" onclick={startNew}>
-      <FilePlus class="size-4" aria-hidden="true" />
-    </button>
+    {#if !readonly}
+      <button type="button" class="ml-auto rounded-md p-1 text-muted hover:text-fg" aria-label="New file" title="New file" onclick={startNew}>
+        <FilePlus class="size-4" aria-hidden="true" />
+      </button>
+    {/if}
   </div>
   <ul class="min-h-0 flex-1 overflow-auto py-1 font-mono text-xs">
     {#if naming && naming.from === null}
@@ -104,13 +108,13 @@
             >
               {row.name}{#if changed.includes(row.path)}<span class="ml-1 text-accent" aria-label="(changed)">•</span>{/if}
             </button>
-            {#if !REQUIRED.includes(row.path)}
+            {#if !readonly && !REQUIRED.includes(row.path)}
               <span class="shrink-0 pr-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
                 <RowMenu
                   name={row.path}
                   items={[
                     ...(buffer[row.path] !== null ? [{ label: "Rename…", onSelect: () => (naming = { from: row.path, path: row.path }) }] : []),
-                    { label: "Delete", danger: true, onSelect: () => onDelete(row.path) },
+                    { label: "Delete", danger: true, onSelect: () => onDelete?.(row.path) },
                   ]}
                 />
               </span>

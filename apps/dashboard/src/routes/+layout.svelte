@@ -3,7 +3,7 @@
   import { QueryClient, QueryClientProvider } from "@tanstack/svelte-query";
   import type { Snippet } from "svelte";
   import { page } from "$app/state";
-  import { NAV, SETTINGS, current } from "#lib/nav.ts";
+  import { NAV, SETTINGS, current, wide } from "#lib/nav.ts";
   import Shell from "#lib/components/Shell.svelte";
   import Installer from "#lib/components/installer/Installer.svelte";
   import SignIn from "#lib/components/SignIn.svelte";
@@ -49,7 +49,7 @@
   {:else if installer}
     <Installer initial={installer} />
   {:else if ready}
-    <Shell active={current(page.url.pathname)} nav={NAV} settings={SETTINGS} wide={page.url.pathname.startsWith("/stacks/drafts/")}>
+    <Shell active={current(page.url.pathname)} nav={NAV} settings={SETTINGS} wide={wide(page.url.pathname)}>
       {@render children()}
     </Shell>
   {/if}

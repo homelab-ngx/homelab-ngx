@@ -3,7 +3,6 @@
   import { page } from "$app/state";
   import { describe } from "#lib/api/client.ts";
   import { busy, busyPoll, fetchDraft, fetchDrafts, fetchStack, idlePoll, keys } from "#lib/api/queries.ts";
-  import ForkStack from "#lib/components/ForkStack.svelte";
   import Help from "#lib/components/Help.svelte";
   import StackNixpkgs from "#lib/components/StackNixpkgs.svelte";
   import { shortRev, stamp } from "#lib/format.ts";
@@ -25,7 +24,6 @@
   /** Drafts forked from this stack. */
   const drafts = createQuery(() => ({ queryKey: keys.drafts, queryFn: fetchDrafts, enabled: !!stack.data }));
   const forks = $derived((drafts.data ?? []).filter((d) => stack.data && d.forked_from === stack.data.source));
-  let forking = $state(false);
 </script>
 
 <svelte:head><title>Access · {stack.data ? stackTitle(stack.data) : name} · Homelab-ngx</title></svelte:head>
@@ -76,16 +74,14 @@
           {@render maybeLink(sourceHref(draft.data.forked_from).repo, describeSource(draft.data.forked_from).repo)} · {shortRev(draft.data.forked_rev ?? "")}
         </dd>
       {/if}
-      <dt class="text-muted">Fork</dt>
-      <dd>
-        {#if forks.length}
+      {#if forks.length}
+        <dt class="text-muted">Copies</dt>
+        <dd>
           <ul>
             {#each forks as f (f.name)}<li><a class="link" href="/stacks/drafts/{f.name}">{f.name}</a></li>{/each}
           </ul>
-        {:else}
-          <button type="button" class="link" disabled={!s.approved} onclick={() => (forking = true)}>Fork…</button>
-        {/if}
-      </dd>
+        </dd>
+      {/if}
     </dl>
     {#if s.source_dirty}
       <p class="mt-3 text-warn">Uncommitted changes in the folder are not installed.</p>
@@ -94,7 +90,6 @@
 
   <div class="mt-4"><StackNixpkgs stack={s} /></div>
 
-  {#if forking}<ForkStack stack={s} onClose={() => (forking = false)} />{/if}
 {:else}
   <p class="text-muted">Loading…</p>
 {/if}

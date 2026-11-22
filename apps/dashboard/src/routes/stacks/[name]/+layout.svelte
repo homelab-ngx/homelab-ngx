@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
-  import { ArrowLeft, History, Info, ScrollText, Shield, SlidersHorizontal } from "@lucide/svelte";
+  import { ArrowLeft, Code, History, Info, ScrollText, Shield, SlidersHorizontal } from "@lucide/svelte";
   import type { Snippet } from "svelte";
   import { page } from "$app/state";
   import { busy, busyPoll, fetchStack, idlePoll, keys } from "#lib/api/queries.ts";
@@ -21,6 +21,7 @@
   const tabs = $derived([
     { href: base, label: "Info", Icon: Info },
     { href: `${base}/configuration`, label: "Configuration", Icon: SlidersHorizontal },
+    { href: `${base}/source`, label: "Source code", Icon: Code },
     { href: `${base}/logs`, label: "Logs", Icon: ScrollText },
     { href: `${base}/history`, label: "History", Icon: History },
     { href: `${base}/access`, label: "Access", Icon: Shield },

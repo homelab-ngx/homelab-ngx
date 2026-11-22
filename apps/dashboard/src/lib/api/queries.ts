@@ -17,6 +17,8 @@ export const keys = {
   manifestSchema: ["daemon", "stacks", "manifest-schema"] as const,
   assistantLimits: ["daemon", "settings", "assistant", "limits"] as const,
   draft: (name: string) => ["daemon", "drafts", name] as const,
+  /** An installed stack's files at one commit; a new commit is a new key. */
+  stackFiles: (name: string, rev: string) => ["daemon", "stacks", name, "files", rev] as const,
 };
 
 export const fetchStacks = () => call<Stack[]>(api.GET("/stacks"));
@@ -30,6 +32,7 @@ export const fetchAssistant = () => call<AssistantSettings>(api.GET("/settings/a
 export const fetchAssistantLimits = () => call<AssistantLimits>(api.GET("/settings/assistant/limits"));
 export const fetchDrafts = () => call<DraftSummary[]>(api.GET("/drafts"));
 export const fetchDraft = (name: string) => call<Draft>(api.GET("/drafts/{name}", { params: { path: { name } } }));
+export const fetchStackFiles = (name: string) => call<Schema<"StackFiles">>(api.GET("/stacks/{name}/files", { params: { path: { name } } }));
 export const fetchUpdate = (id: number) =>
   call<StackUpdate>(api.GET("/stack-updates/{id}", { params: { path: { id } } }));
 

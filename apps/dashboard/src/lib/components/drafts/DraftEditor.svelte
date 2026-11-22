@@ -19,8 +19,17 @@
   interface Props {
     /** The draft as saved; it changes on a save and while a build runs. */
     draft: Draft;
+    /**
+     * Shown as a stack's Source code tab: the stack's page has the title and
+     * the way back, so the editor drops its own.
+     */
+    embedded?: boolean;
+    /** Files to start from instead of the saved ones: edits a save did not keep. */
+    initial?: Buffer;
+    /** Why those edits are not saved. */
+    initialError?: string;
   }
-  let { draft }: Props = $props();
+  let { draft, embedded = false, initial, initialError = "" }: Props = $props();
 
   const client = useQueryClient();
   const assistant = createQuery(() => ({ queryKey: keys.assistant, queryFn: fetchAssistant }));
@@ -33,11 +42,11 @@
   const path = $derived({ params: { path: { name: draft.name } } });
 
   /** The unsaved copy of the files the editor works on, by path. */
-  let buffer = $state<Buffer>(bufferOf(untrack(() => draft.files)));
+  let buffer = $state<Buffer>(untrack(() => (initial ? { ...initial } : bufferOf(draft.files))));
   /** The file the editor shows. */
   let open = $state(MANIFEST);
   let message = $state("");
-  let error = $state("");
+  let error = $state(untrack(() => initialError));
   let working = $state<"" | "save" | "check" | "build" | "install" | "delete">("");
   let confirmDelete = $state(false);
 
@@ -224,13 +233,22 @@
 <!-- A light VS Code workbench: title bar and toolbar, the file list beside
      the editor, one output panel under it, the assistant in a side bar opened from
      the activity bar on the right, and a status bar. -->
-<div class="flex flex-col overflow-hidden rounded-md border border-line bg-surface xl:h-[calc(100dvh-4.25rem)] xl:min-h-[36rem]">
+<div
+  class="flex flex-col overflow-hidden rounded-md border border-line bg-surface xl:min-h-[36rem] {embedded
+    ? 'xl:h-[calc(100dvh-8.5rem)]'
+    : 'xl:h-[calc(100dvh-4.25rem)]'}"
+>
   <div class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-sunken px-3 py-1.5">
-    <div class="flex min-w-0 items-baseline gap-1.5">
-      <a class="link text-muted" href="/stacks">Stacks</a>
-      <span class="text-muted" aria-hidden="true">/</span>
-      <h1 class="truncate font-semibold">{draft.name}</h1>
-    </div>
+    {#if embedded}
+      <h1 class="sr-only">{draft.name} source code</h1>
+      <p class="min-w-0 truncate text-muted">Draft {draft.name} · {shortRev(draft.rev)}</p>
+    {:else}
+      <div class="flex min-w-0 items-baseline gap-1.5">
+        <a class="link text-muted" href="/stacks">Stacks</a>
+        <span class="text-muted" aria-hidden="true">/</span>
+        <h1 class="truncate font-semibold">{draft.name}</h1>
+      </div>
+    {/if}
     <div class="ml-auto flex flex-wrap items-center gap-2" role="toolbar" aria-label="Draft">
       {#if dirty}
         <input class="input w-56 px-2 py-0.5 text-xs" bind:value={message} aria-label="What changed" placeholder="What changed (optional)" maxlength="500" />
@@ -243,7 +261,7 @@
         {buildRunning ? "Building…" : "Build"}
       </button>
       {#if installedAs}
-        <a class="btn btn-sm btn-primary" href="/stacks/{installedAs}">Open stack</a>
+        {#if !embedded}<a class="btn btn-sm btn-primary" href="/stacks/{installedAs}">Open stack</a>{/if}
       {:else}
         <button type="button" class="btn btn-sm btn-primary" disabled={dirty || !!working} onclick={install} title={dirty ? "Save first." : undefined}>
           {working === "install" ? "Reading…" : "Install…"}
@@ -337,7 +355,7 @@
 
   <div class="flex flex-wrap items-center gap-x-3 border-t border-line bg-sunken px-3 py-1 text-xs text-muted tabular-nums">
     <span>{dirty ? `${changed.length} unsaved` : "Saved"} · {ago(draft.saved_at)} · {shortRev(draft.rev)}</span>
-    {#if installedAs}
+    {#if installedAs && !embedded}
       <span>Installed as <a class="link" href="/stacks/{installedAs}">{installedAs}</a></span>
     {/if}
     {#if nixLsp}

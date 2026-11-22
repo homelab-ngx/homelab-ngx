@@ -9,6 +9,28 @@ import type { Schema } from "#lib/api/client.ts";
 import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerStatus, freezeThaw, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
 import { history } from "./metrics.ts";
 
+/** A stack's files as the demo shows them: its manifest and a short flake. */
+function filesOf(s: Schema<"Stack">) {
+  const m = s.approved?.manifest ?? s.fetched.manifest;
+  const manifest = JSON.stringify(m, null, 2) + "\n";
+  const flake = [
+    "{",
+    `  description = "${s.label || s.name}, a homelab-ngx stack";`,
+    '  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-26.05";',
+    "  outputs = { nixpkgs, ... }: {",
+    "    nixosModules.default = ./module.nix;",
+    "  };",
+    "}",
+    "",
+  ].join("\n");
+  const file = (path: string, content: string) => ({ path, size: content.length, binary: false, content });
+  return {
+    source: s.source,
+    rev: s.approved?.rev ?? s.fetched.rev,
+    files: [file("flake.nix", flake), file("homelab-stack.json", manifest), { path: "icon.png", size: 2048, binary: true, content: "" }],
+  };
+}
+
 type JsonOf<P extends keyof paths> = paths[P] extends { get: { responses: { 200: { content: { "application/json": infer R } } } } } ? R : never;
 type GetPath = { [P in keyof paths]: [JsonOf<P>] extends [never] ? never : P }[keyof paths];
 
@@ -260,6 +282,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
   "/stacks-store": (h) => ({ own_partition: true, collecting: false, total_bytes: 120 * GB, used_bytes: 47 * GB, free_bytes: 73 * GB, freed_bytes: 6 * GB, collected_at: iso(h.now() - DAY), measured_at: iso(h.now() - 10 * MIN) }),
   "/stacks-ids": () => ({ min: 2000, max: 2099, ids: [{ name: "immich", id: 2000 }, { name: "media", id: 2001 }] }),
   "/stacks/{name}": (h, c) => stackOf(h, c.path.name!),
+  "/stacks/{name}/files": (h, c) => filesOf(stackOf(h, c.path.name!)),
   "/storage": (h) => h.storage,
   "/storage/browse": (h, c) => listing(h, c.query.get("path") ?? "/"),
   "/storage/browse/usage": (h, c) => ({

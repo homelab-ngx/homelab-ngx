@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { current } from "./nav.ts";
+import { current, wide } from "./nav.ts";
 
 describe("current", () => {
   it("keeps the overview and the stacks apart", () => {
@@ -8,5 +8,15 @@ describe("current", () => {
     expect(current("/stacks/immich")).toBe("/stacks");
     expect(current("/stacks/immich/logs")).toBe("/stacks");
     expect(current("/settings/logs")).toBe("/settings");
+  });
+});
+
+describe("wide", () => {
+  it("is a draft's editor and a stack's source code, nothing else", () => {
+    expect(wide("/stacks/drafts/mine")).toBe(true);
+    expect(wide("/stacks/immich/source")).toBe(true);
+    expect(wide("/stacks/immich")).toBe(false);
+    expect(wide("/stacks/immich/logs")).toBe(false);
+    expect(wide("/stacks")).toBe(false);
   });
 });

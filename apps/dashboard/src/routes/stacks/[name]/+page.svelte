@@ -7,7 +7,6 @@
   import { api, call, describe, type Stack } from "#lib/api/client.ts";
   import { busy, busyPoll, fetchServices, fetchStack, fetchUpdates, idlePoll, keys } from "#lib/api/queries.ts";
   import Disclosure from "#lib/components/Disclosure.svelte";
-  import ForkStack from "#lib/components/ForkStack.svelte";
   import Modal from "#lib/components/Modal.svelte";
   import OperationCard from "#lib/components/OperationCard.svelte";
   import Pill from "#lib/components/Pill.svelte";
@@ -21,7 +20,6 @@
   import { bytes, cpu, shortRev, stamp } from "#lib/format.ts";
   import {
     describeSource,
-    draftOf,
     health,
     nixpkgsLabel,
     nixpkgsOnly,
@@ -62,7 +60,6 @@
   let error = $state("");
   let removing = $state(false);
   let renaming = $state(false);
-  let forking = $state(false);
   let reviewing = $state<Stack | null>(null);
 
   const own = $derived(servicesOf(services.data, name));
@@ -125,14 +122,10 @@
     start.isPending || stop.isPending || update.isPending || freeze.isPending || thaw.isPending || (stack.data ? busy(stack.data) : false),
   );
 
-  /** The Controls card's menu: the rarer actions, Remove last. */
-  function menu(s: Stack) {
-    const draft = draftOf(s.source);
+  /** The Controls card's menu: the rarer actions, Remove last. A fork starts in the Source code tab. */
+  function menu() {
     return [
       { label: "Rename…", onSelect: () => (renaming = true) },
-      draft
-        ? { label: "Edit", onSelect: () => goto(`/stacks/drafts/${draft}`) }
-        : { label: "Fork…", disabled: !s.approved, onSelect: () => (forking = true) },
       { label: "Remove…", danger: true, disabled: working, onSelect: () => (removing = true) },
     ];
   }
@@ -266,7 +259,7 @@
     <aside aria-labelledby="controls-h" class="card flex min-w-0 flex-[1_1_18rem] flex-col gap-4">
       <div class="flex items-center justify-between gap-2">
         <h2 id="controls-h" class="font-semibold">Controls</h2>
-        <RowMenu name={title} items={menu(s)} vertical />
+        <RowMenu name={title} items={menu()} vertical />
       </div>
       <div class="flex flex-wrap gap-2">
         {#if s.frozen}
@@ -331,7 +324,6 @@
 
   <ReviewDialog stack={reviewing} onClose={() => (reviewing = null)} />
   {#if renaming}<RenameStack stack={s} onClose={() => (renaming = false)} />{/if}
-  {#if forking}<ForkStack stack={s} onClose={() => (forking = false)} />{/if}
 {:else}
   <p class="text-muted">Loading…</p>
 {/if}
