@@ -20,10 +20,17 @@ type Stack struct {
 	// Approved The commit the runtime may build. Absent until the first approval.
 	Approved *StackRevision `json:"approved,omitempty" doc:"The commit the runtime may build. Absent until the first approval."`
 
+	// Autostart The stack starts after the host boots.
+	Autostart bool `json:"autostart" doc:"The stack starts after the host boots. Off, it stays stopped until it is started. A restart of the daemon alone changes nothing."`
+
 	// Commits Commits of the fetched source since the running generation, newest first. Empty when it is up to date or the history cannot be read.
 	Commits   []StackCommit `json:"commits" doc:"Commits of the fetched source since the running generation, newest first. Empty when it is up to date or the history cannot be read."`
 	CreatedAt time.Time     `json:"created_at"`
 	Fetched   StackRevision `json:"fetched"`
+
+	// Frozen The stack's processes are frozen where they are: they keep
+	// their memory and use no CPU until it is thawed.
+	Frozen bool `json:"frozen" doc:"The stack's processes are frozen where they are: they keep their memory and use no CPU, and its addresses do not answer until it is thawed. A reboot loses what they held. Running stays true."`
 
 	// Generation The generation of the stack's system profile in use. 0 when nothing is built.
 	Generation int `json:"generation" doc:"The generation of the stack's system profile in use. 0 when nothing is built."`
@@ -85,8 +92,9 @@ type Stack struct {
 	// Usage The whole stack's CPU and memory. Absent when it is not running.
 	Usage *services.Usage `json:"usage,omitempty" doc:"The whole stack's CPU and memory. Absent when it is not running."`
 
-	// WantRunning The operator last started it; the daemon starts it again after a reboot.
-	WantRunning bool `json:"want_running" doc:"The operator last started it; the daemon starts it again after a reboot."`
+	// WantRunning The operator last started it; the monitor starts it again
+	// when it stops. Each boot sets it to Autostart.
+	WantRunning bool `json:"want_running" doc:"The operator last started it, and the monitor starts it again when its container stops. Each boot of the host sets it to autostart."`
 }
 
 // StackUpdateState `needs_approval`: the fetched commit asks for new grants.
@@ -114,6 +122,9 @@ type StackAdd struct {
 
 // StackPatch is the body of patchStack. A field left out is not changed.
 type StackPatch struct {
+	// Autostart Start the stack after the host boots.
+	Autostart *bool `json:"autostart,omitempty" doc:"Start the stack after the host boots. Takes effect at the next boot."`
+
 	// Label The name the dashboard shows for the stack. Empty clears it.
 	Label *string `json:"label,omitempty" maxLength:"40" doc:"The name the dashboard shows for the stack: up to 40 characters. Empty clears it, and the stack's name is shown."`
 
@@ -197,6 +208,9 @@ type StackLock struct {
 
 // StackLockEntry is one stack in a StackLock.
 type StackLockEntry struct {
+	// Autostart The stack starts after the host boots, and after a restore.
+	Autostart *bool `json:"autostart,omitempty" doc:"The stack starts after the host boots, and after a restore. Absent (a lock written before autostart existed): want_running decides."`
+
 	// Manifest The validated `homelab-stack.json` of a commit, with defaults filled
 	// in. The system built is its `nixosModules.default` on the daemon's base module; manifests older than version 7 still parse but are not built.
 	Manifest StackManifest `json:"manifest"`

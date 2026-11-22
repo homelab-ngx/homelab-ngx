@@ -44,6 +44,7 @@
 
   const stateTone: Record<StackState, Tone> = {
     running: "ok",
+    frozen: "info",
     degraded: "warn",
     stopped: "idle",
     starting: "info",
@@ -51,6 +52,7 @@
   };
   const stateLabel: Record<StackState, string> = {
     running: "Running",
+    frozen: "Frozen",
     degraded: "Degraded",
     stopped: "Stopped",
     starting: "Starting",

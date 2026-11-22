@@ -172,7 +172,7 @@ func TestStartStartsTheUnitAndInterruptedIsClosed(t *testing.T) {
 
 type fakePower struct{ asked []power.PowerAction }
 
-func (f *fakePower) Request(_ context.Context, a power.PowerAction, force bool) error {
+func (f *fakePower) Request(_ context.Context, a power.PowerAction, force, _ bool) error {
 	if !force {
 		return errors.New("a reboot the operator asked for is forced")
 	}

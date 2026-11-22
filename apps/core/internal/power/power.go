@@ -24,13 +24,18 @@ import (
 
 // Stacks is the stacks the sequence stops (*stacks.Service).
 type Stacks interface {
-	// Freeze refuses new operations and boots; Thaw allows them again.
-	Freeze()
-	Thaw()
+	// BeginShutdown refuses new operations and boots; CancelShutdown allows them again.
+	BeginShutdown()
+	CancelShutdown()
 	// Running names the stacks whose container is up.
 	Running(ctx context.Context) ([]string, error)
-	// Halt stops a container without recording a stop.
+	// Halt stops a container without recording a stop. A frozen one is
+	// thawed first, so it stops cleanly.
 	Halt(ctx context.Context, name string) error
+	// Frozen names the frozen stacks: a shutdown loses what they hold.
+	Frozen(ctx context.Context) []string
+	// Kill ends a frozen stack's processes at once.
+	Kill(ctx context.Context, name string) error
 }
 
 // Mounts is the file systems the sequence unmounts (*storage.Service).
@@ -176,7 +181,9 @@ func (s *Service) prepare(ctx context.Context, start bool, a PowerAction) {
 	s.mu.Unlock()
 	if !already {
 		s.log.Warn("the host is shutting down", "action", a)
-		s.sequence(ctx, a)
+		// Nobody can be asked, so frozen stacks are thawed and stop
+		// cleanly.
+		s.sequence(ctx, a, false)
 	} else if done != nil {
 		// One the API started: the lock goes once it has finished.
 		select {
@@ -204,7 +211,7 @@ func (s *Service) callOff(ctx context.Context) {
 	if was {
 		s.log.Warn("the shutdown was called off; mounting the pools and starting the stacks again")
 		s.mounts.Restore(ctx)
-		s.stacks.Thaw()
+		s.stacks.CancelShutdown()
 	}
 	s.mu.Lock()
 	held := s.release != nil
@@ -215,8 +222,10 @@ func (s *Service) callOff(ctx context.Context) {
 }
 
 // Request starts a reboot or poweroff. Work it would interrupt refuses it
-// unless force. The answer comes at once; the sequence runs on.
-func (s *Service) Request(ctx context.Context, a PowerAction, force bool) error {
+// unless force. A frozen stack refuses it unless thaw (it is thawed and
+// stops cleanly) or force (it is killed, and what it held is lost). The
+// answer comes at once; the sequence runs on.
+func (s *Service) Request(ctx context.Context, a PowerAction, force, thaw bool) error {
 	if a != Reboot && a != PowerOff {
 		return httpx.BadRequest("invalid_action", "action must be reboot or poweroff")
 	}
@@ -225,6 +234,12 @@ func (s *Service) Request(ctx context.Context, a PowerAction, force bool) error 
 			return httpx.Conflict("busy", "%s would be interrupted; force to %s anyway", strings.Join(busy, ", "), a)
 		}
 	}
+	if !force && !thaw {
+		if frozen := s.stacks.Frozen(ctx); len(frozen) > 0 {
+			return httpx.Conflict("stacks_frozen", "frozen stacks lose what they hold: %s; thaw them first, or force to %s without thawing", strings.Join(frozen, ", "), a)
+		}
+	}
+	kill := force && !thaw
 	s.mu.Lock()
 	if s.running {
 		s.mu.Unlock()
@@ -235,12 +250,12 @@ func (s *Service) Request(ctx context.Context, a PowerAction, force bool) error 
 	s.seqDone = done
 	bg := s.ctx
 	s.mu.Unlock()
-	s.log.Warn("shutdown requested", "action", a, "force", force)
+	s.log.Warn("shutdown requested", "action", a, "force", force, "thaw", thaw)
 	go func() {
 		// The sequence runs here, before logind is asked: it holds even
 		// when the delay lock could not be taken. When logind then
 		// signals the shutdown, the lock goes at once.
-		ok := s.sequence(bg, a)
+		ok := s.sequence(bg, a, kill)
 		close(done)
 		if !ok {
 			return
@@ -265,10 +280,11 @@ func (s *Service) Busy(ctx context.Context) []string {
 }
 
 // sequence stops the stacks, then unmounts the pools and partitions, and
-// records the time for the next boot's countdown. It reports whether the
-// host may go down: always, unless ctx ended.
-func (s *Service) sequence(ctx context.Context, a PowerAction) bool {
-	s.stacks.Freeze()
+// records the time for the next boot's countdown. Frozen stacks are killed
+// when kill, and otherwise thawed by their halt. It reports whether the host
+// may go down: always, unless ctx ended.
+func (s *Service) sequence(ctx context.Context, a PowerAction, kill bool) bool {
+	s.stacks.BeginShutdown()
 	now := s.now()
 	s.mu.Lock()
 	s.st = PowerStatus{Action: a, Phase: PhaseStacks, StartedAt: &now, Steps: []PowerStep{}}
@@ -281,17 +297,31 @@ func (s *Service) sequence(ctx context.Context, a PowerAction) bool {
 	for _, n := range names {
 		s.add(PowerStep{Kind: StepStack, Name: n, State: StateWorking})
 	}
+	killed := map[string]bool{}
+	if kill {
+		for _, n := range s.stacks.Frozen(ctx) {
+			if err := s.stacks.Kill(ctx, n); err != nil {
+				s.log.Warn("frozen stack not killed; its halt thaws it", "stack", n, "error", err)
+				continue
+			}
+			killed[n] = true
+		}
+	}
 	var wg sync.WaitGroup
 	for _, n := range names {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := s.stacks.Halt(ctx, n); err != nil {
+			err := s.stacks.Halt(ctx, n)
+			switch {
+			case killed[n]:
+				s.set(StepStack, n, StateFailed, "frozen; killed without thawing")
+			case err != nil:
 				s.log.Warn("stack did not stop cleanly", "stack", n, "error", err)
 				s.set(StepStack, n, StateFailed, err.Error())
-				return
+			default:
+				s.set(StepStack, n, StateDone, "")
 			}
-			s.set(StepStack, n, StateDone, "")
 		}()
 	}
 	wg.Wait()
@@ -364,9 +394,13 @@ func (s *Service) Status(ctx context.Context) PowerStatus {
 	}
 	if st.Phase == PhaseIdle {
 		st.Busy = s.Busy(ctx)
+		st.Frozen = s.stacks.Frozen(ctx)
 	}
 	if st.Busy == nil {
 		st.Busy = []string{}
+	}
+	if st.Frozen == nil {
+		st.Frozen = []string{}
 	}
 	return st
 }

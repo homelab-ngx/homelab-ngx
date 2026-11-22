@@ -263,6 +263,32 @@ func stacksCmd() *cli.Command {
 			},
 			stackOpCmd("start", "Start a stack, building its approved commit first when nothing is built", nil),
 			stackOpCmd("stop", "Stop a stack and remove its routes and network rules", nil),
+			stackFreezeCmd("freeze", "Freeze a running stack: its processes stop where they are and keep their memory until it is thawed; a reboot loses it"),
+			stackFreezeCmd("thaw", "Thaw a frozen stack: its processes carry on where they stopped"),
+			{
+				Name:      "autostart",
+				Usage:     "Set whether a stack starts after the host boots",
+				ArgsUsage: "<name> on|off",
+				Action: func(c *cli.Context) error {
+					if err := requireArgs(c, 2, "homelab stacks autostart <name> on|off"); err != nil {
+						return err
+					}
+					var on bool
+					switch c.Args().Get(1) {
+					case "on":
+						on = true
+					case "off":
+					default:
+						return fmt.Errorf("autostart is on or off, not %q", c.Args().Get(1))
+					}
+					s, err := call[stacks.Stack](c.Context, http.MethodPatch, stackPath(c.Args().First(), ""),
+						stacks.StackPatch{Autostart: &on})
+					if err != nil {
+						return err
+					}
+					return printStack(c, *s)
+				},
+			},
 			stackOpCmd("update", "Build the approved commit and switch the stack to it; an unhealthy result is rolled back", nil),
 			withFlags(stackOpCmd("rollback", "Switch a stack back to an earlier generation (the one before the current one by default)",
 				func(c *cli.Context) any {
@@ -715,7 +741,29 @@ func stackOpCmd(verb, usage string, body func(*cli.Context) any) *cli.Command {
 	}
 }
 
+// stackFreezeCmd freezes or thaws a stack. Both answer at once.
+func stackFreezeCmd(verb, usage string) *cli.Command {
+	return &cli.Command{
+		Name:      verb,
+		Usage:     usage,
+		ArgsUsage: "<name>",
+		Action: func(c *cli.Context) error {
+			if err := requireArgs(c, 1, "homelab stacks "+verb+" <name>"); err != nil {
+				return err
+			}
+			s, err := call[stacks.Stack](c.Context, http.MethodPost, stackPath(c.Args().First(), "/"+verb), nil)
+			if err != nil {
+				return err
+			}
+			return emit(c, s, fmt.Sprintf("✔ %s is %s.", s.Name, stackState(*s)))
+		},
+	}
+}
+
 func stackState(s stacks.Stack) string {
+	if s.Frozen {
+		return "frozen"
+	}
 	if s.Running {
 		return "running"
 	}
@@ -788,6 +836,11 @@ func printStack(c *cli.Context, s stacks.Stack) error {
 		fmt.Printf("Nixpkgs:  %s, %s\n", spec, s.NixpkgsRev)
 	}
 	fmt.Printf("State:    %s\n", stackState(s))
+	if s.Autostart {
+		fmt.Println("At boot:  starts")
+	} else {
+		fmt.Println("At boot:  stays stopped")
+	}
 	if s.Address != "" {
 		fmt.Printf("Address:  %s\n", s.Address)
 	}

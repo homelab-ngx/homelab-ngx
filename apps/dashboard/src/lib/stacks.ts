@@ -58,7 +58,7 @@ export function removedGrants(s: Stack): Grant[] {
   return grants(s.approved?.manifest).filter((g) => !kept.has(g.kind + g.detail) && !(g.mount && mounts.has(g.mount)));
 }
 
-export type StackState = "running" | "degraded" | "stopped" | "starting" | "not-installed";
+export type StackState = "running" | "frozen" | "degraded" | "stopped" | "starting" | "not-installed";
 
 export interface Health {
   state: StackState;
@@ -78,6 +78,7 @@ export function health(s: Stack, services: ServiceInfo[]): Health {
   let state: StackState;
   if (s.generation === 0) state = "not-installed";
   else if (!s.running) state = s.want_running ? "starting" : "stopped";
+  else if (s.frozen) state = "frozen";
   else if (failed.length > 0 || active < services.length) state = "degraded";
   else state = "running";
   return { state, active, total: services.length, failed };

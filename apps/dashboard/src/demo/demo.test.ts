@@ -157,6 +157,16 @@ describe("the demo's API", () => {
     expect([after.booted, after.pending_reboot]).toEqual(["0.2.6", false]);
   });
 
+  it("asks to thaw a frozen stack before a reboot", async () => {
+    const d = demo();
+    const [first] = await d.get<Schema<"Stack">[]>("/stacks");
+    await d.post(`/stacks/${first!.name}/freeze`);
+    expect((await d.get<Schema<"PowerStatus">>("/system/power")).frozen).toEqual([first!.name]);
+    expect((await d.post("/system/power", { action: "reboot" })).status).toBe(409);
+    expect((await d.post("/system/power", { action: "reboot", thaw: true })).status).toBe(202);
+    expect((await d.get<Schema<"Stack">>(`/stacks/${first!.name}`)).frozen).toBe(false);
+  });
+
   it("stops and starts a stack and its units", async () => {
     const d = demo();
     await d.post("/stacks/git/stop");

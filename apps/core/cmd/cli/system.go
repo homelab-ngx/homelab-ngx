@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/urfave/cli/v2"
@@ -76,14 +77,20 @@ func powerCmd(a power.PowerAction, usage string, aliases []string) *cli.Command 
 		Usage:   usage,
 		Flags: []cli.Flag{
 			&cli.BoolFlag{Name: "yes", Usage: "required: confirm it"},
-			&cli.BoolFlag{Name: "force", Usage: "go ahead even when it interrupts stack operations, an update or backups"},
+			&cli.BoolFlag{Name: "force", Usage: "go ahead even when it interrupts stack operations, an update or backups; frozen stacks are killed and lose what they held"},
+			&cli.BoolFlag{Name: "thaw", Usage: "thaw the frozen stacks, so they stop cleanly"},
 			&cli.BoolFlag{Name: "no-wait", Usage: "return once it has started, without following it"},
 		},
 		Action: func(c *cli.Context) error {
 			if !c.Bool("yes") {
 				return fmt.Errorf("a %s takes every service down; pass --yes to confirm", a)
 			}
-			req := power.PowerRequest{Action: a, Force: c.Bool("force")}
+			req := power.PowerRequest{Action: a, Force: c.Bool("force"), Thaw: c.Bool("thaw")}
+			if !req.Force && !req.Thaw {
+				if err := askFrozen(c, &req); err != nil {
+					return err
+				}
+			}
 			if _, err := call[power.PowerStatus](c.Context, http.MethodPost, "/system/power", req); err != nil {
 				return err
 			}
@@ -92,6 +99,44 @@ func powerCmd(a power.PowerAction, usage string, aliases []string) *cli.Command 
 			}
 			return followPower(c, a)
 		},
+	}
+}
+
+// stdinIsTerminal reports whether there is someone to ask; a seam for tests.
+var stdinIsTerminal = func() bool {
+	fi, err := os.Stdin.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+}
+
+// askFrozen asks what to do with the frozen stacks a shutdown would lose:
+// thaw them, cancel, or go on and kill them. Without a terminal to ask on it
+// names them and the flags.
+func askFrozen(c *cli.Context, req *power.PowerRequest) error {
+	st, err := call[power.PowerStatus](c.Context, http.MethodGet, "/system/power", nil)
+	if err != nil || len(st.Frozen) == 0 {
+		return nil // the daemon refuses with stacks_frozen if one froze since
+	}
+	names := strings.Join(st.Frozen, ", ")
+	refuse := fmt.Errorf("frozen stacks lose what they hold at a %s: %s. Pass --thaw to stop them cleanly, or --force to kill them", req.Action, names)
+	if !stdinIsTerminal() {
+		return refuse
+	}
+	fmt.Fprintf(os.Stderr, "Frozen stacks lose what they hold at a %s: %s.\n", req.Action, names)
+	for {
+		ans, err := readLine("[t]haw them and go on, [c]ancel, or [k]ill them and go on? ")
+		if err != nil {
+			return refuse
+		}
+		switch strings.ToLower(ans) {
+		case "t", "thaw":
+			req.Thaw = true
+			return nil
+		case "k", "kill":
+			req.Force = true
+			return nil
+		case "c", "cancel", "":
+			return fmt.Errorf("the %s was cancelled", req.Action)
+		}
 	}
 }
 

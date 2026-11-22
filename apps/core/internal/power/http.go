@@ -31,11 +31,11 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "requestPower", Method: http.MethodPost, Path: "/system/power", Tags: tags,
 		Summary:       "Reboot or power off the host.",
-		Description:   "Stops the running stacks, unmounts the pools and partitions, then reboots or powers off. Nothing is recorded: the next boot starts the same stacks and mounts the same pools. Refused while a stack operation, an update or a backup runs, unless force. Follow it in getPower.",
+		Description:   "Stops the running stacks, unmounts the pools and partitions, then reboots or powers off. The next boot mounts the same pools and starts the stacks set to autostart. Refused while a stack operation, an update or a backup runs, unless force. Refused with stacks_frozen while a stack is frozen, unless thaw (it stops cleanly) or force (it is killed). Follow it in getPower.",
 		DefaultStatus: http.StatusAccepted,
 		Errors:        []int{http.StatusBadRequest, http.StatusConflict},
 	}, func(ctx context.Context, in *requestIn) (*statusOut, error) {
-		if err := h.svc.Request(ctx, in.Body.Action, in.Body.Force); err != nil {
+		if err := h.svc.Request(ctx, in.Body.Action, in.Body.Force, in.Body.Thaw); err != nil {
 			return nil, err
 		}
 		return &statusOut{Body: h.svc.Status(ctx)}, nil

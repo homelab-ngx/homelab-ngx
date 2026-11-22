@@ -6,6 +6,7 @@ const status = (p: Partial<PowerStatus> = {}): PowerStatus => ({
   action: "reboot",
   steps: [{ kind: "stack", name: "media", state: "working" }],
   busy: [],
+  frozen: [],
   boot_id: "boot-1",
   expected_seconds: 90,
   ...p,

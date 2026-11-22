@@ -57,6 +57,7 @@ describe("health", () => {
     expect(health(stack({ running: false, want_running: false }), []).state).toBe("stopped");
     expect(health(stack({ running: false }), []).state).toBe("starting");
     expect(health(stack({ generation: 0 }), []).state).toBe("not-installed");
+    expect(health(stack({ frozen: true }), []).state).toBe("frozen");
   });
 });
 

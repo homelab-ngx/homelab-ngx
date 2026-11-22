@@ -37,6 +37,7 @@ type fakeHost struct {
 	noStop    bool // systemctl stop fails and the container keeps running
 	sameBuild bool // every commit builds the same system
 	orphan    bool // a container is registered although its unit is gone
+	frozen    bool // the container's scope is frozen
 	sent      []notifications.Message
 	problems  map[string]string // open problems by key
 }
@@ -179,6 +180,8 @@ func newFakeHost() *fakeHost {
 	}))
 	h.On("systemctl", "stop").Do(locked(func(cmdrunner.Cmd) (cmdrunner.Result, error) {
 		switch {
+		case h.frozen:
+			return fail(1, "Job for homelab-stack-immich.service timed out.")
 		case h.noStop:
 			return fail(1, "Job for homelab-stack-immich.service canceled.")
 		case !h.running:
@@ -194,7 +197,29 @@ func newFakeHost() *fakeHost {
 		}
 		return fail(3, "inactive\n")
 	}))
+	h.On("systemctl", "show", "--property=FreezerState").Do(locked(func(cmdrunner.Cmd) (cmdrunner.Result, error) {
+		if h.frozen {
+			return ok("frozen\n")
+		}
+		return ok("running\n")
+	}))
+	h.On("systemctl", "freeze").Do(locked(func(cmdrunner.Cmd) (cmdrunner.Result, error) { h.frozen = true; return ok("") }))
+	h.On("systemctl", "thaw").Do(locked(func(cmdrunner.Cmd) (cmdrunner.Result, error) { h.frozen = false; return ok("") }))
+	h.On("systemctl", "kill").Do(locked(func(cmdrunner.Cmd) (cmdrunner.Result, error) {
+		h.frozen, h.running = false, false
+		return ok("")
+	}))
+	// A call into a frozen container waits on its bus until it times out.
+	h.On("systemctl", "--machine=immich").Do(locked(func(cmdrunner.Cmd) (cmdrunner.Result, error) {
+		if h.frozen {
+			return fail(1, "Failed to connect to bus: Connection timed out")
+		}
+		return ok("")
+	}))
 	h.On("systemctl", "--machine=immich", "is-active").Do(locked(func(cmdrunner.Cmd) (cmdrunner.Result, error) {
+		if h.frozen {
+			return fail(1, "Failed to connect to bus: Connection timed out")
+		}
 		if !h.running || h.unhealthy[h.currentSystem()] {
 			return fail(3, "failed\n")
 		}

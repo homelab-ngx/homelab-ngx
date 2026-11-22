@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"homelab-ngx.com/core/internal/httpx"
@@ -58,7 +59,7 @@ type operation struct {
 func (s *Service) begin(name, kind string) (*operation, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.frozen {
+	if s.goingDown {
 		return nil, shuttingDown()
 	}
 	if o := s.ops[name]; o != nil && o.finished.IsZero() {
@@ -147,6 +148,9 @@ func notApproved(name string) *httpx.Problem {
 // commit first when nothing is built.
 func (s *Service) Start(ctx context.Context, name string) (Stack, error) {
 	return s.launch(ctx, name, opStart, func(r store.Stack) error {
+		if s.frozen(ctx, name) {
+			return stackFrozen(name)
+		}
 		if r.Generation == 0 && r.ApprovedRev == "" {
 			return notApproved(name)
 		}
@@ -167,6 +171,9 @@ func (s *Service) Stop(ctx context.Context, name string) (Stack, error) {
 // unhealthy result is rolled back.
 func (s *Service) Update(ctx context.Context, name string) (Stack, error) {
 	return s.launch(ctx, name, opUpdate, func(r store.Stack) error {
+		if s.frozen(ctx, name) {
+			return stackFrozen(name)
+		}
 		if r.ApprovedRev == "" {
 			return notApproved(name)
 		}
@@ -186,6 +193,9 @@ func (s *Service) Update(ctx context.Context, name string) (Stack, error) {
 // the current one when to is 0.
 func (s *Service) Rollback(ctx context.Context, name string, to int64) (Stack, error) {
 	return s.launch(ctx, name, opRollback, func(r store.Stack) error {
+		if s.frozen(ctx, name) {
+			return stackFrozen(name)
+		}
 		_, err := s.target(ctx, r, to)
 		return err
 	}, func(ctx context.Context, o *operation) error { return s.rollback(ctx, o, name, to) })
@@ -215,6 +225,41 @@ func (s *Service) target(ctx context.Context, r store.Stack, to int64) (store.St
 	return g, nil
 }
 
+// metaBoot is the boot the stacks' autostart was last applied in.
+const metaBoot = "stacks_boot_id"
+
+// applyAutostart, on the daemon's first start in a boot, sets each stack to
+// run when it starts at boot. A daemon restarted within the same boot (an
+// update of the core) leaves the stacks as the operator left them, a frozen
+// one frozen.
+func (s *Service) applyAutostart(ctx context.Context) {
+	boot := s.bootID()
+	if boot == "" {
+		return
+	}
+	last, _, err := s.st.Meta(ctx, metaBoot)
+	if err != nil {
+		s.log.Warn("cannot read the boot autostart was applied in", "error", err)
+		return
+	}
+	if last == boot {
+		return
+	}
+	if err := s.st.Queries().ApplyStackAutostart(ctx); err != nil {
+		s.log.Warn("cannot apply the stacks' autostart", "error", err)
+		return
+	}
+	if err := s.st.SetMeta(ctx, metaBoot, boot); err != nil {
+		s.log.Warn("cannot record the boot autostart was applied in", "error", err)
+	}
+	s.log.Info("applied the stacks' autostart for this boot")
+}
+
+func readBootID() string {
+	b, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
+	return strings.TrimSpace(string(b))
+}
+
 // UpdateAll updates, one after another in the background, every installed
 // stack whose approved commit is not the one it runs and whose required
 // variables all have values. A stack waiting for approval has an older
@@ -233,7 +278,7 @@ func (s *Service) UpdateAll(ctx context.Context) ([]string, error) {
 		if err != nil || g == nil || !pending(r, *g) {
 			continue
 		}
-		if s.variablesGate(r) != nil {
+		if s.variablesGate(r) != nil || s.frozen(ctx, r.Name) {
 			continue
 		}
 		queued = append(queued, r.Name)
@@ -297,6 +342,7 @@ func (s *Service) StartWanted(ctx context.Context) {
 	if err := s.st.Queries().InterruptStackUpdates(ctx, s.now().UnixMilli()); err != nil {
 		s.log.Warn("cannot close interrupted stack attempts", "error", err)
 	}
+	s.applyAutostart(ctx)
 	// Before any stack is started or connected; a stack that cannot have
 	// its link to itself fails at its own start (prepare).
 	if err := s.ownLinks(ctx); err != nil {
@@ -900,6 +946,12 @@ func (s *Service) monitorOnce(ctx context.Context, fails map[string]int) {
 	for _, r := range rows {
 		name, key := r.Name, "stack:"+r.Name
 		if r.WantRunning == 0 {
+			delete(fails, name)
+			continue
+		}
+		// A frozen stack answers nothing until it is thawed; that is the
+		// operator's choice, not a fault.
+		if s.frozen(ctx, name) {
 			delete(fails, name)
 			continue
 		}

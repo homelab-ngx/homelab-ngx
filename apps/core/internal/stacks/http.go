@@ -143,11 +143,14 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeRead, op("getStack", http.MethodGet, "/stacks/{name}",
 		"One stack.", 0), stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Get(ctx, n) }))
 	httpx.Register(a, httpx.ScopeOperator, op("patchStack", http.MethodPatch, "/stacks/{name}",
-		"Change what the operator sets on a stack: its label, and the nixpkgs a version 7 stack is built with.", 0),
+		"Change what the operator sets on a stack: its label, whether it starts after the host boots, and the nixpkgs a version 7 stack is built with.", 0),
 		func(ctx context.Context, in *patchIn) (*stackBody, error) {
 			s, err := h.svc.Get(ctx, in.Name)
 			if err == nil && in.Body.Label != nil {
 				s, err = h.svc.SetLabel(ctx, in.Name, *in.Body.Label)
+			}
+			if err == nil && in.Body.Autostart != nil {
+				s, err = h.svc.SetAutostart(ctx, in.Name, *in.Body.Autostart)
 			}
 			if err == nil && in.Body.Nixpkgs != nil {
 				s, err = h.svc.SetNixpkgs(ctx, in.Name, *in.Body.Nixpkgs, in.Body.AllowDowngrade)
@@ -199,6 +202,12 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeControl, op("stopStack", http.MethodPost, "/stacks/{name}/stop",
 		"Stop a stack and remove its routes and network rules.", http.StatusAccepted),
 		stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Stop(ctx, n) }))
+	httpx.Register(a, httpx.ScopeOperator, op("freezeStack", http.MethodPost, "/stacks/{name}/freeze",
+		"Freeze a running stack: its processes stop where they are and keep their memory, and its addresses stop answering until it is thawed. A reboot loses what they held. Refused with stack_not_running, and with busy while an operation runs.", 0),
+		stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Freeze(ctx, n) }))
+	httpx.Register(a, httpx.ScopeOperator, op("thawStack", http.MethodPost, "/stacks/{name}/thaw",
+		"Thaw a frozen stack: its processes carry on where they stopped. A stack that is not frozen is left as it is.", 0),
+		stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Thaw(ctx, n) }))
 	httpx.Register(a, httpx.ScopeOperator, op("updateStack", http.MethodPost, "/stacks/{name}/update",
 		"Build the approved commit and switch the stack to it.", http.StatusAccepted),
 		stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Update(ctx, n) }))

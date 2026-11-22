@@ -72,6 +72,14 @@ _Avoid_: API key, secret (a stack variable is something else)
 A value a stack gets from the host instead of its repo. The manifest (version 5) declares each one with a kind: env (a plain value), secret (write-only, no default), path (a host directory the operator picks, bound at the variable's mount) or, from version 8, address (see Address variable). Each is required or optional, and env and path may have a default. The operator may add env variables of their own (plain unless marked secret). The value is the stored one, else the default, else unset; an install or update waits until every required one has a value. Stored age-encrypted in the stack's state directory; env and secret values are delivered at `/run/secrets/<NAME>` and, when env-safe, in `/run/secrets/env`, and a path as a bind.
 _Avoid_: stack secret key, env var (only the env-safe ones reach `env`)
 
+**Frozen stack**:
+A running stack whose processes the kernel's cgroup freezer holds where they are: they keep their memory and use no CPU, and its addresses do not answer until it is thawed. Nothing is stored; a reboot loses what it held, so a reboot from the dashboard or CLI asks to thaw it first.
+_Avoid_: paused, suspended, stopped
+
+**Autostart**:
+Whether a stack starts after the host boots. At the daemon's first start in a boot each stack is set to run or not by it; a restart of the daemon alone changes nothing.
+_Avoid_: start on boot, enabled
+
 **Added folder**:
 A host folder the operator binds into an installed stack at a mount of their choosing, read-only unless writes are allowed, on top of what its manifest asks for. Not a grant: nothing in the repo changes and nothing is approved. Stored with the stack's variables; one whose mount the manifest comes to claim is not bound.
 _Avoid_: extra grant, custom path, volume
@@ -197,7 +205,7 @@ The host's operating system as one built, read-only disk image (Arch, made with 
 _Avoid_: firmware, appliance
 
 **Power action**:
-A reboot or poweroff of the host. Before any shutdown that goes through logind (the dashboard, the CLI, `shutdown -r`, the power button) the daemon stops the running stacks, then unmounts the pools and partitions. It records nothing, so the next boot starts the same stacks and mounts the same pools.
+A reboot or poweroff of the host. Before any shutdown that goes through logind (the dashboard, the CLI, `shutdown -r`, the power button) the daemon stops the running stacks, then unmounts the pools and partitions. It records nothing: the next boot mounts the same pools and starts the stacks set to autostart. A frozen stack is thawed so it stops cleanly, unless the operator chose to reboot without thawing; then it is killed.
 _Avoid_: restart (that is a stack's or a unit's), shutdown sequence
 
 **Core extension**:

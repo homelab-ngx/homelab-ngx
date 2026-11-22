@@ -38,12 +38,18 @@ type fakeStacks struct {
 	running []string
 	failing string
 	gate    chan struct{} // when set, a halt waits for it
+	frozen  []string
 }
 
-func (f *fakeStacks) Freeze() { f.j.add("freeze") }
-func (f *fakeStacks) Thaw()   { f.j.add("thaw") }
+func (f *fakeStacks) BeginShutdown()  { f.j.add("freeze") }
+func (f *fakeStacks) CancelShutdown() { f.j.add("thaw") }
 func (f *fakeStacks) Running(context.Context) ([]string, error) {
 	return f.running, nil
+}
+func (f *fakeStacks) Frozen(context.Context) []string { return f.frozen }
+func (f *fakeStacks) Kill(_ context.Context, name string) error {
+	f.j.add("kill " + name)
+	return nil
 }
 func (f *fakeStacks) Halt(_ context.Context, name string) error {
 	if f.gate != nil {
@@ -160,7 +166,7 @@ func (r *rig) wait(t *testing.T) PowerAction {
 
 func TestRequestStopsStacksThenUnmountsThenShutsDown(t *testing.T) {
 	r := newRig(t)
-	if err := r.svc.Request(context.Background(), Reboot, false); err != nil {
+	if err := r.svc.Request(context.Background(), Reboot, false, false); err != nil {
 		t.Fatal(err)
 	}
 	if a := r.wait(t); a != Reboot {
@@ -194,7 +200,7 @@ func TestRequestStopsStacksThenUnmountsThenShutsDown(t *testing.T) {
 func TestBusyWorkRefusesUnlessForced(t *testing.T) {
 	r := newRig(t)
 	r.busy = []string{"stack immich: update (building)"}
-	err := r.svc.Request(context.Background(), PowerOff, false)
+	err := r.svc.Request(context.Background(), PowerOff, false, false)
 	var p *httpx.Problem
 	if !errors.As(err, &p) || p.Status != 409 || p.Code != "busy" || !strings.Contains(p.Detail, "immich") {
 		t.Fatalf("err = %v", err)
@@ -205,15 +211,69 @@ func TestBusyWorkRefusesUnlessForced(t *testing.T) {
 	if st := r.svc.Status(context.Background()); st.Phase != PhaseIdle || len(st.Busy) != 1 {
 		t.Fatalf("status %+v", st)
 	}
-	if err := r.svc.Request(context.Background(), PowerOff, true); err != nil {
+	if err := r.svc.Request(context.Background(), PowerOff, true, false); err != nil {
 		t.Fatal(err)
 	}
 	if a := r.wait(t); a != PowerOff {
 		t.Fatalf("asked logind for %s", a)
 	}
 	// A second request while one runs is refused.
-	if err := r.svc.Request(context.Background(), Reboot, true); !errors.As(err, &p) || p.Code != "shutting_down" {
+	if err := r.svc.Request(context.Background(), Reboot, true, false); !errors.As(err, &p) || p.Code != "shutting_down" {
 		t.Fatalf("second request: %v", err)
+	}
+}
+
+func TestFrozenStacksRefuseUnlessThawedOrForced(t *testing.T) {
+	r := newRig(t)
+	r.stacks.running = []string{"immich", "players"}
+	r.stacks.frozen = []string{"immich"}
+	err := r.svc.Request(context.Background(), Reboot, false, false)
+	var p *httpx.Problem
+	if !errors.As(err, &p) || p.Status != 409 || p.Code != "stacks_frozen" || !strings.Contains(p.Detail, "immich") {
+		t.Fatalf("err = %v", err)
+	}
+	if got := r.j.list(); len(got) != 0 {
+		t.Fatalf("a refused request did something: %v", got)
+	}
+	if st := r.svc.Status(context.Background()); len(st.Frozen) != 1 || st.Frozen[0] != "immich" {
+		t.Fatalf("status frozen %v", st.Frozen)
+	}
+	// thaw: nothing is killed; the halt thaws the stack.
+	if err := r.svc.Request(context.Background(), Reboot, false, true); err != nil {
+		t.Fatal(err)
+	}
+	r.wait(t)
+	for _, e := range r.j.list() {
+		if strings.HasPrefix(e, "kill") {
+			t.Fatalf("thaw killed a stack: %v", r.j.list())
+		}
+	}
+	for _, st := range r.svc.Status(context.Background()).Steps {
+		if st.Kind == StepStack && st.State != StateDone {
+			t.Fatalf("step %+v", st)
+		}
+	}
+}
+
+func TestForceKillsFrozenStacks(t *testing.T) {
+	r := newRig(t)
+	r.stacks.running = []string{"immich", "players"}
+	r.stacks.frozen = []string{"immich"}
+	if err := r.svc.Request(context.Background(), PowerOff, true, false); err != nil {
+		t.Fatal(err)
+	}
+	r.wait(t)
+	got := strings.Join(r.j.list(), ",")
+	if !strings.Contains(got, "kill immich") || strings.Contains(got, "kill players") ||
+		strings.Index(got, "kill immich") > strings.Index(got, "halt immich") {
+		t.Fatalf("journal %s", got)
+	}
+	states := map[string]PowerStepState{}
+	for _, st := range r.svc.Status(context.Background()).Steps {
+		states[st.Name] = st.State
+	}
+	if states["immich"] != StateFailed || states["players"] != StateDone {
+		t.Fatalf("states %v", states)
 	}
 }
 
@@ -221,7 +281,7 @@ func TestFailuresAreShownAndTheShutdownGoesOn(t *testing.T) {
 	r := newRig(t)
 	r.stacks.failing = "players"
 	r.mounts.busy = "/var/mnt/media"
-	if err := r.svc.Request(context.Background(), Reboot, false); err != nil {
+	if err := r.svc.Request(context.Background(), Reboot, false, false); err != nil {
 		t.Fatal(err)
 	}
 	r.wait(t)
@@ -247,7 +307,7 @@ func TestSystemctlWhenLogindRefuses(t *testing.T) {
 		close(done)
 		return cmdrunner.Result{}, nil
 	})
-	if err := r.svc.Request(context.Background(), Reboot, false); err != nil {
+	if err := r.svc.Request(context.Background(), Reboot, false, false); err != nil {
 		t.Fatal(err)
 	}
 	select {
@@ -285,7 +345,7 @@ func TestARequestedShutdownLetsTheLockGoAtOnce(t *testing.T) {
 	r := newRig(t)
 	ctx := context.Background()
 	r.svc.inhibit(ctx)
-	if err := r.svc.Request(ctx, Reboot, false); err != nil {
+	if err := r.svc.Request(ctx, Reboot, false, false); err != nil {
 		t.Fatal(err)
 	}
 	r.wait(t)
@@ -362,7 +422,7 @@ func TestTheLockWaitsForASequenceTheAPIStarted(t *testing.T) {
 	r.svc.inhibit(ctx)
 	gate := make(chan struct{})
 	r.stacks.gate = gate
-	if err := r.svc.Request(ctx, Reboot, false); err != nil {
+	if err := r.svc.Request(ctx, Reboot, false, false); err != nil {
 		t.Fatal(err)
 	}
 	released := make(chan struct{})

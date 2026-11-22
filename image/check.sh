@@ -23,13 +23,17 @@
 #   6. a stack (the drafts template) is built by Nix and serves a page from
 #      the pool at its route under the domain, and reads a host folder added
 #      read-only, which it cannot write. It is forked into a draft, and a
-#      file saved there is an update it runs. A second pool is made from
+#      file saved there is an update it runs. Frozen, its processes stay
+#      where they are and its route stops answering; thawed, the same
+#      processes serve it again. A second pool is made from
 #      three more disks through the daemon, grown with a disk that held
 #      ext4, shrunk by one disk with its files kept, and deleted; the pool
 #      the stack uses is not
 #   7. host settings: a VPN device, a tunnel route, the firewall, host name
 #      and time zone take effect without a rebuild
-#   8. all of it holds after a reboot. The stack is checked layer by
+#   8. all of it holds after a reboot. A frozen stack refuses a reboot
+#      from the API; the reboot thaws it, and it starts again at boot.
+#      The stack is checked layer by
 #      layer each time: the daemon has it running, its link has the host's
 #      address, it answers on its own address, its route is served
 #   9. the next version is published on a release server (signed with a key
@@ -607,6 +611,28 @@ stackup() {
 # approved commit), a file saved in the draft arrives as an approved update,
 # and the stack runs that commit after the update. A version from before
 # forks has no such operation, and nothing is checked.
+# stackfreeze: the stack frozen keeps its processes and stops answering; the
+# daemon and its service list still answer at once; thawed, the same
+# processes serve the page. False on a version without freezing.
+stackfreeze() {
+  local leader st t0
+  api http://x/api/stacks/site | jq -e 'has("frozen")' >/dev/null || return 1
+  leader=$(vssh "machinectl show site -p Leader --value")
+  st=$(post stacks/site/freeze '{}') || die "the freeze was refused: $st"
+  jq -e '.frozen and .running' <<<"$st" >/dev/null || die "the stack is not frozen after a freeze: $(jq -c '{frozen, running}' <<<"$st")"
+  [ "$(vssh 'systemctl show -p FreezerState --value site.scope')" = frozen ] || die "the stack's scope is not frozen"
+  ! vssh "curl -skf --max-time 5 --resolve site.$domain:443:127.0.0.1 https://site.$domain/" >/dev/null 2>&1 ||
+    die "the frozen stack still answers"
+  t0=$(date +%s)
+  api http://x/api/stacks/site | jq -e .frozen >/dev/null || die "the stack does not show as frozen"
+  api http://x/api/services >/dev/null || die "the service list fails while a stack is frozen"
+  [ $(($(date +%s) - t0)) -le 5 ] || die "the API took $(($(date +%s) - t0))s with a frozen stack"
+  [ "$(code POST system/power '{"action":"reboot"}')" = 409 ] || die "a reboot was not refused with a frozen stack"
+  post stacks/site/thaw '{}' | jq -e '.frozen | not' >/dev/null || die "the stack is still frozen after a thaw"
+  https site / | grep -q image-check || die "the thawed stack does not serve its page"
+  [ "$(vssh "machinectl show site -p Leader --value")" = "$leader" ] || die "the stack restarted over the freeze"
+}
+
 stackfork() {
   local d s rev w=0
   [ "$(api -X POST http://x/api/stacks/nope/fork 2>/dev/null | jq -r .code)" = unknown_stack ] || return 1
@@ -1006,6 +1032,7 @@ fi
 ok "stack site built, serving the page from the pool at https://site.$domain$refused$madefolder$added"
 stackfork "$rev" || true
 https site / | grep -q image-check || die "the stack's route is not served after the fork"
+stackfreeze && ok "stack site frozen with its processes kept, its route silent and the API answering; thawed, the same processes serve it"
 pool_lifecycle
 
 step "7. host settings: VPN, tunnel, firewall, name and time zone"
@@ -1024,13 +1051,22 @@ hostcheck
 ok "VPN devices$made, tunnel route, firewall, host name and time zone in place"
 
 step "8. after a reboot"
+froze=""
+if api http://x/api/stacks/site | jq -e 'has("frozen")' >/dev/null; then
+  post stacks/site/freeze '{}' >/dev/null || die "the freeze before the reboot was refused"
+  [ "$(post system/power '{"action":"reboot"}' | jq -r .code)" = stacks_frozen ] ||
+    die "a reboot from the API was not refused with the stack frozen"
+  froze="; frozen before it, thawed by it and started at boot"
+fi
 reboot_vm
 booted "$version"
 hostcheck
 [ -z "$part" ] || [ "$(vssh "cat $part/file")" = kept ] || die "the partition is not mounted at $part after a reboot"
 [ "$(vssh 'cat /etc/machine-id')" = "$installed" ] || die "the machine ID changed over a reboot"
 stackup 0 "at the end of the step"
-ok "everything still in place, the machine ID too (the stack running ${sitewait}s after the daemon answered)"
+[ -z "$froze" ] || [ "$(api http://x/api/stacks/site | jq -r '"\(.frozen) \(.autostart)"')" = "false true" ] ||
+  die "the stack after the reboot: $(api http://x/api/stacks/site | jq -c '{frozen, autostart}')"
+ok "everything still in place, the machine ID too (the stack running ${sitewait}s after the daemon answered$froze)"
 
 if [ -n "$next" ]; then
   step "9. $next downloads from a release server, then a core update to it through the API"

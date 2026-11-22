@@ -35,6 +35,13 @@ UPDATE stacks SET nixpkgs = sqlc.arg(nixpkgs), nixpkgs_rev = sqlc.arg(nixpkgs_re
 -- name: SetStackNixpkgs :exec
 UPDATE stacks SET nixpkgs_rev = sqlc.arg(nixpkgs_rev) WHERE name = sqlc.arg(name);
 
+-- name: SetStackAutostart :exec
+UPDATE stacks SET autostart = sqlc.arg(autostart) WHERE name = sqlc.arg(name);
+
+-- At a new boot each stack wants to run when it starts at boot.
+-- name: ApplyStackAutostart :exec
+UPDATE stacks SET want_running = autostart;
+
 -- name: SetStackLabel :exec
 UPDATE stacks SET label = sqlc.arg(label) WHERE name = sqlc.arg(name);
 
@@ -88,9 +95,9 @@ UPDATE stacks SET op_kind = '', op_step = '', op_prev = '', op_started_at = 0 WH
 -- one, and the subnet it had is kept.
 -- name: RestoreStack :exec
 INSERT INTO stacks (name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at,
-    approved_rev, approved_url, approved_manifest, approved_at, want_running, subnet, label, nixpkgs_rev, nixpkgs)
+    approved_rev, approved_url, approved_manifest, approved_at, want_running, autostart, subnet, label, nixpkgs_rev, nixpkgs)
 VALUES (sqlc.arg(name), sqlc.arg(source), sqlc.arg(now), sqlc.arg(rev), sqlc.arg(url), sqlc.arg(manifest), sqlc.arg(now),
-    sqlc.arg(rev), sqlc.arg(url), sqlc.arg(manifest), sqlc.arg(now), sqlc.arg(want_running), sqlc.arg(subnet), sqlc.arg(label), sqlc.arg(nixpkgs_rev), sqlc.arg(nixpkgs));
+    sqlc.arg(rev), sqlc.arg(url), sqlc.arg(manifest), sqlc.arg(now), sqlc.arg(want_running), sqlc.arg(autostart), sqlc.arg(subnet), sqlc.arg(label), sqlc.arg(nixpkgs_rev), sqlc.arg(nixpkgs));
 
 -- name: SetStackFetchedInfo :exec
 UPDATE stacks SET fetched_info = sqlc.arg(info) WHERE name = sqlc.arg(name);

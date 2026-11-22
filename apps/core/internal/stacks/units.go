@@ -60,7 +60,13 @@ func (s *Service) Units(ctx context.Context) []Unit {
 		}
 		state := map[string]Unit{}
 		if s.isRunning(ctx, r.Name) {
-			state = s.unitStates(ctx, r.Name, m.Health.Units)
+			if s.frozen(ctx, r.Name) {
+				for _, u := range m.Health.Units {
+					state[u] = Unit{ActiveState: "active", SubState: "frozen"}
+				}
+			} else {
+				state = s.unitStates(ctx, r.Name, m.Health.Units)
+			}
 		}
 		for _, u := range m.Health.Units {
 			st, ok := state[u]
@@ -154,6 +160,9 @@ func (s *Service) UnitAction(ctx context.Context, name, action string) error {
 	}
 	if !s.isRunning(ctx, stack) {
 		return httpx.Conflict("stack_stopped", "stack %q is not running; start the stack first", stack)
+	}
+	if s.frozen(ctx, stack) {
+		return stackFrozen(stack)
 	}
 	if _, err := s.run(ctx, 5*time.Minute, "systemctl", "--machine="+stack, action, "--", unit); err != nil {
 		return fmt.Errorf("%s %s in stack %s: %w", action, unit, stack, err)

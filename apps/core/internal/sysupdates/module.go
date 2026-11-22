@@ -41,7 +41,7 @@ type Module struct {
 // Power reboots the host the way every shutdown goes: the stacks stop and
 // the pools unmount first (*power.Service).
 type Power interface {
-	Request(ctx context.Context, a power.PowerAction, force bool) error
+	Request(ctx context.Context, a power.PowerAction, force, thaw bool) error
 }
 
 // SetPower makes bootImage's reboot go through p.
@@ -75,7 +75,9 @@ func (m *Module) Start(ctx context.Context) {
 func (m *Module) reboot(ctx context.Context) error {
 	log.Warn("reboot requested")
 	if m.power != nil {
-		return m.power.Request(context.WithoutCancel(ctx), power.Reboot, true)
+		// Frozen stacks are thawed and stop cleanly: booting a new image
+		// is not a reason to lose their data.
+		return m.power.Request(context.WithoutCancel(ctx), power.Reboot, true, true)
 	}
 	_, err := m.r.Run(ctx, cmdrunner.Cmd{Module: "sysupdates", Name: "systemctl", Args: []string{"reboot"}})
 	return err

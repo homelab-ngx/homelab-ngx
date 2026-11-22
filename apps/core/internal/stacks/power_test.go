@@ -41,16 +41,16 @@ func TestAFrozenServiceStartsNothing(t *testing.T) {
 	t.Parallel()
 	svc, _, _ := newRuntime(t)
 	ctx := context.Background()
-	svc.Freeze()
+	svc.BeginShutdown()
 	_, err := svc.Start(ctx, "immich")
 	var p *httpx.Problem
 	if !errors.As(err, &p) || p.Code != "shutting_down" {
-		t.Fatalf("start while frozen: %v", err)
+		t.Fatalf("start while shutting down: %v", err)
 	}
 	if err := svc.boot(ctx, "immich", "", Manifest{}); !errors.As(err, &p) || p.Code != "shutting_down" {
-		t.Fatalf("boot while frozen: %v", err)
+		t.Fatalf("boot while shutting down: %v", err)
 	}
-	svc.Thaw()
+	svc.CancelShutdown()
 	finished(t, svc, svc.Start)
 }
 

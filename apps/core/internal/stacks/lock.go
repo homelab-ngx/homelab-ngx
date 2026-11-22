@@ -34,6 +34,7 @@ type Lock struct {
 // source, and is added again.
 type LockedStack struct {
 	Name        string          `json:"name"`
+	Autostart   *bool           `json:"autostart,omitempty"`
 	Label       string          `json:"label,omitempty"`
 	NixpkgsRev  string          `json:"nixpkgs_rev,omitempty"`
 	Nixpkgs     string          `json:"nixpkgs,omitempty"`
@@ -61,6 +62,7 @@ func (s *Service) CurrentLock(ctx context.Context) (Lock, error) {
 		l.Stacks = append(l.Stacks, LockedStack{
 			Name: r.Name, Label: r.Label, NixpkgsRev: r.NixpkgsRev, Nixpkgs: r.Nixpkgs, Source: r.Source, Rev: r.ApprovedRev, URL: r.ApprovedUrl,
 			Manifest: json.RawMessage(r.ApprovedManifest), Subnet: r.Subnet, WantRunning: r.WantRunning != 0,
+			Autostart: new(r.Autostart != 0),
 		})
 	}
 	return l, nil
@@ -152,8 +154,14 @@ func (s *Service) restoreOne(ctx context.Context, e LockedStack) error {
 	if _, _, err := addrs(subnet); err != nil {
 		subnet = ""
 	}
+	// A restore is a first boot for the stacks: each one starts when it
+	// starts at boot. A lock from before autostart has want_running only.
+	auto := e.WantRunning
+	if e.Autostart != nil {
+		auto = *e.Autostart
+	}
 	want := int64(0)
-	if e.WantRunning {
+	if auto {
 		want = 1
 	}
 	err = s.st.Tx(ctx, func(q *store.Queries) error {
@@ -168,7 +176,7 @@ func (s *Service) restoreOne(ctx context.Context, e LockedStack) error {
 		}
 		return q.RestoreStack(ctx, store.RestoreStackParams{
 			Name: e.Name, Source: e.Source, Now: s.now().UnixMilli(),
-			Rev: e.Rev, Url: e.URL, Manifest: encode(m), WantRunning: want, Subnet: subnet, Label: label, NixpkgsRev: e.NixpkgsRev, Nixpkgs: e.Nixpkgs,
+			Rev: e.Rev, Url: e.URL, Manifest: encode(m), WantRunning: want, Autostart: want, Subnet: subnet, Label: label, NixpkgsRev: e.NixpkgsRev, Nixpkgs: e.Nixpkgs,
 		})
 	})
 	if err != nil {

@@ -55,6 +55,7 @@ func newServiceOn(t *testing.T) (*Service, *fakeSource, *fakeHost) {
 	}
 	svc.probe = func(context.Context, string) error { return nil }
 	svc.healthEvery = time.Millisecond
+	svc.bootID = func() string { return "" } // autostart is applied only where a test asks
 	return svc, src, h
 }
 

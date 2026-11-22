@@ -12,20 +12,20 @@ import (
 // powers off. A new problem each time: httpx fills in the request's path.
 func shuttingDown() error { return httpx.Conflict("shutting_down", "the host is shutting down") }
 
-// Freeze stops the stacks from changing while the host shuts down: no
+// BeginShutdown stops the stacks from changing while the host shuts down: no
 // operation begins, no container boots and the monitor restarts nothing.
 // An operation already running goes on, but cannot boot a container.
-func (s *Service) Freeze() {
+func (s *Service) BeginShutdown() {
 	s.mu.Lock()
-	s.frozen = true
+	s.goingDown = true
 	s.mu.Unlock()
 }
 
-// Thaw undoes Freeze: a shutdown that was cancelled. The monitor then starts
+// CancelShutdown undoes BeginShutdown: a shutdown that was cancelled. The monitor then starts
 // the stacks the operator left running.
-func (s *Service) Thaw() {
+func (s *Service) CancelShutdown() {
 	s.mu.Lock()
-	s.frozen = false
+	s.goingDown = false
 	s.mu.Unlock()
 }
 

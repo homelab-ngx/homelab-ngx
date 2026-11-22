@@ -68,6 +68,35 @@ func TestShutdownIsPoweroff(t *testing.T) {
 	}
 }
 
+func TestRebootWithFrozenStacksAsksForThawOrForce(t *testing.T) {
+	stdinIsTerminal = func() bool { return false }
+	var asked []power.PowerRequest
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/system/power", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"phase":"idle","steps":[],"busy":[],"frozen":["immich"],"boot_id":"b1","expected_seconds":90}`)
+	})
+	mux.HandleFunc("POST /api/system/power", func(w http.ResponseWriter, r *http.Request) {
+		var req power.PowerRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		asked = append(asked, req)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprint(w, `{"phase":"idle","steps":[],"busy":[],"frozen":[],"boot_id":"b1","expected_seconds":90}`)
+	})
+	serve(t, mux)
+	err := runApp(t, "system", "reboot", "--yes", "--no-wait")
+	if err == nil || !strings.Contains(err.Error(), "immich") || !strings.Contains(err.Error(), "--thaw") || len(asked) != 0 {
+		t.Fatalf("err = %v, asked %+v", err, asked)
+	}
+	if err := runApp(t, "system", "reboot", "--yes", "--no-wait", "--thaw"); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || !asked[0].Thaw || asked[0].Force {
+		t.Fatalf("asked %+v", asked)
+	}
+}
+
 func TestStepText(t *testing.T) {
 	for _, tt := range []struct {
 		s    power.PowerStep

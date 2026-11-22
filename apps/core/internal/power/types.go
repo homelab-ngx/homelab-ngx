@@ -62,6 +62,7 @@ type PowerStatus struct {
 	Steps     []PowerStep `json:"steps" doc:"The stacks stopped, then the pools and partitions unmounted, in order."`
 	Error     string      `json:"error,omitempty" doc:"Why the shutdown did not start (phase failed)."`
 	Busy      []string    `json:"busy" doc:"Work a shutdown would interrupt now: stack operations, an update, backups. Only while idle."`
+	Frozen    []string    `json:"frozen" doc:"The frozen stacks. A shutdown asks for thaw (they stop cleanly) or force (they are killed, and what they held is lost). Only while idle."`
 	BootID    string      `json:"boot_id" doc:"This boot's id. A page waiting through a reboot knows the host is back when it changes."`
 	// ExpectedSeconds is the countdown a page shows.
 	ExpectedSeconds int             `json:"expected_seconds" doc:"How long the last reboot took, from the shutdown to the daemon answering again; 120 before one was measured."`
@@ -71,5 +72,6 @@ type PowerStatus struct {
 // PowerRequest asks for a reboot or a poweroff.
 type PowerRequest struct {
 	Action PowerAction `json:"action" enum:"reboot,poweroff"`
-	Force  bool        `json:"force,omitempty" doc:"Go ahead even when it interrupts stack operations, an update or backups."`
+	Force  bool        `json:"force,omitempty" doc:"Go ahead even when it interrupts stack operations, an update or backups. Without thaw, frozen stacks are killed: what they held is lost."`
+	Thaw   bool        `json:"thaw,omitempty" doc:"Thaw the frozen stacks, so they stop cleanly. Without thaw or force a request with frozen stacks is refused with stacks_frozen."`
 }

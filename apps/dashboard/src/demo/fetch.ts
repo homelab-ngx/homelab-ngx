@@ -6,7 +6,7 @@
  */
 import type { paths } from "#lib/api/schema.gen.ts";
 import type { Schema } from "#lib/api/client.ts";
-import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, removePoolDisk, downloadImage, installImage, iso, newHost, power, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
+import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerStatus, freezeThaw, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
 import { history } from "./metrics.ts";
 
 type JsonOf<P extends keyof paths> = paths[P] extends { get: { responses: { 200: { content: { "application/json": infer R } } } } } ? R : never;
@@ -257,7 +257,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
   }),
   "/system-updates/deploys": (h) => h.deploys,
   "/system-updates/image": (h) => h.image,
-  "/system/power": (h) => h.power,
+  "/system/power": (h) => powerStatus(h),
   "/version": (h) => ({ version: h.image.core.active, commit: "demo" }),
 };
 
@@ -268,10 +268,12 @@ const posts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknow
   "/stacks/{name}/rollback": (h, c) => ({ status: 202, body: rollback(h, c.path.name!, Number(c.body.generation)) }),
   "/stacks/{name}/start": (h, c) => ({ status: 202, body: startStop(h, c.path.name!, true) }),
   "/stacks/{name}/stop": (h, c) => ({ status: 202, body: startStop(h, c.path.name!, false) }),
+  "/stacks/{name}/freeze": (h, c) => ({ status: 200, body: freezeThaw(h, c.path.name!, true) }),
+  "/stacks/{name}/thaw": (h, c) => ({ status: 200, body: freezeThaw(h, c.path.name!, false) }),
   "/backups/{id}/run": (h, c) => ({ status: 202, body: runBackup(h, Number(c.path.id)) }),
   "/system-updates/image/download": (h) => ({ status: 202, body: downloadImage(h) }),
   "/system-updates/image/release": (h) => ({ status: 202, body: installImage(h) }),
-  "/system/power": (h, c) => ({ status: 202, body: power(h, c.body.action === "poweroff" ? "poweroff" : "reboot", c.body.force === true) }),
+  "/system/power": (h, c) => ({ status: 202, body: power(h, c.body.action === "poweroff" ? "poweroff" : "reboot", c.body.force === true, c.body.thaw === true) }),
   "/host-settings/wireguard/peers": (h, c) => {
     const settings = gets["/host-settings"](h, c) as Schema<"HostSettings">;
     const peer = { name: String(c.body.name ?? "device"), address: `10.99.0.${settings.wireguard.peers.length + 2}/32`, public_key: "DemoDeviceDemoDeviceDemoDeviceDemoDeviceDem0=" };

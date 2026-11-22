@@ -66,6 +66,14 @@
   const start = op(() => call(api.POST("/stacks/{name}/start", path())));
   const stop = op(() => call(api.POST("/stacks/{name}/stop", path())));
   const update = op(() => call(api.POST("/stacks/{name}/update", path())));
+  const freeze = op(() => call(api.POST("/stacks/{name}/freeze", path())));
+  const thaw = op(() => call(api.POST("/stacks/{name}/thaw", path())));
+  const autostart = createMutation(() => ({
+    mutationFn: (on: boolean) => call(api.PATCH("/stacks/{name}", { ...path(), body: { autostart: on } })),
+    onMutate: () => (error = ""),
+    onError: (e: unknown) => (error = describe(e)),
+    onSettled: refresh,
+  }));
   const rollback = createMutation(() => ({
     mutationFn: (generation: number) => call(api.POST("/stacks/{name}/rollback", { ...path(), body: { generation } })),
     onMutate: () => (error = ""),
@@ -107,7 +115,13 @@
   }
 
   const working = $derived(
-    start.isPending || stop.isPending || update.isPending || rollback.isPending || (stack.data ? busy(stack.data) : false),
+    start.isPending ||
+      stop.isPending ||
+      update.isPending ||
+      rollback.isPending ||
+      freeze.isPending ||
+      thaw.isPending ||
+      (stack.data ? busy(stack.data) : false),
   );
 
   /** A grant list in a few words: "4 routes, 1 folder". */
@@ -144,7 +158,7 @@
     <div>
       <h1 class="flex items-center gap-3 text-xl font-semibold">
         {title}
-        {#if s.running}<Pill tone="ok">Running</Pill>{:else}<Pill tone="idle">Stopped</Pill>{/if}
+        {#if s.frozen}<Pill tone="info">Frozen</Pill>{:else if s.running}<Pill tone="ok">Running</Pill>{:else}<Pill tone="idle">Stopped</Pill>{/if}
       </h1>
       {#if s.label}
         <p class="text-muted">{s.name}</p>
@@ -156,6 +170,10 @@
           {/each}
         </p>
       {/if}
+      <label class="mt-1 flex items-center gap-2 text-muted">
+        <input type="checkbox" class="accent-accent" checked={s.autostart} disabled={autostart.isPending} onchange={(e) => autostart.mutate(e.currentTarget.checked)} />
+        Start at boot
+      </label>
     </div>
     <div class="flex flex-wrap gap-2">
       <button type="button" class="btn" onclick={() => (renaming = true)}>Rename…</button>
@@ -166,7 +184,11 @@
         <button type="button" class="btn" disabled={!s.approved} onclick={() => (forking = true)}>Fork…</button>
       {/if}
       <button type="button" class="btn" disabled={own.length === 0} onclick={() => (logsUnit = logId(own[0]!.name))}>Logs</button>
-      {#if s.running}
+      {#if s.frozen}
+        <button type="button" class="btn btn-primary" disabled={working} onclick={() => thaw.mutate()}>Thaw</button>
+        <button type="button" class="btn" disabled={working} onclick={() => stop.mutate()}>Stop</button>
+      {:else if s.running}
+        <button type="button" class="btn" disabled={working} onclick={() => freeze.mutate()}>Freeze</button>
         <button type="button" class="btn" disabled={working} onclick={restart}>Restart</button>
         <button type="button" class="btn" disabled={working} onclick={() => stop.mutate()}>Stop</button>
       {:else}
@@ -175,6 +197,10 @@
       <button type="button" class="btn btn-danger" disabled={working} onclick={() => (removing = true)}>Remove…</button>
     </div>
   </div>
+
+  {#if s.frozen}
+    <p role="status" class="mt-4 rounded-md bg-accent-soft px-3 py-2 text-accent">Frozen. Its addresses don't answer, and a reboot loses its memory.</p>
+  {/if}
 
   {#if s.update_state !== "up_to_date" && s.generation > 0 && !busy(s)}
     {@const fresh = s.new_grants.length}

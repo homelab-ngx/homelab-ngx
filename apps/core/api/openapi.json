@@ -4485,7 +4485,11 @@
             "type": "string"
           },
           "force": {
-            "description": "Go ahead even when it interrupts stack operations, an update or backups.",
+            "description": "Go ahead even when it interrupts stack operations, an update or backups. Without thaw, frozen stacks are killed: what they held is lost.",
+            "type": "boolean"
+          },
+          "thaw": {
+            "description": "Thaw the frozen stacks, so they stop cleanly. Without thaw or force a request with frozen stacks is refused with stacks_frozen.",
             "type": "boolean"
           }
         },
@@ -4546,6 +4550,13 @@
             "format": "int64",
             "type": "integer"
           },
+          "frozen": {
+            "description": "The frozen stacks. A shutdown asks for thaw (they stop cleanly) or force (they are killed, and what they held is lost). Only while idle.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "phase": {
             "enum": [
               "idle",
@@ -4576,6 +4587,7 @@
           "phase",
           "steps",
           "busy",
+          "frozen",
           "boot_id",
           "expected_seconds"
         ],
@@ -5216,6 +5228,10 @@
             "$ref": "#/components/schemas/StackRevision",
             "description": "The commit the runtime may build. Absent until the first approval."
           },
+          "autostart": {
+            "description": "The stack starts after the host boots. Off, it stays stopped until it is started. A restart of the daemon alone changes nothing.",
+            "type": "boolean"
+          },
           "commits": {
             "description": "Commits of the fetched source since the running generation, newest first. Empty when it is up to date or the history cannot be read.",
             "items": {
@@ -5236,6 +5252,10 @@
               "$ref": "#/components/schemas/StackFolder"
             },
             "type": "array"
+          },
+          "frozen": {
+            "description": "The stack's processes are frozen where they are: they keep their memory and use no CPU, and its addresses do not answer until it is thawed. A reboot loses what they held. Running stays true.",
+            "type": "boolean"
           },
           "generation": {
             "description": "The generation of the stack's system profile in use. 0 when nothing is built.",
@@ -5316,15 +5336,17 @@
             "type": "boolean"
           },
           "want_running": {
-            "description": "The operator last started it; the daemon starts it again after a reboot.",
+            "description": "The operator last started it, and the monitor starts it again when its container stops. Each boot of the host sets it to autostart.",
             "type": "boolean"
           }
         },
         "required": [
           "address",
+          "autostart",
           "commits",
           "created_at",
           "fetched",
+          "frozen",
           "generation",
           "generations",
           "label",
@@ -5674,6 +5696,10 @@
       "StackLockEntry": {
         "additionalProperties": false,
         "properties": {
+          "autostart": {
+            "description": "The stack starts after the host boots, and after a restore. Absent (a lock written before autostart existed): want_running decides.",
+            "type": "boolean"
+          },
           "label": {
             "description": "The name the dashboard shows for the stack. Absent: its name.",
             "type": "string"
@@ -6151,6 +6177,10 @@
         "properties": {
           "allow_downgrade": {
             "description": "Accept a nixpkgs older than the one the stack runs. Without it such a choice is refused with nixpkgs_downgrade, since a newer version may already have upgraded the stack's data.",
+            "type": "boolean"
+          },
+          "autostart": {
+            "description": "Start the stack after the host boots. Takes effect at the next boot.",
             "type": "boolean"
           },
           "label": {
@@ -19702,7 +19732,7 @@
             "description": "Error"
           }
         },
-        "summary": "Change what the operator sets on a stack: its label, and the nixpkgs a version 7 stack is built with.",
+        "summary": "Change what the operator sets on a stack: its label, whether it starts after the host boots, and the nixpkgs a version 7 stack is built with.",
         "tags": [
           "stacks"
         ]
@@ -20012,6 +20042,77 @@
         ]
       }
     },
+    "/stacks/{name}/freeze": {
+      "post": {
+        "operationId": "freezeStack",
+        "parameters": [
+          {
+            "description": "The stack's name, as it was installed.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "The stack's name, as it was installed.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stack"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Freeze a running stack: its processes stop where they are and keep their memory, and its addresses stop answering until it is thawed. A reboot loses what they held. Refused with stack_not_running, and with busy while an operation runs.",
+        "tags": [
+          "stacks"
+        ]
+      }
+    },
     "/stacks/{name}/rollback": {
       "post": {
         "operationId": "rollbackStack",
@@ -20229,6 +20330,77 @@
           }
         },
         "summary": "Stop a stack and remove its routes and network rules.",
+        "tags": [
+          "stacks"
+        ]
+      }
+    },
+    "/stacks/{name}/thaw": {
+      "post": {
+        "operationId": "thawStack",
+        "parameters": [
+          {
+            "description": "The stack's name, as it was installed.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "The stack's name, as it was installed.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stack"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Thaw a frozen stack: its processes carry on where they stopped. A stack that is not frozen is left as it is.",
         "tags": [
           "stacks"
         ]
@@ -23225,7 +23397,7 @@
         ]
       },
       "post": {
-        "description": "Stops the running stacks, unmounts the pools and partitions, then reboots or powers off. Nothing is recorded: the next boot starts the same stacks and mounts the same pools. Refused while a stack operation, an update or a backup runs, unless force. Follow it in getPower.",
+        "description": "Stops the running stacks, unmounts the pools and partitions, then reboots or powers off. The next boot mounts the same pools and starts the stacks set to autostart. Refused while a stack operation, an update or a backup runs, unless force. Refused with stacks_frozen while a stack is frozen, unless thaw (it stops cleanly) or force (it is killed). Follow it in getPower.",
         "operationId": "requestPower",
         "requestBody": {
           "content": {

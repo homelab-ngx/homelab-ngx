@@ -56,9 +56,9 @@ type Service struct {
 	unitsAt time.Time
 	usageFn func(key string) *services.Usage // the metrics sampler's latest figures
 	ctx     context.Context                  // lifetime of background operations
-	// frozen: the host is shutting down. No operation begins and no
+	// goingDown: the host is shutting down. No operation begins and no
 	// container boots (power.go).
-	frozen bool
+	goingDown bool
 
 	auth apiAuth // the stack listener's callers
 
@@ -95,6 +95,10 @@ type Service struct {
 	storeMu  sync.Mutex
 	storeRec *storeRecord
 
+	// bootID is this boot's id (/proc/sys/kernel/random/boot_id); a seam
+	// for tests. StartWanted applies autostart once per boot.
+	bootID func() string
+
 	// backupAdded hears of recommended backup folders a healthy install or
 	// update brought (OnBackupFoldersAdded); guarded by mu.
 	backupAdded func(ctx context.Context, stack string, keys []string)
@@ -109,7 +113,7 @@ func New(st *store.Store, src Source, host Host, notifier Notifier, log *slog.Lo
 		st: st, src: src, host: host, r: host.Runner, notifier: notifier, log: log, now: time.Now,
 		probe: httpProbe, healthTimeout: 5 * time.Minute, healthEvery: 3 * time.Second, monitorEvery: time.Minute,
 		ops: map[string]*operation{}, ctx: context.Background(),
-		statDir: isDir, timeZone: HostTimeZone, statOwner: statOwner, statfs: diskRoom,
+		statDir: isDir, timeZone: HostTimeZone, statOwner: statOwner, statfs: diskRoom, bootID: readBootID,
 	}
 	s.chown = chownPath(host.Runner)
 	s.resolveNixpkgs = func(ctx context.Context, spec string) (string, error) { return ResolveNixpkgs(ctx, s.r, spec) }
@@ -196,6 +200,23 @@ func (s *Service) SetLabel(ctx context.Context, name, label string) (Stack, erro
 		return Stack{}, httpx.BadRequest("invalid_label", "%v", err)
 	}
 	if err := s.st.Queries().SetStackLabel(ctx, store.SetStackLabelParams{Name: name, Label: label}); err != nil {
+		return Stack{}, err
+	}
+	s.writeLock(ctx)
+	return s.Get(ctx, name)
+}
+
+// SetAutostart sets whether the stack starts after the host boots. It
+// starts or stops nothing now.
+func (s *Service) SetAutostart(ctx context.Context, name string, on bool) (Stack, error) {
+	if _, err := s.row(ctx, name); err != nil {
+		return Stack{}, err
+	}
+	v := int64(0)
+	if on {
+		v = 1
+	}
+	if err := s.st.Queries().SetStackAutostart(ctx, store.SetStackAutostartParams{Name: name, Autostart: v}); err != nil {
 		return Stack{}, err
 	}
 	s.writeLock(ctx)
@@ -483,7 +504,7 @@ func (s *Service) view(ctx context.Context, r store.Stack) (Stack, error) {
 		Name: r.Name, Label: r.Label, Source: r.Source, CreatedAt: time.UnixMilli(r.CreatedAt),
 		Fetched:   revision(r.FetchedRev, r.FetchedUrl, fetched, r.FetchedAt),
 		NewGrants: []StackGrant{},
-		Running:   s.isRunning(ctx, r.Name), WantRunning: r.WantRunning != 0,
+		Running:   s.isRunning(ctx, r.Name), WantRunning: r.WantRunning != 0, Autostart: r.Autostart != 0,
 		Generation: int(r.Generation), Generations: []StackGeneration{},
 		Address:     stackAddr(r.Subnet),
 		Operation:   s.operationView(r.Name),
@@ -491,6 +512,7 @@ func (s *Service) view(ctx context.Context, r store.Stack) (Stack, error) {
 		SourceDirty: readInfo(r).Dirty,
 		Usage:       s.usageOf(r.Name),
 	}
+	v.Frozen = v.Running && s.frozen(ctx, r.Name)
 	vars, folders, varsErr := s.loadBinds(r.Name)
 	if varsErr != nil {
 		// A store that cannot be read shows no values rather than failing

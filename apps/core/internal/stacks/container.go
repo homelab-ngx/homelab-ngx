@@ -426,9 +426,9 @@ func (s *Service) reap(ctx context.Context, name string) error {
 // boot starts the stack's container and returns when its system is up.
 func (s *Service) boot(ctx context.Context, name, subnet string, m Manifest) error {
 	s.mu.Lock()
-	frozen := s.frozen
+	goingDown := s.goingDown
 	s.mu.Unlock()
-	if frozen {
+	if goingDown {
 		return shuttingDown()
 	}
 	if err := s.reap(ctx, name); err != nil {
@@ -508,6 +508,7 @@ func (s *Service) awaitBoot(ctx context.Context, name, subnet string, booted <-c
 func (s *Service) halt(ctx context.Context, name string) error {
 	ctx, cancel := context.WithTimeout(ctx, stopTimeout)
 	defer cancel()
+	s.thaw(ctx, name)
 	_, err := s.r.Run(ctx, cmdrunner.Cmd{
 		Module: "stacks", Name: "systemctl", Args: []string{"stop", unitName(name)}, ExpectExit: []int{5},
 	})

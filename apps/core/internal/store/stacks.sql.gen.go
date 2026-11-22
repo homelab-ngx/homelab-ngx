@@ -9,6 +9,16 @@ import (
 	"context"
 )
 
+const applyStackAutostart = `-- name: ApplyStackAutostart :exec
+UPDATE stacks SET want_running = autostart
+`
+
+// At a new boot each stack wants to run when it starts at boot.
+func (q *Queries) ApplyStackAutostart(ctx context.Context) error {
+	_, err := q.db.ExecContext(ctx, applyStackAutostart)
+	return err
+}
+
 const approveStackFetched = `-- name: ApproveStackFetched :execrows
 UPDATE stacks SET approved_rev = fetched_rev, approved_url = fetched_url,
     approved_manifest = fetched_manifest, approved_at = ?1
@@ -110,7 +120,7 @@ func (q *Queries) FinishStackUpdate(ctx context.Context, arg FinishStackUpdatePa
 }
 
 const getStack = `-- name: GetStack :one
-SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids FROM stacks WHERE name = ?
+SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids, autostart FROM stacks WHERE name = ?
 `
 
 func (q *Queries) GetStack(ctx context.Context, name string) (Stack, error) {
@@ -143,6 +153,7 @@ func (q *Queries) GetStack(ctx context.Context, name string) (Stack, error) {
 		&i.Nixpkgs,
 		&i.BootedVars,
 		&i.HostIds,
+		&i.Autostart,
 	)
 	return i, err
 }
@@ -363,7 +374,7 @@ func (q *Queries) ListStackUpdates(ctx context.Context, arg ListStackUpdatesPara
 }
 
 const listStacks = `-- name: ListStacks :many
-SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids FROM stacks ORDER BY name
+SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids, autostart FROM stacks ORDER BY name
 `
 
 func (q *Queries) ListStacks(ctx context.Context) ([]Stack, error) {
@@ -402,6 +413,7 @@ func (q *Queries) ListStacks(ctx context.Context) ([]Stack, error) {
 			&i.Nixpkgs,
 			&i.BootedVars,
 			&i.HostIds,
+			&i.Autostart,
 		); err != nil {
 			return nil, err
 		}
@@ -462,9 +474,9 @@ func (q *Queries) PreviousStackGeneration(ctx context.Context, arg PreviousStack
 
 const restoreStack = `-- name: RestoreStack :exec
 INSERT INTO stacks (name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at,
-    approved_rev, approved_url, approved_manifest, approved_at, want_running, subnet, label, nixpkgs_rev, nixpkgs)
+    approved_rev, approved_url, approved_manifest, approved_at, want_running, autostart, subnet, label, nixpkgs_rev, nixpkgs)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?3,
-    ?4, ?5, ?6, ?3, ?7, ?8, ?9, ?10, ?11)
+    ?4, ?5, ?6, ?3, ?7, ?8, ?9, ?10, ?11, ?12)
 `
 
 type RestoreStackParams struct {
@@ -475,6 +487,7 @@ type RestoreStackParams struct {
 	Url         string
 	Manifest    string
 	WantRunning int64
+	Autostart   int64
 	Subnet      string
 	Label       string
 	NixpkgsRev  string
@@ -492,6 +505,7 @@ func (q *Queries) RestoreStack(ctx context.Context, arg RestoreStackParams) erro
 		arg.Url,
 		arg.Manifest,
 		arg.WantRunning,
+		arg.Autostart,
 		arg.Subnet,
 		arg.Label,
 		arg.NixpkgsRev,
@@ -511,6 +525,20 @@ type SetStackAPITokenHashParams struct {
 
 func (q *Queries) SetStackAPITokenHash(ctx context.Context, arg SetStackAPITokenHashParams) error {
 	_, err := q.db.ExecContext(ctx, setStackAPITokenHash, arg.Hash, arg.Name)
+	return err
+}
+
+const setStackAutostart = `-- name: SetStackAutostart :exec
+UPDATE stacks SET autostart = ?1 WHERE name = ?2
+`
+
+type SetStackAutostartParams struct {
+	Autostart int64
+	Name      string
+}
+
+func (q *Queries) SetStackAutostart(ctx context.Context, arg SetStackAutostartParams) error {
+	_, err := q.db.ExecContext(ctx, setStackAutostart, arg.Autostart, arg.Name)
 	return err
 }
 

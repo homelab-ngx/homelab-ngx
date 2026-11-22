@@ -1525,7 +1525,7 @@ export interface paths {
         delete: operations["removeStack"];
         options?: never;
         head?: never;
-        /** Change what the operator sets on a stack: its label, and the nixpkgs a version 7 stack is built with. */
+        /** Change what the operator sets on a stack: its label, whether it starts after the host boots, and the nixpkgs a version 7 stack is built with. */
         patch: operations["patchStack"];
         trace?: never;
     };
@@ -1597,6 +1597,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks/{name}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Freeze a running stack: its processes stop where they are and keep their memory, and its addresses stop answering until it is thawed. A reboot loses what they held. Refused with stack_not_running, and with busy while an operation runs. */
+        post: operations["freezeStack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks/{name}/rollback": {
         parameters: {
             query?: never;
@@ -1642,6 +1659,23 @@ export interface paths {
         put?: never;
         /** Stop a stack and remove its routes and network rules. */
         post: operations["stopStack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stacks/{name}/thaw": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Thaw a frozen stack: its processes carry on where they stopped. A stack that is not frozen is left as it is. */
+        post: operations["thawStack"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2174,7 +2208,7 @@ export interface paths {
         put?: never;
         /**
          * Reboot or power off the host.
-         * @description Stops the running stacks, unmounts the pools and partitions, then reboots or powers off. Nothing is recorded: the next boot starts the same stacks and mounts the same pools. Refused while a stack operation, an update or a backup runs, unless force. Follow it in getPower.
+         * @description Stops the running stacks, unmounts the pools and partitions, then reboots or powers off. The next boot mounts the same pools and starts the stacks set to autostart. Refused while a stack operation, an update or a backup runs, unless force. Refused with stacks_frozen while a stack is frozen, unless thaw (it stops cleanly) or force (it is killed). Follow it in getPower.
          */
         post: operations["requestPower"];
         delete?: never;
@@ -3719,8 +3753,10 @@ export interface components {
         PowerRequest: {
             /** @enum {string} */
             action: "reboot" | "poweroff";
-            /** @description Go ahead even when it interrupts stack operations, an update or backups. */
+            /** @description Go ahead even when it interrupts stack operations, an update or backups. Without thaw, frozen stacks are killed: what they held is lost. */
             force?: boolean;
+            /** @description Thaw the frozen stacks, so they stop cleanly. Without thaw or force a request with frozen stacks is refused with stacks_frozen. */
+            thaw?: boolean;
         };
         PowerScheduled: {
             /** @enum {string} */
@@ -3745,6 +3781,8 @@ export interface components {
              * @description How long the last reboot took, from the shutdown to the daemon answering again; 120 before one was measured.
              */
             expected_seconds: number;
+            /** @description The frozen stacks. A shutdown asks for thaw (they stop cleanly) or force (they are killed, and what they held is lost). Only while idle. */
+            frozen: string[];
             /** @enum {string} */
             phase: "idle" | "stopping_stacks" | "unmounting" | "going_down" | "failed";
             /** @description A reboot or poweroff planned for later; it stops the stacks first like any other. */
@@ -3963,6 +4001,8 @@ export interface components {
             address: string;
             /** @description The commit the runtime may build. Absent until the first approval. */
             approved?: components["schemas"]["StackRevision"];
+            /** @description The stack starts after the host boots. Off, it stays stopped until it is started. A restart of the daemon alone changes nothing. */
+            autostart: boolean;
             /** @description Commits of the fetched source since the running generation, newest first. Empty when it is up to date or the history cannot be read. */
             commits: components["schemas"]["StackCommit"][];
             /** Format: date-time */
@@ -3970,6 +4010,8 @@ export interface components {
             fetched: components["schemas"]["StackRevision"];
             /** @description The added folders: host folders the operator binds into the stack on top of its manifest, by mount. They need no approval. */
             folders: components["schemas"]["StackFolder"][];
+            /** @description The stack's processes are frozen where they are: they keep their memory and use no CPU, and its addresses do not answer until it is thawed. A reboot loses what they held. Running stays true. */
+            frozen: boolean;
             /**
              * Format: int64
              * @description The generation of the stack's system profile in use. 0 when nothing is built.
@@ -4007,7 +4049,7 @@ export interface components {
             variables: components["schemas"]["StackVariable"][];
             /** @description Every variable the newest manifest (the fetched one) requires has a value, stored or a default. An install or update of a commit waits until the variables its manifest requires have values. */
             variables_ready: boolean;
-            /** @description The operator last started it; the daemon starts it again after a reboot. */
+            /** @description The operator last started it, and the monitor starts it again when its container stops. Each boot of the host sets it to autostart. */
             want_running: boolean;
         };
         StackAdd: {
@@ -4120,6 +4162,8 @@ export interface components {
             version: number;
         };
         StackLockEntry: {
+            /** @description The stack starts after the host boots, and after a restore. Absent (a lock written before autostart existed): want_running decides. */
+            autostart?: boolean;
             /** @description The name the dashboard shows for the stack. Absent: its name. */
             label?: string;
             manifest: components["schemas"]["StackManifest"];
@@ -4274,6 +4318,8 @@ export interface components {
         StackPatch: {
             /** @description Accept a nixpkgs older than the one the stack runs. Without it such a choice is refused with nixpkgs_downgrade, since a newer version may already have upgraded the stack's data. */
             allow_downgrade?: boolean;
+            /** @description Start the stack after the host boots. Takes effect at the next boot. */
+            autostart?: boolean;
             /** @description The name the dashboard shows for the stack: up to 40 characters. Empty clears it, and the stack's name is shown. */
             label?: string;
             /** @description The nixpkgs a version 7 stack is built with: nixos-unstable, nixos-YY.MM or a 40-character NixOS/nixpkgs commit. Empty follows the one its manifest recommends. Takes effect on the next update. */
@@ -11834,6 +11880,48 @@ export interface operations {
             };
         };
     };
+    freezeStack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name, as it was installed. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Stack"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     rollbackStack: {
         parameters: {
             query?: never;
@@ -11936,6 +12024,48 @@ export interface operations {
         responses: {
             /** @description Accepted */
             202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Stack"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    thawStack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name, as it was installed. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -203,6 +203,9 @@ func (s *Service) RunPrepare(ctx context.Context, stack, unit string) error {
 	if !ValidName(stack) || !unitRE.MatchString(unit) {
 		return fmt.Errorf("prepare unit %q in stack %q: not a stack and a .service unit name", unit, stack)
 	}
+	if s.frozen(ctx, stack) {
+		return fmt.Errorf("prepare unit %s in stack %s: the stack is frozen", unit, stack)
+	}
 	if _, err := s.run(ctx, prepareTimeout, "systemctl", "--machine="+stack, "start", "--", unit); err != nil {
 		return fmt.Errorf("prepare unit %s in stack %s failed: %w", unit, stack, err)
 	}

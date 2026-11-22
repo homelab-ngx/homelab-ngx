@@ -224,6 +224,8 @@ function seedStack(s: StackSeed, i: number, now: number): Stack {
     restart_needed: false,
     running: true,
     want_running: true,
+    autostart: true,
+    frozen: false,
     update_state: "up_to_date",
     usage: { cpu_percent: s.cpu, memory_bytes: Math.round(s.memory) },
     folders: [],
@@ -509,17 +511,26 @@ export function newHost(now: () => number = Date.now): Host {
 
 const REBOOT_SECONDS = 25;
 
-const idlePower = (boot: string): Schema<"PowerStatus"> => ({ phase: "idle", steps: [], busy: [], boot_id: boot, expected_seconds: REBOOT_SECONDS });
+const idlePower = (boot: string): Schema<"PowerStatus"> => ({ phase: "idle", steps: [], busy: [], frozen: [], boot_id: boot, expected_seconds: REBOOT_SECONDS });
+
+/** The power status as the daemon reports it: the frozen stacks are read now. */
+export function powerStatus(h: Host): Schema<"PowerStatus"> {
+  return { ...h.power, frozen: h.power.phase === "idle" ? h.stacks.filter((s) => s.frozen).map((s) => s.name) : [] };
+}
 
 /**
  * A reboot or poweroff as the daemon runs it: the running stacks stop, then
  * the pools and partitions unmount, then the host is gone. A reboot comes
  * back from a new boot; a poweroff stays off until the page is reloaded.
  */
-export function power(h: Host, action: "reboot" | "poweroff", force: boolean) {
+export function power(h: Host, action: "reboot" | "poweroff", force: boolean, thaw = false) {
   if (h.power.phase !== "idle") throw new DemoProblem(409, "shutting_down", "The host is already shutting down.");
   const working = h.stacks.filter(busy).map((s) => `stack ${s.name}: ${s.operation!.kind} (${s.operation!.phase})`);
   if (working.length > 0 && !force) throw new DemoProblem(409, "busy", `${working.join(", ")} would be interrupted; force to ${action} anyway`);
+  const frozen = h.stacks.filter((s) => s.frozen).map((s) => s.name);
+  if (frozen.length > 0 && !force && !thaw)
+    throw new DemoProblem(409, "stacks_frozen", `frozen stacks lose what they hold: ${frozen.join(", ")}; thaw them first, or force to ${action} without thawing`);
+  for (const s of h.stacks) s.frozen = false;
   const mounts = [...h.storage.pools.map((p) => p.mountdir), ...h.storage.partitions.filter((p) => p.state === "mounted").map((p) => p.mountdir)];
   h.power = {
     ...h.power,
@@ -641,8 +652,19 @@ export function rollback(h: Host, name: string, generation: number): Stack {
   return s;
 }
 
+/** Freeze or thaw a running stack. */
+export function freezeThaw(h: Host, name: string, frozen: boolean): Stack {
+  const s = stackOf(h, name);
+  if (!s.running) throw new DemoProblem(409, "stack_not_running", `stack "${name}" is not running`);
+  if (busy(s)) throw new DemoProblem(409, "busy", `stack "${name}" is busy`);
+  s.frozen = frozen;
+  return s;
+}
+
 export function startStop(h: Host, name: string, running: boolean): Stack {
   const s = stackOf(h, name);
+  if (running && s.frozen) throw new DemoProblem(409, "stack_frozen", `stack "${name}" is frozen; thaw it first`);
+  s.frozen = false;
   s.want_running = running;
   setRunning(h, s, running);
   return s;

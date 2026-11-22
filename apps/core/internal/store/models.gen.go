@@ -224,6 +224,7 @@ type Stack struct {
 	Nixpkgs          string
 	BootedVars       string
 	HostIds          string
+	Autostart        int64
 }
 
 type StackDraft struct {
