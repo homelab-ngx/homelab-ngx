@@ -56,13 +56,17 @@ export interface PowerInput {
   /** When the host went down (ms); the countdown starts there. */
   downSince?: number;
   now: number;
-  /** The countdown, in seconds. */
+  /** How long the last reboot took, in seconds. */
   expected: number;
 }
 
+/** Seconds the countdown adds to the last reboot, so a slower one still ends inside it. */
+export const rebootMargin = 30;
+
 export function powerView(i: PowerInput): PowerView {
   const steps = i.status?.steps ?? [];
-  const base = { steps, left: i.expected, done: 0, error: "" };
+  const total = i.expected + rebootMargin;
+  const base = { steps, left: total, done: 0, error: "" };
   if (i.reachable && i.status) {
     if (i.from && i.status.boot_id !== i.from) return { ...base, stage: "back", done: 1, left: 0 };
     if (i.status.phase === "failed") return { ...base, stage: "failed", error: i.status.error ?? "" };
@@ -71,8 +75,8 @@ export function powerView(i: PowerInput): PowerView {
   }
   if (i.action === "poweroff") return { ...base, stage: "off" };
   const gone = Math.max(0, (i.now - (i.downSince ?? i.now)) / 1000);
-  const left = Math.max(0, Math.ceil(i.expected - gone));
-  const done = i.expected > 0 ? Math.min(1, gone / i.expected) : 1;
+  const left = Math.max(0, Math.ceil(total - gone));
+  const done = Math.min(1, gone / total);
   return { ...base, stage: left > 0 ? "down" : "late", left, done };
 }
 
@@ -131,4 +135,15 @@ export function stepState(s: PowerStep, hostGone = false): { tone: "ok" | "warn"
       return mount ? { tone: "warn", word: "busy" } : { tone: "bad", word: "killed" };
   }
   return { tone: "idle", word: "waiting" };
+}
+
+/**
+ * What a stack still stopping after 30 s waits for, and when systemd kills
+ * it. Nothing for a step that is not stopping, or once the host is gone.
+ */
+export function holdup(s: PowerStep, hostGone = false): { what: string; when: string } | undefined {
+  const w = s.waiting_on;
+  if (!w || hostGone || s.state !== "working") return undefined;
+  const what = w.description && w.description !== w.unit ? `${w.description} (${w.unit})` : w.unit;
+  return { what: `Waiting for ${what}`, when: w.kill_in > 0 ? `killed in ${clock(w.kill_in)}` : "killing" };
 }

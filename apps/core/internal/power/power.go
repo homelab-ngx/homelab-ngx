@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -36,6 +37,9 @@ type Stacks interface {
 	Frozen(ctx context.Context) []string
 	// Kill ends a frozen stack's processes at once.
 	Kill(ctx context.Context, name string) error
+	// Holdup names what a halting stack still waits for and when systemd
+	// kills it; ok is false when nothing is known.
+	Holdup(ctx context.Context, name string) (unit, description string, killAt time.Time, ok bool)
 }
 
 // Mounts is the file systems the sequence unmounts (*storage.Service).
@@ -96,6 +100,8 @@ type Service struct {
 
 	watchWindow time.Duration // a read this recent means a page follows the shutdown
 	lingerMax   time.Duration // the longest the host waits for that page
+	holdupAfter time.Duration // a stack stopping this long has its holdup looked up
+	holdupEvery time.Duration // and again this often
 }
 
 // New makes the service. busy lists the work a reboot would interrupt.
@@ -108,6 +114,7 @@ func New(stacks Stacks, mounts Mounts, logind Logind, meta Meta, r cmdrunner.Run
 		now: time.Now, bootID: readBootID(), st: PowerStatus{Phase: PhaseIdle, Steps: []PowerStep{}},
 		expected: defaultReboot, ctx: context.Background(),
 		watchWindow: 3 * time.Second, lingerMax: 3 * time.Second,
+		holdupAfter: 30 * time.Second, holdupEvery: 2 * time.Second,
 	}
 }
 
@@ -319,7 +326,9 @@ func (s *Service) sequence(ctx context.Context, a PowerAction, kill bool) bool {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			stop := s.watchHalt(ctx, n)
 			err := s.stacks.Halt(ctx, n)
+			stop()
 			switch {
 			case killed[n]:
 				s.set(StepStack, n, StateFailed, "frozen; killed without thawing")
@@ -360,6 +369,36 @@ func (s *Service) sequence(ctx context.Context, a PowerAction, kill bool) bool {
 	return ctx.Err() == nil
 }
 
+// watchHalt looks up what a stack's halt waits for, once it has taken
+// holdupAfter, until stop is called.
+func (s *Service) watchHalt(ctx context.Context, name string) (stop func()) {
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		t := time.NewTimer(s.holdupAfter)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-t.C:
+			}
+			if unit, desc, at, ok := s.stacks.Holdup(ctx, name); ok {
+				s.wait(name, &PowerWait{Unit: unit, Description: desc, killAt: at})
+			}
+			t.Reset(s.holdupEvery)
+		}
+	}()
+	return func() {
+		close(done)
+		wg.Wait()
+	}
+}
+
 // linger keeps the host up until a page that follows the shutdown has read
 // that it is ready, for at most lingerMax. A page reads once a second, and
 // systemd stops the web server soon after the host is handed over: without
@@ -395,6 +434,20 @@ func (s *Service) set(kind PowerStepKind, name string, state PowerStepState, det
 	for i := range s.st.Steps {
 		if s.st.Steps[i].Kind == kind && s.st.Steps[i].Name == name {
 			s.st.Steps[i].State, s.st.Steps[i].Detail = state, detail
+			if state != StateWorking {
+				s.st.Steps[i].WaitingOn = nil
+			}
+		}
+	}
+}
+
+// wait records what a stack's halt waits for.
+func (s *Service) wait(name string, w *PowerWait) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i := range s.st.Steps {
+		if s.st.Steps[i].Kind == StepStack && s.st.Steps[i].Name == name && s.st.Steps[i].State == StateWorking {
+			s.st.Steps[i].WaitingOn = w
 		}
 	}
 }
@@ -423,6 +476,13 @@ func (s *Service) Status(ctx context.Context) PowerStatus {
 	}
 	st := s.st
 	st.Steps = append([]PowerStep{}, s.st.Steps...)
+	for i, step := range st.Steps {
+		if step.WaitingOn != nil {
+			w := *step.WaitingOn
+			w.KillIn = max(0, int(math.Ceil(w.killAt.Sub(s.readAt).Seconds())))
+			st.Steps[i].WaitingOn = &w
+		}
+	}
 	st.ExpectedSeconds = int(s.expected.Seconds())
 	s.mu.Unlock()
 	st.BootID = s.bootID

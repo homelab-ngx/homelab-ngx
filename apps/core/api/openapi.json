@@ -4619,12 +4619,38 @@
               "failed"
             ],
             "type": "string"
+          },
+          "waiting_on": {
+            "$ref": "#/components/schemas/PowerWait",
+            "description": "A stack still stopping after 30 s: the unit it waits for and when systemd kills it."
           }
         },
         "required": [
           "kind",
           "name",
           "state"
+        ],
+        "type": "object"
+      },
+      "PowerWait": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "kill_in": {
+            "description": "Seconds until systemd kills it, as of this read.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "unit": {
+            "description": "The unit inside the stack that has not stopped, or the stack's own unit once nothing inside answers.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unit",
+          "kill_in"
         ],
         "type": "object"
       },

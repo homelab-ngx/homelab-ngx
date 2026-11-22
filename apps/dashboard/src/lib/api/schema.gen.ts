@@ -3862,6 +3862,18 @@ export interface components {
             name: string;
             /** @enum {string} */
             state: "waiting" | "working" | "done" | "failed";
+            /** @description A stack still stopping after 30 s: the unit it waits for and when systemd kills it. */
+            waiting_on?: components["schemas"]["PowerWait"];
+        };
+        PowerWait: {
+            description?: string;
+            /**
+             * Format: int64
+             * @description Seconds until systemd kills it, as of this read.
+             */
+            kill_in: number;
+            /** @description The unit inside the stack that has not stopped, or the stack's own unit once nothing inside answers. */
+            unit: string;
         };
         Progress: {
             /**

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clock, milestones, powerHref, powerView, stepState, underWay, type PowerInput, type PowerStatus } from "./power.ts";
+import { clock, holdup, milestones, powerHref, powerView, stepState, underWay, type PowerInput, type PowerStatus } from "./power.ts";
 
 const status = (p: Partial<PowerStatus> = {}): PowerStatus => ({
   phase: "stopping_stacks",
@@ -25,18 +25,18 @@ const input = (p: Partial<PowerInput> = {}): PowerInput => ({
 describe("powerView", () => {
   it("shows the steps while the daemon stops the host", () => {
     const v = powerView(input());
-    expect([v.stage, v.steps.length, v.left]).toEqual(["stopping", 1, 90]);
+    expect([v.stage, v.steps.length, v.left]).toEqual(["stopping", 1, 120]);
   });
 
-  it("counts down from when the host went away", () => {
+  it("counts down from when the host went away, 30 s past the last reboot", () => {
     const v = powerView(input({ reachable: false, downSince: 70_000 }));
-    expect([v.stage, v.left, v.done]).toEqual(["down", 60, 1 / 3]);
+    expect([v.stage, v.left, v.done]).toEqual(["down", 90, 1 / 4]);
     // The steps it last showed stay on the page.
     expect(v.steps).toHaveLength(1);
   });
 
   it("keeps checking past the countdown", () => {
-    const v = powerView(input({ reachable: false, downSince: 0 }));
+    const v = powerView(input({ reachable: false, downSince: -20_000 }));
     expect([v.stage, v.left, v.done]).toEqual(["late", 0, 1]);
   });
 
@@ -59,7 +59,7 @@ describe("powerView", () => {
 
   it("starts the countdown on a page opened during the reboot", () => {
     const v = powerView(input({ status: undefined, reachable: false, downSince: undefined }));
-    expect([v.stage, v.left]).toEqual(["down", 90]);
+    expect([v.stage, v.left]).toEqual(["down", 120]);
   });
 });
 
@@ -86,6 +86,24 @@ describe("helpers", () => {
     expect(stepState(step)).toEqual({ tone: "info", word: "unmounting" });
     expect(stepState(step, true)).toEqual({ tone: "idle", word: "not seen" });
     expect(stepState({ ...step, state: "done" }, true)).toEqual({ tone: "ok", word: "unmounted" });
+  });
+});
+
+describe("holdup", () => {
+  const plex = { kind: "stack" as const, name: "players", state: "working" as const, waiting_on: { unit: "plex.service", description: "Plex Media Server", kill_in: 58 } };
+
+  it("names the unit and counts down to its kill", () => {
+    expect(holdup(plex)).toEqual({ what: "Waiting for Plex Media Server (plex.service)", when: "killed in 0:58" });
+    expect(holdup({ ...plex, waiting_on: { unit: "homelab-stack-players.service", kill_in: 0 } })).toEqual({
+      what: "Waiting for homelab-stack-players.service",
+      when: "killing",
+    });
+  });
+
+  it("says nothing once the stack stopped or the host is gone", () => {
+    expect(holdup({ ...plex, state: "done" })).toBeUndefined();
+    expect(holdup(plex, true)).toBeUndefined();
+    expect(holdup({ ...plex, waiting_on: undefined })).toBeUndefined();
   });
 });
 

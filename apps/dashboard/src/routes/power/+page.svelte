@@ -3,7 +3,7 @@
   import { goto, replaceState } from "$app/navigation";
   import { page } from "$app/state";
   import Pill from "#lib/components/Pill.svelte";
-  import { clock, fetchPower, gone, milestones, powerView, stepState, type PowerAction, type PowerStatus } from "#lib/power.ts";
+  import { clock, fetchPower, gone, holdup, milestones, powerView, stepState, type PowerAction, type PowerStatus } from "#lib/power.ts";
 
   // The address holds what the page needs, so a reload during the reboot
   // picks up where it was: the action, the boot it began in, the page to go
@@ -134,8 +134,13 @@
     <ul class="mt-4 divide-y divide-line border-t border-line">
       {#each steps as s (s.kind + s.name)}
         {@const st = stepState(s, hostGone)}
+        {@const wait = holdup(s, hostGone)}
         <li class="flex min-h-9 items-center gap-3 py-1.5" title={s.detail || undefined}>
-          <span class="min-w-0 flex-1 truncate">{s.name}</span>
+          <div class="min-w-0 flex-1">
+            <p class="truncate">{s.name}</p>
+            {#if wait}<p class="truncate text-xs text-muted">{wait.what}</p>{/if}
+          </div>
+          {#if wait}<span class="shrink-0 text-xs text-muted tabular-nums">{wait.when}</span>{/if}
           <Pill tone={st.tone}>{st.word}</Pill>
         </li>
       {/each}

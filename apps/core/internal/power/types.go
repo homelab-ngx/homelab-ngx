@@ -45,6 +45,16 @@ type PowerStep struct {
 	Name   string         `json:"name" doc:"The stack name, or the mountpoint."`
 	State  PowerStepState `json:"state" enum:"waiting,working,done,failed"`
 	Detail string         `json:"detail,omitempty" doc:"Why a step failed. A stack that did not halt was killed; a mount still in use is unmounted last, as the host goes down."`
+	// WaitingOn is set once a stack has been stopping for a while.
+	WaitingOn *PowerWait `json:"waiting_on,omitempty" doc:"A stack still stopping after 30 s: the unit it waits for and when systemd kills it."`
+}
+
+// PowerWait is the unit a stopping stack waits for.
+type PowerWait struct {
+	Unit        string `json:"unit" doc:"The unit inside the stack that has not stopped, or the stack's own unit once nothing inside answers."`
+	Description string `json:"description,omitempty"`
+	KillIn      int    `json:"kill_in" doc:"Seconds until systemd kills it, as of this read."`
+	killAt      time.Time
 }
 
 // PowerScheduled is a shutdown planned for later (`shutdown -r HH:MM`).

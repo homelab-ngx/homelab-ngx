@@ -39,6 +39,8 @@ type fakeStacks struct {
 	failing string
 	gate    chan struct{} // when set, a halt waits for it
 	frozen  []string
+	holdup  string    // the unit every halt waits for
+	killAt  time.Time // and when it is killed
 }
 
 func (f *fakeStacks) BeginShutdown()  { f.j.add("freeze") }
@@ -50,6 +52,9 @@ func (f *fakeStacks) Frozen(context.Context) []string { return f.frozen }
 func (f *fakeStacks) Kill(_ context.Context, name string) error {
 	f.j.add("kill " + name)
 	return nil
+}
+func (f *fakeStacks) Holdup(context.Context, string) (string, string, time.Time, bool) {
+	return f.holdup, "Plex Media Server", f.killAt, f.holdup != ""
 }
 func (f *fakeStacks) Halt(_ context.Context, name string) error {
 	if f.gate != nil {
@@ -503,4 +508,49 @@ func TestTheWaitForAPageHasALimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.wait(t)
+}
+
+func TestASlowStackNamesTheUnitItWaitsFor(t *testing.T) {
+	r := newRig(t)
+	r.stacks.running = []string{"players"}
+	r.stacks.gate = make(chan struct{})
+	r.stacks.holdup = "plex.service"
+	r.stacks.killAt = time.Now().Add(60 * time.Second)
+	r.svc.holdupAfter, r.svc.holdupEvery = 10*time.Millisecond, 10*time.Millisecond
+	if err := r.svc.Request(context.Background(), Reboot, false, false); err != nil {
+		t.Fatal(err)
+	}
+	var w *PowerWait
+	for deadline := time.Now().Add(5 * time.Second); w == nil; {
+		if time.Now().After(deadline) {
+			t.Fatal("no holdup reported")
+		}
+		if st := r.svc.Status(context.Background()); len(st.Steps) == 1 {
+			w = st.Steps[0].WaitingOn
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if w.Unit != "plex.service" || w.Description != "Plex Media Server" || w.KillIn < 58 || w.KillIn > 60 {
+		t.Fatalf("waiting on %+v", w)
+	}
+	close(r.stacks.gate)
+	r.wait(t)
+	if st := r.svc.Status(context.Background()); st.Steps[0].State != StateDone || st.Steps[0].WaitingOn != nil {
+		t.Fatalf("step after the halt %+v", st.Steps[0])
+	}
+}
+
+func TestAQuickStackNamesNothing(t *testing.T) {
+	r := newRig(t)
+	r.stacks.holdup = "plex.service"
+	r.stacks.killAt = time.Now().Add(time.Minute)
+	if err := r.svc.Request(context.Background(), Reboot, false, false); err != nil {
+		t.Fatal(err)
+	}
+	r.wait(t)
+	for _, s := range r.svc.Status(context.Background()).Steps {
+		if s.WaitingOn != nil {
+			t.Fatalf("step %+v", s)
+		}
+	}
 }
