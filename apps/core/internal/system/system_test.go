@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 
 	"homelab-ngx.com/core/internal/config"
@@ -50,6 +51,15 @@ func noCore(t *testing.T) {
 	t.Helper()
 	coreLink = filepath.Join(t.TempDir(), "homelab-core.raw")
 	t.Cleanup(func() { coreLink = "/var/lib/extensions/homelab-core.raw" })
+	freshStart(t)
+}
+
+// freshStart forgets the version the process started as, so the next
+// Running call reads it again, as a daemon starting now would.
+func freshStart(t *testing.T) {
+	t.Helper()
+	running = sync.OnceValues(BuildInfo)
+	t.Cleanup(func() { running = sync.OnceValues(BuildInfo) })
 }
 
 func TestVersion(t *testing.T) {
@@ -66,6 +76,7 @@ func TestVersionFromCoreExtensionInUse(t *testing.T) {
 	dir := t.TempDir()
 	coreLink = filepath.Join(dir, "homelab-core.raw")
 	t.Cleanup(func() { coreLink = "/var/lib/extensions/homelab-core.raw" })
+	freshStart(t)
 	if err := os.Symlink("../extensions.d/homelab-core_0.2.5.raw", coreLink); err != nil {
 		t.Fatal(err)
 	}
@@ -82,6 +93,34 @@ func TestVersionFromCoreExtensionInUse(t *testing.T) {
 	}
 	if ver, _ := BuildInfo(); ver != "dev" {
 		t.Fatalf("BuildInfo() version = %q, want dev", ver)
+	}
+}
+
+// A core switched under a running daemon is not the daemon's version until
+// it restarts: /version keeps what it started as, BuildInfo follows the link.
+func TestVersionIsWhatTheDaemonStartedAs(t *testing.T) {
+	dir := t.TempDir()
+	coreLink = filepath.Join(dir, "homelab-core.raw")
+	t.Cleanup(func() { coreLink = "/var/lib/extensions/homelab-core.raw" })
+	freshStart(t)
+	if err := os.Symlink("../extensions.d/homelab-core_0.3.1.raw", coreLink); err != nil {
+		t.Fatal(err)
+	}
+	if v, _ := Running(); v != "0.3.1" {
+		t.Fatalf("Running() = %q at start, want 0.3.1", v)
+	}
+	if err := os.Remove(coreLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../extensions.d/homelab-core_0.3.2.raw", coreLink); err != nil {
+		t.Fatal(err)
+	}
+	var v Version
+	if serve(t, New(&fakeCfg{}, nil, nil), "/api/version", &v); v.Version != "0.3.1" {
+		t.Fatalf("/version = %q after the core switched, want 0.3.1 until a restart", v.Version)
+	}
+	if now, _ := BuildInfo(); now != "0.3.2" {
+		t.Fatalf("BuildInfo() = %q, want the switched core 0.3.2", now)
 	}
 }
 

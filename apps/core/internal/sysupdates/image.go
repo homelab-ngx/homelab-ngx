@@ -163,6 +163,12 @@ var (
 	stagedFileRE = regexp.MustCompile(`^homelab_(.+)\.(?:efi|root(?:-verity)?\.[0-9a-fA-F-]+\.raw)$`)
 )
 
+// BootedImage is the version of the image the host booted (IMAGE_VERSION in
+// /etc/os-release), or "" on a host that is not an image.
+func BootedImage() string {
+	return bootedVersion()
+}
+
 func bootedVersion() string {
 	b, _ := os.ReadFile(osRelease)
 	m := regexp.MustCompile(`(?m)^IMAGE_VERSION="?([^"\n]+)"?$`).FindSubmatch(b)

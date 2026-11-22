@@ -81,7 +81,7 @@ func features(d deps) []feature {
 // API checks each request's token, source address and scope before any
 // operation runs.
 func handlers(d deps) (operator, web, stack http.Handler) {
-	version, _ := system.BuildInfo()
+	version, _ := system.Running()
 	opMux, stackMux := http.NewServeMux(), http.NewServeMux()
 	apis := httpx.APIs{
 		Operator: httpx.NewAPI(opMux, "homelab-daemon", version),

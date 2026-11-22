@@ -24103,6 +24103,7 @@
     },
     "/version": {
       "get": {
+        "description": "The version and commit the daemon started as. After a core update it changes when the daemon restarts into the new core.",
         "operationId": "getVersion",
         "responses": {
           "200": {

@@ -2265,7 +2265,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Daemon build version. */
+        /**
+         * Daemon build version.
+         * @description The version and commit the daemon started as. After a core update it changes when the daemon restarts into the new core.
+         */
         get: operations["getVersion"];
         put?: never;
         post?: never;

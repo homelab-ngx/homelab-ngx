@@ -20,8 +20,10 @@ func RegisterVersion(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeRead, huma.Operation{
 		OperationID: "getVersion", Method: http.MethodGet, Path: "/version", Tags: []string{"system"},
 		Summary: "Daemon build version.",
+		Description: "The version and commit the daemon started as. After a core update it " +
+			"changes when the daemon restarts into the new core.",
 	}, func(context.Context, *struct{}) (*versionOut, error) {
-		v, c := BuildInfo()
+		v, c := Running()
 		return &versionOut{Body: Version{Version: v, Commit: c}}, nil
 	})
 }

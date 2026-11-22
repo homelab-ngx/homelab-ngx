@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -12,20 +13,53 @@ import (
 	"github.com/urfave/cli/v2"
 	"homelab-ngx.com/core/internal/logging"
 	"homelab-ngx.com/core/internal/power"
+	"homelab-ngx.com/core/internal/system"
 	"homelab-ngx.com/core/internal/sysupdates"
 )
 
-var (
-	Version   = "0.3.0"
-	BuildDate = "2026-06-13"
-)
+// cliVersion is this CLI's version: the core extension in use, whose file
+// name carries the release (no build can know it in advance).
+func cliVersion() string {
+	v, c := system.BuildInfo()
+	if c == "" {
+		return v
+	}
+	if len(c) > 12 {
+		c = c[:12]
+	}
+	return fmt.Sprintf("%s (commit %s)", v, c)
+}
+
+// printVersions is --version: the CLI's, the running daemon's and the booted
+// image's versions, which differ while an update is half done (a core
+// switched before the daemon restarted, or a staged image before a reboot).
+func printVersions(c *cli.Context) {
+	cliV, _ := system.BuildInfo()
+	daemonV := "unreachable"
+	ctx, cancel := context.WithTimeout(c.Context, 2*time.Second)
+	defer cancel()
+	if d, err := call[system.Version](ctx, http.MethodGet, "/version", nil); err == nil {
+		daemonV = d.Version
+	}
+	image := sysupdates.BootedImage()
+	if image == "" {
+		image = "none (not an image host)"
+	}
+	fmt.Printf("homelab %s\n", cliVersion())
+	fmt.Printf("daemon  %s\n", daemonV)
+	fmt.Printf("image   %s\n", image)
+	if daemonV != "unreachable" && daemonV != cliV {
+		fmt.Println("The daemon runs another core than this CLI's: it has not restarted since the core changed.")
+	}
+}
 
 func main() {
 	logging.InitCLI()
+	cli.VersionPrinter = printVersions
 	app := &cli.App{
 		Name:                 "homelab",
 		Usage:                "Manage your homelab services, backups, secrets, and health",
-		Version:              fmt.Sprintf("%s (built %s)", Version, BuildDate),
+		Version:              cliVersion(),
 		EnableBashCompletion: true,
 		Flags: []cli.Flag{
 			&cli.BoolFlag{

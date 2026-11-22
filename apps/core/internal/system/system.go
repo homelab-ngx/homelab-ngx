@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"runtime/debug"
 	"strings"
+	"sync"
 
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/config"
@@ -64,9 +65,20 @@ func NewHTTP(cfg ConfigSource, r cmdrunner.Runner, stacks StackUnits) *HTTP {
 	return New(cfg, r, stacks)
 }
 
-// BuildInfo returns the daemon version and the deployed commit.
+// BuildInfo returns the version and commit of the core in use now: on an
+// image host, the extension coreLink points at.
 func BuildInfo() (string, string) {
 	return buildVersion(), buildCommit()
+}
+
+// running is BuildInfo as it was at the first call. The daemon makes that
+// call as it starts, so a core switched under a running daemon is not
+// reported as the daemon's until the daemon restarts into it.
+var running = sync.OnceValues(BuildInfo)
+
+// Running returns the version and commit this process started as.
+func Running() (string, string) {
+	return running()
 }
 
 func buildVersion() string {
