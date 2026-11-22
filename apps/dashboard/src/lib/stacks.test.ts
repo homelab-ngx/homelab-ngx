@@ -188,10 +188,10 @@ describe("icons", () => {
   });
 
   it("points at the daemon's icon for a stack and its services, and at nothing without one", () => {
-    expect(stackIcon(withIcons("plex"))).toBe("/api/stacks/players/icon");
+    expect(stackIcon(withIcons("plex"))).toBe("/api/stacks/players/icon?rev=a");
     expect(stackIcon(withIcons())).toBeUndefined();
-    expect(unitIcon(withIcons(), svc("players-plex.service"))).toBe("/api/stacks/players/icon?unit=plex.service");
-    expect(unitIcon(withIcons(), svc("players-watch.service"))).toBe("/api/stacks/players/icon?unit=players-watch.service");
+    expect(unitIcon(withIcons(), svc("players-plex.service"))).toBe("/api/stacks/players/icon?unit=plex.service&rev=a");
+    expect(unitIcon(withIcons(), svc("players-watch.service"))).toBe("/api/stacks/players/icon?unit=players-watch.service&rev=a");
     expect(unitIcon(withIcons(), svc("players-jellyfin.service"))).toBeUndefined();
   });
 

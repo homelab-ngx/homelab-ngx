@@ -35,7 +35,7 @@ describe("StackGrid", () => {
     const { container } = render(StackGrid, { props: { stacks: [stack("media", { label: "Movies & TV" }, "plex")], services: [], view: "minimal" } });
     expect(card("Movies & TV").getAttribute("href")).toBe("/stacks/media");
     expect(within(card("Movies & TV")).getByText("media")).toBeTruthy();
-    expect(container.querySelector("img")?.getAttribute("src")).toBe("/api/stacks/media/icon");
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("/api/stacks/media/icon?rev=abcdef0123");
   });
 
   it("marks a failed service in the minimal strip and counts it", () => {

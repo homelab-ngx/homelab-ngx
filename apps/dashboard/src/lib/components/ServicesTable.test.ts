@@ -37,7 +37,7 @@ describe("ServicesTable", () => {
     expect(screen.getByText("plex")).toBeTruthy();
     expect(screen.getByText("failed")).toBeTruthy();
     // plex has an icon in the manifest; sonarr gets the letter tile.
-    expect(container.querySelector("img")?.getAttribute("src")).toBe("/api/stacks/media/icon?unit=plex.service");
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("/api/stacks/media/icon?unit=plex.service&rev=abcdef0123");
     expect(container.querySelectorAll("img")).toHaveLength(1);
     expect(screen.getAllByRole("link", { name: "Logs" })[0]!.getAttribute("href")).toBe("/stacks/media/logs?unit=media-plex");
   });

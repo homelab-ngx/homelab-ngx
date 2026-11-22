@@ -225,14 +225,26 @@ const shownManifest = (s: Stack): StackManifest | undefined => s.approved?.manif
 export const hostUnitName = (stack: string, unit: string) => (unit.startsWith(stack + "-") ? unit : `${stack}-${unit}`);
 
 /** The address of a stack's icon, when its manifest names one. */
+/**
+ * The daemon's icon address. The commit is in it so that a browser, which
+ * keeps an icon for a day, asks again once an update may have changed it.
+ */
+function iconHref(s: Stack, unit?: string): string {
+  const q = new URLSearchParams();
+  if (unit) q.set("unit", unit);
+  const rev = s.approved?.rev ?? s.fetched?.rev;
+  if (rev) q.set("rev", rev.slice(0, 12));
+  return `/api/stacks/${encodeURIComponent(s.name)}/icon?${q}`;
+}
+
 export function stackIcon(s: Stack): string | undefined {
-  return shownManifest(s)?.icon ? `/api/stacks/${encodeURIComponent(s.name)}/icon` : undefined;
+  return shownManifest(s)?.icon ? iconHref(s) : undefined;
 }
 
 /** The address of a service's icon, when the stack's manifest names one for it. */
 export function unitIcon(s: Stack, u: ServiceInfo): string | undefined {
   const e = shownManifest(s)?.services?.find((m) => hostUnitName(s.name, m.unit) === u.unit_name);
-  return e ? `/api/stacks/${encodeURIComponent(s.name)}/icon?unit=${encodeURIComponent(e.unit)}` : undefined;
+  return e ? iconHref(s, e.unit) : undefined;
 }
 
 /**
