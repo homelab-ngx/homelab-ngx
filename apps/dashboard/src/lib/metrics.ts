@@ -193,15 +193,16 @@ export function byScope(f: Frames, fig: "cpu" | "memory", hues: Map<string, Hue>
 
 export type Mood = "idle" | "light" | "medium" | "heavy";
 /** What work waits for. */
-export type Resource = "processor" | "memory" | "disks";
+export type Resource = "cpu" | "memory" | "disks";
 
 /**
  * How the host is doing, from pressure over about the last minute: the
  * share of time some task had to wait for CPU, memory or disk. Nothing
  * waiting is idle under 10% CPU use and light load above it. CPU use of
  * 80% or more is medium load on its own, and then `waits` is unset.
+ * `share` is the named resource's wait, or else the CPU use, in percent.
  */
-export function mood(f: Frames): { mood: Mood; waits?: Resource } | undefined {
+export function mood(f: Frames): { mood: Mood; waits?: Resource; share: number } | undefined {
   const n = Math.max(1, Math.round(60 / (f.step || 2)));
   const cpu = recent(f.host.pressure_cpu, n);
   const mem = recent(f.host.pressure_memory, n);
@@ -209,14 +210,13 @@ export function mood(f: Frames): { mood: Mood; waits?: Resource } | undefined {
   const use = recent(f.host.cpu, n) ?? 0;
   if (cpu === undefined || mem === undefined || io === undefined) return undefined;
   // Each resource against its medium-load line; the furthest over is named.
-  const over: [Resource, number][] = [
-    ["memory", mem / 2],
-    ["disks", io / 10],
-    ["processor", cpu / 10],
+  const over: [Resource, number, number][] = [
+    ["memory", mem / 2, mem],
+    ["disks", io / 10, io],
+    ["cpu", cpu / 10, cpu],
   ];
-  const [worst, ratio] = over.reduce((a, b) => (b[1] > a[1] ? b : a));
-  if (mem >= 10 || io >= 25 || cpu >= 40) return { mood: "heavy", waits: worst };
-  if (ratio >= 1) return { mood: "medium", waits: worst };
-  if (use >= 80) return { mood: "medium" };
-  return { mood: use >= 10 ? "light" : "idle" };
+  const [worst, ratio, share] = over.reduce((a, b) => (b[1] > a[1] ? b : a));
+  if (mem >= 10 || io >= 25 || cpu >= 40) return { mood: "heavy", waits: worst, share };
+  if (ratio >= 1) return { mood: "medium", waits: worst, share };
+  return { mood: use >= 80 ? "medium" : use >= 10 ? "light" : "idle", share: use };
 }

@@ -122,18 +122,18 @@ describe("mood", () => {
     }),
   });
   it("is idle or light load while nothing waits", () => {
-    expect(mood(withPressure(0, 0, 0))).toEqual({ mood: "idle" });
-    expect(mood(withPressure(0, 0, 0, 40))).toEqual({ mood: "light" });
+    expect(mood(withPressure(0, 0, 0))).toEqual({ mood: "idle", share: 5 });
+    expect(mood(withPressure(0, 0, 0, 40))).toEqual({ mood: "light", share: 40 });
     expect(mood(emptyFrames())).toBeUndefined();
   });
   it("names what work waits for", () => {
-    expect(mood(withPressure(12, 0, 0))).toEqual({ mood: "medium", waits: "processor" });
-    expect(mood(withPressure(0, 0, 12))).toEqual({ mood: "medium", waits: "disks" });
-    expect(mood(withPressure(0, 15, 0))).toEqual({ mood: "heavy", waits: "memory" });
-    // Disks are further over their line (3x) than the processor (1.2x).
-    expect(mood(withPressure(12, 0, 30))).toEqual({ mood: "heavy", waits: "disks" });
+    expect(mood(withPressure(12, 0, 0))).toEqual({ mood: "medium", waits: "cpu", share: 12 });
+    expect(mood(withPressure(0, 0, 12))).toEqual({ mood: "medium", waits: "disks", share: 12 });
+    expect(mood(withPressure(0, 15, 0))).toEqual({ mood: "heavy", waits: "memory", share: 15 });
+    // Disks are further over their line (3x) than CPU (1.2x).
+    expect(mood(withPressure(12, 0, 30))).toEqual({ mood: "heavy", waits: "disks", share: 30 });
   });
   it("counts 80% CPU use as medium load", () => {
-    expect(mood(withPressure(0, 0, 0, 90))).toEqual({ mood: "medium" });
+    expect(mood(withPressure(0, 0, 0, 90))).toEqual({ mood: "medium", share: 90 });
   });
 });

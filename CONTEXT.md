@@ -161,7 +161,7 @@ The host less every stack: the OS, the daemon, Caddy, the other core services an
 _Avoid_: system, other, host (the host is the whole machine, core included)
 
 **Pressure**:
-The share of time some task waited for the processor, memory or disks (Linux PSI, the "some" line), for the host and per stack. The overview's mood (idle, light load, medium load, heavy load) comes from it, with processor use telling idle from light load; CPU use alone never makes it "heavy load". The dashboard calls it "Waiting".
+The share of time some task waited for CPU, memory or disks (Linux PSI, the "some" line), for the host and per stack. The overview's mood (idle, light load, medium load, heavy load) comes from it, with CPU usage telling idle from light load; CPU usage alone never makes it "heavy load". The dashboard calls it "Waiting".
 _Avoid_: load, load average
 
 ### Configuration

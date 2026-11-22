@@ -79,13 +79,11 @@
     medium: { tone: "warn", word: "medium load" },
     heavy: { tone: "bad", word: "heavy load" },
   };
-  const WAITS: Record<Resource, string> = { processor: "the processor", memory: "memory", disks: "the disks" };
+  const WAITS: Record<Resource, string> = { cpu: "CPU wait", memory: "Memory wait", disks: "Disk wait" };
   const line = $derived.by(() => {
     if (!health) return live.connected ? "Collecting readings…" : "Connecting…";
-    const on = health.waits && WAITS[health.waits];
-    if (health.mood === "heavy") return `Work keeps waiting for ${on}, see the Waiting chart`;
-    if (health.mood === "medium") return on ? `Some work waits for ${on}` : "The processor is above 80%";
-    return "";
+    if (health.mood === "idle" || health.mood === "light") return "";
+    return `${health.waits ? WAITS[health.waits] : "CPU usage"} ${pct(health.share)}`;
   });
 
   const pct = (v: number) => (v > 0 && v < 0.1 ? "<0.1%" : v < 10 ? `${v.toFixed(1)}%` : `${Math.round(v)}%`);
@@ -120,8 +118,8 @@
     <div class="flex flex-wrap items-center gap-2">
       <h1 class="text-xl font-semibold">
         <Help label="Overview">
-          Over the last minute. Idle and light load: nothing waits, with the processor under or over 10%. Medium and heavy load: work
-          waits for the processor, memory or disks.
+          Over the last minute. Idle and light load: nothing waits, with CPU usage under or over 10%. Medium and heavy load: work waits
+          for CPU, memory or disks.
         </Help>
       </h1>
       {#if health}
@@ -134,7 +132,7 @@
 
 <section aria-label="Right now" class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
   <div class="card">
-    <p class="text-muted">Processor</p>
+    <p class="text-muted">CPU usage</p>
     <p class="mt-1 text-lg tabular-nums">{cpuNow === undefined ? "–" : pct(cpuNow)}</p>
     <p class="text-xs text-muted">{cores ? `of ${cores} cores` : ""}</p>
   </div>
@@ -146,7 +144,7 @@
   <div class="card">
     <p class="text-muted">Temperature</p>
     <p class="mt-1 text-lg tabular-nums">{tempCpu === undefined ? "–" : degrees(tempCpu)}</p>
-    <p class="text-xs text-muted">processor{tempDisk === undefined ? "" : ` · system disk ${degrees(tempDisk)}`}</p>
+    <p class="text-xs text-muted">CPU{tempDisk === undefined ? "" : ` · system disk ${degrees(tempDisk)}`}</p>
   </div>
   <a class="card block hover:bg-sunken" href="/storage">
     <p class="text-muted">Storage</p>
@@ -186,12 +184,12 @@
   <div class="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 {reloading ? 'opacity-60' : ''}">
     <section class="card min-w-0">
       <h2 class="font-semibold">
-        <Help label="Processor">
-          Share of the whole processor ({cores || "all"} cores) each stack used. Core is the host itself: System Services are the
+        <Help label="CPU usage">
+          Share of total CPU ({cores || "all"} cores) each stack used. Core is the host itself: System Services are the
           system's services and this dashboard, User Sessions are logins and what they start, Kernel is the system's own work.
         </Help>
       </h2>
-      <Chart at={shown.at} lines={byScope(shown, "cpu", hues, title)} stacked format={pct} floor={5} ceiling={100} label="Processor use by stack" />
+      <Chart at={shown.at} lines={byScope(shown, "cpu", hues, title)} stacked format={pct} floor={5} ceiling={100} label="CPU usage by stack" />
     </section>
     <section class="card min-w-0">
       <h2 class="font-semibold">
@@ -213,17 +211,17 @@
     <section class="card min-w-0">
       <h2 class="font-semibold">
         <Help label="Waiting">
-          Share of the time some work waited for the processor, memory or disks. Short spikes are normal; a line that stays up means
+          Share of the time some work waited for CPU, memory or disks. Short spikes are normal; a line that stays up means
           the host is short of that resource.
         </Help>
       </h2>
       <Chart
         at={shown.at}
-        lines={[...two("Processor", shown.host.pressure_cpu, "Memory", shown.host.pressure_memory), { label: "Disks", hue: PAIR_HUES[2]!, values: shown.host.pressure_io }]}
+        lines={[...two("CPU", shown.host.pressure_cpu, "Memory", shown.host.pressure_memory), { label: "Disks", hue: PAIR_HUES[2]!, values: shown.host.pressure_io }]}
         format={pct}
         floor={5}
         ceiling={100}
-        label="Time spent waiting for processor, memory and disks"
+        label="Time spent waiting for CPU, memory and disks"
       />
     </section>
     <section class="card min-w-0">
@@ -236,7 +234,7 @@
     </section>
     <section class="card min-w-0">
       <h2 class="font-semibold">Temperature</h2>
-      <Chart at={shown.at} lines={two("Processor", shown.temp_cpu, "System disk", shown.temp_disk)} format={degrees} floor={60} label="Temperatures" />
+      <Chart at={shown.at} lines={two("CPU", shown.temp_cpu, "System disk", shown.temp_disk)} format={degrees} floor={60} label="Temperatures" />
     </section>
   </div>
 {:else if range !== "live" && history.isPending}
