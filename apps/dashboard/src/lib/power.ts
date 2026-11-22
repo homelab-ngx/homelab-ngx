@@ -26,10 +26,15 @@ export function powerHref(action: PowerAction, from: string, back: string): stri
 
 /**
  * stopping: the daemon answers and stops the host; failed: it could not;
- * down: gone, the countdown runs; late: past the countdown, still checking;
- * back: answering from a new boot; off: a poweroff went through.
+ * ready: the stacks are stopped and the pools unmounted, and the host is
+ * handed to systemd; down: gone, the countdown runs; late: past the
+ * countdown, still checking; back: answering from a new boot; off: a
+ * poweroff went through.
  */
-export type Stage = "stopping" | "failed" | "down" | "late" | "back" | "off";
+export type Stage = "stopping" | "failed" | "ready" | "down" | "late" | "back" | "off";
+
+/** The host is gone, or back from a new boot: the old boot's steps are all it said. */
+export const gone = (stage: Stage) => stage === "down" || stage === "late" || stage === "back" || stage === "off";
 
 export interface PowerView {
   stage: Stage;
@@ -61,6 +66,7 @@ export function powerView(i: PowerInput): PowerView {
   if (i.reachable && i.status) {
     if (i.from && i.status.boot_id !== i.from) return { ...base, stage: "back", done: 1, left: 0 };
     if (i.status.phase === "failed") return { ...base, stage: "failed", error: i.status.error ?? "" };
+    if (i.status.phase === "going_down") return { ...base, stage: "ready" };
     return { ...base, stage: "stopping" };
   }
   if (i.action === "poweroff") return { ...base, stage: "off" };
@@ -76,9 +82,46 @@ export function clock(seconds: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** A step's state as a status word and tone. */
-export function stepState(s: PowerStep): { tone: "ok" | "warn" | "bad" | "info" | "idle"; word: string } {
+export type MilestoneState = "done" | "active" | "waiting";
+export interface Milestone {
+  label: string;
+  state: MilestoneState;
+}
+
+// How far the old boot got, by the last phase read from it.
+const reached: Partial<Record<PowerStatus["phase"], number>> = { stopping_stacks: 0, unmounting: 1, going_down: 2, failed: 2 };
+
+/**
+ * The shutdown's milestones: the stacks stopped, the pools unmounted, then
+ * the reboot and the host back (or the host off). `phase` is the last phase
+ * read from the old boot; `sawReady` whether a read said it was ready. A
+ * milestone the page did not see reached stays waiting.
+ */
+export function milestones(action: PowerAction, stage: Stage, phase: PowerStatus["phase"] | undefined, sawReady: boolean): Milestone[] {
+  const at = sawReady ? 2 : (reached[phase ?? "idle"] ?? -1);
+  const step = (n: number): MilestoneState => (at > n ? "done" : at === n && stage === "stopping" ? "active" : "waiting");
+  const out: Milestone[] = [
+    { label: "stacks stopped", state: step(0) },
+    { label: "pools unmounted", state: step(1) },
+  ];
+  if (action === "poweroff") {
+    out.push({ label: "off", state: stage === "off" ? "done" : stage === "ready" ? "active" : "waiting" });
+    return out;
+  }
+  const away = stage === "ready" || stage === "down" || stage === "late";
+  out.push({ label: "rebooting", state: stage === "back" ? "done" : away ? "active" : "waiting" });
+  out.push({ label: "back", state: stage === "back" ? "done" : "waiting" });
+  return out;
+}
+
+/**
+ * A step's state as a status word and tone. Once the host is gone a step it
+ * last reported unfinished is "not seen": it may have finished, but the page
+ * cannot say.
+ */
+export function stepState(s: PowerStep, hostGone = false): { tone: "ok" | "warn" | "bad" | "info" | "idle"; word: string } {
   const mount = s.kind === "mount";
+  if (hostGone && (s.state === "waiting" || s.state === "working")) return { tone: "idle", word: "not seen" };
   switch (s.state) {
     case "done":
       return { tone: "ok", word: mount ? "unmounted" : "stopped" };

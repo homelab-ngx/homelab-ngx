@@ -91,6 +91,11 @@ type Service struct {
 	release  func()        // the delay lock; nil when not held
 	expected time.Duration
 	ctx      context.Context // the daemon's lifetime, for the sequence
+	readAt   time.Time       // the last status read
+	downSeen chan struct{}   // closed when a read has reported going_down; nil once closed
+
+	watchWindow time.Duration // a read this recent means a page follows the shutdown
+	lingerMax   time.Duration // the longest the host waits for that page
 }
 
 // New makes the service. busy lists the work a reboot would interrupt.
@@ -102,6 +107,7 @@ func New(stacks Stacks, mounts Mounts, logind Logind, meta Meta, r cmdrunner.Run
 		stacks: stacks, mounts: mounts, logind: logind, meta: meta, r: r, busy: busy, log: log,
 		now: time.Now, bootID: readBootID(), st: PowerStatus{Phase: PhaseIdle, Steps: []PowerStep{}},
 		expected: defaultReboot, ctx: context.Background(),
+		watchWindow: 3 * time.Second, lingerMax: 3 * time.Second,
 	}
 }
 
@@ -205,7 +211,7 @@ func (s *Service) prepare(ctx context.Context, start bool, a PowerAction) {
 func (s *Service) callOff(ctx context.Context) {
 	s.mu.Lock()
 	was := s.running
-	s.running, s.seqDone = false, nil
+	s.running, s.seqDone, s.downSeen = false, nil, nil
 	s.st = PowerStatus{Phase: PhaseIdle, Steps: []PowerStep{}}
 	s.mu.Unlock()
 	if was {
@@ -288,6 +294,7 @@ func (s *Service) sequence(ctx context.Context, a PowerAction, kill bool) bool {
 	now := s.now()
 	s.mu.Lock()
 	s.st = PowerStatus{Action: a, Phase: PhaseStacks, StartedAt: &now, Steps: []PowerStep{}}
+	s.downSeen = make(chan struct{})
 	s.mu.Unlock()
 
 	names, err := s.stacks.Running(ctx)
@@ -349,7 +356,31 @@ func (s *Service) sequence(ctx context.Context, a PowerAction, kill bool) bool {
 		}
 	}
 	s.phase(PhaseDown)
+	s.linger(ctx)
 	return ctx.Err() == nil
+}
+
+// linger keeps the host up until a page that follows the shutdown has read
+// that it is ready, for at most lingerMax. A page reads once a second, and
+// systemd stops the web server soon after the host is handed over: without
+// the wait, the page keeps the last step it saw, half done. With no page
+// reading, there is no wait.
+func (s *Service) linger(ctx context.Context) {
+	s.mu.Lock()
+	watched := !s.readAt.IsZero() && s.now().Sub(s.readAt) < s.watchWindow
+	seen := s.downSeen
+	s.mu.Unlock()
+	if !watched || seen == nil {
+		return
+	}
+	t := time.NewTimer(s.lingerMax)
+	defer t.Stop()
+	select {
+	case <-seen:
+	case <-t.C:
+		s.log.Info("no page read that the host is ready; going down anyway")
+	case <-ctx.Done():
+	}
 }
 
 func (s *Service) add(st PowerStep) {
@@ -382,8 +413,14 @@ func (s *Service) fail(msg string) {
 }
 
 // Status is the shutdown under way, if any, with what the countdown needs.
+// Each read marks a page as following the shutdown (see linger).
 func (s *Service) Status(ctx context.Context) PowerStatus {
 	s.mu.Lock()
+	s.readAt = s.now()
+	if s.st.Phase == PhaseDown && s.downSeen != nil {
+		close(s.downSeen)
+		s.downSeen = nil
+	}
 	st := s.st
 	st.Steps = append([]PowerStep{}, s.st.Steps...)
 	st.ExpectedSeconds = int(s.expected.Seconds())

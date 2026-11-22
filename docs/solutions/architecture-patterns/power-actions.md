@@ -41,7 +41,9 @@ pool could be unmounted while a container still wrote to it.
      on its scope);
   3. syncs and unmounts what is mounted under `/var/mnt`, deepest first,
      trying a busy mount 3 times 2 s apart;
-  4. writes `power_last` to the database, then closes the lock.
+  4. writes `power_last` to the database;
+  5. waits for a page to read the status as `going_down`, then closes the
+     lock (see the next point).
 
   On an installed image, `systemctl reboot` logs "The system will reboot
   now!", then the stack unit and `var-mnt-*.mount` stop, then logind logs
@@ -56,6 +58,14 @@ pool could be unmounted while a container still wrote to it.
   (`/usr/lib/systemd/logind.conf.d/10-homelab.conf`). logind's default is
   5 s, too short for one stack to halt. A daemon that hangs delays a
   shutdown by 5 minutes at most.
+- **The host waits for the power page to see it ready.** The page reads
+  `GET /system/power` once a second. Once the lock closes, systemd stops
+  Caddy within about half a second. Without a wait, the page kept the last
+  step it read, such as a pool still unmounting. So when a read came in
+  during the last 3 s, the sequence waits after the last unmount until a
+  read returns `going_down`, for 3 s at most. With no page open, there is
+  no wait. A page that saw `going_down` shows every milestone done. One
+  that did not marks the steps it saw unfinished as "not seen".
 - **`POST /system/power` runs the sequence before it asks logind**, so the
   steps run even when the lock could not be taken. When logind then signals,
   the lock goes at once. If logind refuses the call, the daemon runs

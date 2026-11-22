@@ -554,7 +554,8 @@ export function power(h: Host, action: "reboot" | "poweroff", force: boolean, th
     set("mount", "done");
     h.power.phase = "going_down";
   });
-  later(h, 6000, () => {
+  // The daemon keeps the host up until a page has read that it is ready.
+  later(h, 7000, () => {
     if (action === "poweroff") {
       h.downUntil = Infinity;
       return;

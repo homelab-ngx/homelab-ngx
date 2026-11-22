@@ -150,7 +150,17 @@ func newRig(t *testing.T) *rig {
 	}
 	r.svc = New(r.stacks, r.mounts, r.logind, r.meta, r.run, nil, func(context.Context) []string { return r.busy })
 	r.svc.bootID = "boot-1"
+	// Tests that read the status before a shutdown do not wait long for a
+	// page to see it ready; the tests of that wait set their own.
+	r.svc.lingerMax = 50 * time.Millisecond
 	return r
+}
+
+// phase is the phase now, read without counting as a page's read.
+func (r *rig) phase() PowerPhase {
+	r.svc.mu.Lock()
+	defer r.svc.mu.Unlock()
+	return r.svc.st.Phase
 }
 
 func (r *rig) wait(t *testing.T) PowerAction {
@@ -443,4 +453,54 @@ func TestTheLockWaitsForASequenceTheAPIStarted(t *testing.T) {
 	if slices.Index(got, "release lock") < slices.Index(got, "unmount /var/mnt/media") {
 		t.Fatalf("journal %v", got)
 	}
+}
+
+func TestTheHostWaitsUntilAWatchingPageSeesItReady(t *testing.T) {
+	r := newRig(t)
+	r.svc.lingerMax = time.Minute
+	ctx := context.Background()
+	r.svc.Status(ctx) // a page follows the shutdown
+	if err := r.svc.Request(ctx, Reboot, false, false); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for r.phase() != PhaseDown {
+		if time.Now().After(deadline) {
+			t.Fatalf("never ready; journal %v", r.j.list())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	select {
+	case <-r.logind.down:
+		t.Fatal("handed to logind before a page saw the host ready")
+	case <-time.After(100 * time.Millisecond):
+	}
+	if st := r.svc.Status(ctx); st.Phase != PhaseDown {
+		t.Fatalf("phase %s", st.Phase)
+	}
+	r.wait(t)
+}
+
+func TestNoPageNoWait(t *testing.T) {
+	r := newRig(t)
+	r.svc.lingerMax = time.Minute
+	start := time.Now()
+	if err := r.svc.Request(context.Background(), Reboot, false, false); err != nil {
+		t.Fatal(err)
+	}
+	r.wait(t)
+	if d := time.Since(start); d > time.Second {
+		t.Fatalf("waited %s with no page reading", d)
+	}
+}
+
+func TestTheWaitForAPageHasALimit(t *testing.T) {
+	r := newRig(t)
+	r.svc.lingerMax = 100 * time.Millisecond
+	ctx := context.Background()
+	r.svc.Status(ctx) // a page reads once, then is closed
+	if err := r.svc.Request(ctx, Reboot, false, false); err != nil {
+		t.Fatal(err)
+	}
+	r.wait(t)
 }
