@@ -170,6 +170,32 @@ func TestStartStartsTheUnitAndInterruptedIsClosed(t *testing.T) {
 	}
 }
 
+// A build's unit caps its memory, so the page cache of what it writes is
+// reclaimed first; the other kinds run without the cap.
+func TestStartCapsABuildsMemory(t *testing.T) {
+	t.Parallel()
+	for kind, want := range map[string]bool{KindBuild: true, KindCoreUpdate: false} {
+		f := cmdrunnertest.NewFake()
+		f.On("systemctl", "is-active", deployUnit).FailCode(3, "inactive\n")
+		f.On("systemd-run").Reply("")
+		m := New(f, t.TempDir())
+		m.SetImage(true)
+		m.SetDeploy(DeployConfig{Source: "github:o/r", Exe: "/bin/daemon", Socket: "/s"})
+		if _, err := m.StartImage(context.Background(), kind, ""); err != nil {
+			t.Fatal(err)
+		}
+		run := f.CallsMatching("systemd-run")
+		if len(run) != 1 {
+			t.Fatalf("%s: systemd-run calls: %+v", kind, run)
+		}
+		args := strings.Join(run[0].Args, " ")
+		if got := strings.Contains(args, "--property=MemoryHigh="+buildMemoryHigh+" "); got != want ||
+			strings.Index(args, "MemoryHigh") > strings.Index(args, " -- ") {
+			t.Errorf("%s: MemoryHigh %v, want %v: %s", kind, got, want, args)
+		}
+	}
+}
+
 type fakePower struct{ asked []power.PowerAction }
 
 func (f *fakePower) Request(_ context.Context, a power.PowerAction, force, _ bool) error {

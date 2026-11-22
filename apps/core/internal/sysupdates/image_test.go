@@ -319,3 +319,12 @@ func TestGitURL(t *testing.T) {
 		}
 	}
 }
+
+func TestBuildJobs(t *testing.T) {
+	for env, want := range map[string]string{"": "1", "4": "4", " auto ": "auto", "0": "1", "-2": "1", "two": "1"} {
+		t.Setenv(buildJobsEnv, env)
+		if got := buildJobs(); got != want {
+			t.Errorf("%s=%q: %q, want %q", buildJobsEnv, env, got, want)
+		}
+	}
+}

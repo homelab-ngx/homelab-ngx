@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # build.sh [VERSION]: the image (mkosi, Arch) and the core extension (Nix)
 # into image/out, named for systemd-sysupdate:
-#   homelab_VERSION.raw                     the whole disk (installer, VM)
+#   homelab_VERSION.raw                     the whole disk (installer, VM; not
+#                                           for an update, see below)
 #   homelab_VERSION.efi                     the UKI
 #   homelab_VERSION.root.UUID.raw           one root slot, and its verity hash
 #   homelab_VERSION.root-verity.UUID.raw
@@ -20,6 +21,12 @@
 # $HOMELAB_IMAGE_CACHE (default /var/cache/homelab-image). Needs sudo, or
 # root: the image host's daemon builds its own updates with this script.
 # HOMELAB_IMAGE_OUT moves the output (default image/out).
+#
+# mkosi keeps the snapshot's packages in the cache, so a second build
+# downloads none. HOMELAB_IMAGE_UPDATE=1 builds an update for the host it
+# runs on (the daemon sets it): mkosi starts from the OS tree of the build
+# before (Incremental=) when the packages are the same, and the whole-disk
+# .raw, which only an installer needs, is removed.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
@@ -44,6 +51,10 @@ bootstrap_date=2026.11.01
 bootstrap_sha256=655bc99849b80859173fa39338a6c910185e952173f6a1a61526cfa34ab8339c
 
 buildroot=$cache/buildroot-${snapshot//\//-}
+# mkosi's package cache and, for updates, its incremental cache, both for
+# this snapshot only.
+mkcache=$cache/mkosi-${snapshot//\//-}
+update=${HOMELAB_IMAGE_UPDATE:-}
 nspawn() {
   $sudo systemd-nspawn -q -D "$buildroot" --resolv-conf=copy-host --pipe \
     --setenv=PATH=/usr/local/sbin:/usr/local/bin:/usr/bin "$@" 2> >(grep -v 'future version of systemd-nspawn' >&2)
@@ -72,7 +83,9 @@ mkdir -p "$out/core"
 # An earlier build of the same version leaves root files with other UUIDs,
 # which SHA256SUMS would list next to this build's.
 $sudo rm -f "$out"/homelab_"$version".* "$out/core/homelab-core_$version.raw"
-$sudo mkdir -p "$cache/mkosi"
+# Another snapshot's caches are of no further use.
+$sudo find "$cache" -mindepth 1 -maxdepth 1 -name 'mkosi*' ! -path "$mkcache" -exec rm -rf {} +
+$sudo mkdir -p "$mkcache/images" "$mkcache/packages"
 
 # The core extension first: the disk image is also the installer stick, and
 # its /var starts with the core (where sysupdate keeps it) and the marker
@@ -90,10 +103,18 @@ ln -s "/var/lib/extensions.d/homelab-core_$version.raw" "$tree/var/lib/extension
 echo "Remove this file and the system leaves installer mode." > "$tree/var/lib/homelab/installer"
 $sudo chown -R 0:0 "$tree"
 
-nspawn --bind="$here:/work" --bind="$out:/out" --bind="$cache/mkosi:/cache" --chdir=/work/base \
-  /usr/bin/mkosi --image-version "$version" --output-directory /out \
-  --cache-directory /cache --extra-tree=/out/var-tree:/ --force build
-$sudo rm -rf "$tree"
+# mkosi's workspace is in the /out bind, so it renames its outputs into
+# place: from another mount it copies them, gigabytes each time.
+work=$out/.mkosi-work
+$sudo rm -rf "$work"
+mkdir -p "$work"
+nspawn --bind="$here:/work" --bind="$out:/out" --bind="$mkcache:/cache" --chdir=/work/base \
+  /usr/bin/mkosi --image-version "$version" --output-directory /out --workspace-directory /out/.mkosi-work \
+  --cache-directory /cache/images --package-cache-dir /cache/packages \
+  ${update:+--incremental=yes} --extra-tree=/out/var-tree:/ --force build
+$sudo rm -rf "$tree" "$work"
+# An update needs no installer image; repart writes it with the split files.
+[ -z "$update" ] || $sudo rm -f "$out/homelab_$version.raw"
 $sudo chown -R "$(id -u):$(id -g)" "$out"
 
 # sysupdate reads a manifest in each folder.

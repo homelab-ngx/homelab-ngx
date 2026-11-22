@@ -58,6 +58,26 @@ var (
 	imageBuildTime  = 2 * time.Hour
 )
 
+// buildJobsEnv in the daemon's environment file sets how many Nix builds a
+// build of main runs at once: a number, or "auto" for one per CPU. Unset,
+// it is one, since the host keeps its stacks running meanwhile.
+const buildJobsEnv = "HOMELAB_BUILD_JOBS"
+
+var buildJobsRE = regexp.MustCompile(`^(auto|[1-9][0-9]*)$`)
+
+// buildJobs is the Nix build jobs a build of main runs with.
+func buildJobs() string {
+	j := strings.TrimSpace(os.Getenv(buildJobsEnv))
+	if j == "" {
+		return "1"
+	}
+	if !buildJobsRE.MatchString(j) {
+		log.Warn("ignoring a bad build job count; building one at a time", "env", buildJobsEnv, "value", j)
+		return "1"
+	}
+	return j
+}
+
 // Errors of the image operations.
 var (
 	ErrNotImageHost = errors.New("this host does not run the homelab image, so it has no updates")
@@ -366,8 +386,10 @@ func (x *deployRun) build(ctx context.Context) (string, string) {
 	out := filepath.Join(imageBuildDir, "out")
 	_ = os.RemoveAll(out)
 	// Run through its shebang: cmdrunner refuses a shell as the command.
-	// One Nix build at a time: the host keeps its stacks running meanwhile.
-	if _, err := x.cmd(ctx, imageBuildTime, []string{"HOMELAB_IMAGE_CACHE=" + imageBuildDir, "HOMELAB_IMAGE_OUT=" + out, "HOMELAB_BUILD_JOBS=1"},
+	// HOMELAB_IMAGE_UPDATE: only what an update needs, no installer image,
+	// and mkosi reuses the OS tree of the build before.
+	if _, err := x.cmd(ctx, imageBuildTime, []string{"HOMELAB_IMAGE_CACHE=" + imageBuildDir, "HOMELAB_IMAGE_OUT=" + out,
+		buildJobsEnv + "=" + buildJobs(), "HOMELAB_IMAGE_UPDATE=1"},
 		filepath.Join(src, "image", "build.sh")); err != nil {
 		return DeployBuildFailed, "the build failed: " + err.Error()
 	}
@@ -387,9 +409,10 @@ func (x *deployRun) build(ctx context.Context) (string, string) {
 	return DeployHealthy, ""
 }
 
-// stage copies version v's UKI, root slot and core extension from out into
-// the update folder and keeps the newest imageKeep of each.
-func stage(out, v string) error { return stageWith(out, v, copyFile) }
+// stage moves version v's UKI, root slot and core extension from out into
+// the update folder and keeps the newest imageKeep of each. The build's out
+// is on /var with the update folder, so the files are renamed, not copied.
+func stage(out, v string) error { return stageWith(out, v, moveFile) }
 
 // stageWith is stage with put moving each file into place.
 func stageWith(out, v string, put func(from, to string) error) error {

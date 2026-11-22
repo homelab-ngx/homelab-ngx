@@ -28,6 +28,8 @@ const (
 	keepDeploys = 30
 	// A record still "running" this long after its unit is gone was killed.
 	deployStartGrace = 20 * time.Second
+	// The memory a build's unit uses before the kernel reclaims its cache.
+	buildMemoryHigh = "4G"
 )
 
 // CoreDeploy results.
@@ -161,11 +163,17 @@ func (m *Module) start(ctx context.Context, kind string, extra ...string) (CoreD
 		"--socket", m.dep.Socket, "--state", st.path,
 	}
 	// A release server other than the default (the image check's) reaches
-	// the download in its unit.
-	for _, k := range []string{releaseURLEnv, releaseKeyringEnv} {
+	// the download in its unit, and a build's job count the build.
+	for _, k := range []string{releaseURLEnv, releaseKeyringEnv, buildJobsEnv} {
 		if v := os.Getenv(k); v != "" {
 			args = slices.Insert(args, 1, "--setenv="+k+"="+v)
 		}
+	}
+	// A build writes gigabytes, and their page cache counts to the unit.
+	// Above this it is reclaimed first, before it crowds out the stacks.
+	// Nix's builds are not in this unit: they run in nix-daemon's.
+	if kind == KindBuild {
+		args = slices.Insert(args, 1, "--property=MemoryHigh="+buildMemoryHigh)
 	}
 	args = append(args, extra...)
 	rctx, cancel := context.WithTimeout(ctx, errDeployStartTimeout)

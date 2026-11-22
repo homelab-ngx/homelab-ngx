@@ -204,6 +204,38 @@ pinned) and runs Arch's own mkosi in it under `systemd-nspawn`. It needs
 sudo, and lives in `/var/cache/homelab-image`, outside any checkout, since it
 is root-owned.
 
+## A build of main on the host
+
+The daemon runs `image/build.sh` in the transient unit
+`homelab-core-deploy.service`. A build of main took 6 minutes there, and the
+unit reported a 9.9 GB memory peak. These keep it smaller:
+
+- mkosi's package cache lives in `mkosi-<snapshot>` next to the build root.
+  Without `--package-cache-dir`, mkosi 27 kept the packages in a folder that
+  did not survive the build, and every build downloaded them all again. The
+  snapshot is pinned, so the cache stays valid until it moves. A build
+  removes the cache folders of other snapshots.
+- mkosi's workspace is in the output folder's bind. In `/var/tmp` of the
+  build root, it is on another mount than `/out`, and mkosi copies each
+  output ("falling back to copying") instead of renaming it.
+- The daemon sets `HOMELAB_IMAGE_UPDATE=1`. Then mkosi runs with
+  `--incremental=yes`, which reuses the OS tree after its packages are
+  installed, and the whole-disk `.raw` is removed. systemd-repart writes
+  that file with the split files, and cannot skip it. Releases and
+  `make image` build without this setting.
+- The ESP has `SplitName=-`. Nothing reads a split ESP: an update takes the
+  UKI, and an install makes its own ESP.
+- The daemon moves the files into the update folder. Both are on `/var`, so
+  a move is a rename.
+- The unit has `MemoryHigh=4G`. Most of the peak was page cache from the
+  files the build writes. Above 4 GB the kernel reclaims that cache first.
+  The Nix builds do not count: they run in `nix-daemon.service`.
+
+`HOMELAB_BUILD_JOBS` in `/var/lib/homelab/daemon.env` sets how many Nix
+builds run at once: a number, or `auto` for one per CPU. It defaults to 1,
+since the stacks keep running during the build. Each job still uses every
+CPU.
+
 ## Verity slots and sysupdate
 
 - Each root slot is a data and a hash partition (`Verity=data`/`hash`,
