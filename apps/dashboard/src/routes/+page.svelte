@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createQuery, keepPreviousData } from "@tanstack/svelte-query";
+  import { ChevronRight } from "@lucide/svelte";
   import { api, call, describe, type Schema } from "#lib/api/client.ts";
   import { fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
   import Chart from "#lib/components/Chart.svelte";
@@ -7,7 +8,7 @@
   import Pill, { type Tone } from "#lib/components/Pill.svelte";
   import { bytes } from "#lib/format.ts";
   import { LiveMetrics } from "#lib/live-metrics.svelte.ts";
-  import { byScope, latest, mood, PAIR_HUES, stackHues, type Frames, type Line, type Mood } from "#lib/metrics.ts";
+  import { byScope, CORE_HUE, latest, mood, PAIR_HUES, PARTS, stackHues, type Frames, type Line, type Mood } from "#lib/metrics.ts";
   import { stackTitles } from "#lib/stacks.ts";
   import { capacity } from "#lib/storage.ts";
 
@@ -94,6 +95,13 @@
       return { ...l, cpu: latest(l.values), memory: latest(s?.memory), rx: latest(s?.net_rx), tx: latest(s?.net_tx) };
     }),
   );
+  /** Core's parts fold into one row; the stacks follow it. */
+  const parts = $derived(rows.slice(0, PARTS.length).map((r, i) => ({ ...r, label: PARTS[i]!.short })));
+  const stackRows = $derived(rows.slice(PARTS.length));
+  const total = (vs: (number | undefined)[]) =>
+    vs.some((v) => v !== undefined) ? vs.reduce<number>((t, v) => t + (v ?? 0), 0) : undefined;
+  const core = $derived({ cpu: total(parts.map((p) => p.cpu)), memory: total(parts.map((p) => p.memory)) });
+  let coreOpen = $state(false);
 </script>
 
 <svelte:head><title>Overview · Homelab-ngx</title></svelte:head>
@@ -173,7 +181,7 @@
       <h2 class="font-semibold">
         <Help label="Processor">
           Share of the whole processor ({cores || "all"} cores) each stack used. Core is the host itself: Services are system services
-          and this dashboard, Claude is login sessions, Kernel is the system's own work.
+          and this dashboard, Sessions are logins and what they start, Kernel is the system's own work.
         </Help>
       </h2>
       <Chart at={shown.at} lines={byScope(shown, "cpu", hues, title)} stacked format={pct} floor={5} ceiling={100} label="Processor use by stack" />
@@ -238,13 +246,46 @@
         <thead class="bg-sunken">
           <tr>
             <th class="label px-3 py-2">Stack</th>
-            <th class="label px-3 py-2 text-right">Processor</th>
+            <th class="label px-3 py-2 text-right">CPU</th>
             <th class="label px-3 py-2 text-right">Memory</th>
             <th class="label px-3 py-2 text-right max-md:hidden">Network</th>
           </tr>
         </thead>
         <tbody>
-          {#each rows as r (r.label)}
+          <tr class="border-t border-line">
+            <td class="px-3 py-2">
+              <span class="inline-flex items-center gap-2">
+                <span aria-hidden="true" class="swatch size-2.5 rounded-full" style:--light={CORE_HUE.light} style:--dark={CORE_HUE.dark}></span>
+                <button
+                  type="button"
+                  class="inline-flex items-center gap-1.5 hover:text-accent"
+                  aria-expanded={coreOpen}
+                  aria-controls={PARTS.map((p) => `part-${p.key}`).join(" ")}
+                  onclick={() => (coreOpen = !coreOpen)}
+                >
+                  Core
+                  <ChevronRight class="size-3.5 text-muted transition-transform {coreOpen ? 'rotate-90' : ''}" aria-hidden="true" />
+                </button>
+              </span>
+            </td>
+            <td class="px-3 py-2 text-right tabular-nums">{core.cpu === undefined ? "–" : pct(core.cpu)}</td>
+            <td class="px-3 py-2 text-right tabular-nums">{core.memory === undefined ? "–" : bytes(core.memory)}</td>
+            <td class="px-3 py-2 text-right tabular-nums max-md:hidden">–</td>
+          </tr>
+          {#each parts as r, i (r.label)}
+            <tr id="part-{PARTS[i]!.key}" class="border-t border-line bg-sunken" hidden={!coreOpen}>
+              <td class="py-1.5 pr-3 pl-8">
+                <span class="inline-flex items-center gap-2">
+                  <span aria-hidden="true" class="swatch size-2 rounded-full" style:--light={r.hue.light} style:--dark={r.hue.dark}></span>
+                  {r.label}
+                </span>
+              </td>
+              <td class="px-3 py-1.5 text-right tabular-nums">{r.cpu === undefined ? "–" : pct(r.cpu)}</td>
+              <td class="px-3 py-1.5 text-right tabular-nums">{r.memory === undefined ? "–" : bytes(r.memory)}</td>
+              <td class="px-3 py-1.5 text-right tabular-nums max-md:hidden">–</td>
+            </tr>
+          {/each}
+          {#each stackRows as r (r.label)}
             <tr class="border-t border-line">
               <td class="px-3 py-2">
                 <span class="inline-flex items-center gap-2">

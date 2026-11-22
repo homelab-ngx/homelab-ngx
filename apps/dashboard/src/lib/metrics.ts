@@ -154,11 +154,14 @@ export function stackHues(names: string[]): Map<string, Hue> {
   return new Map(sorted.map((n, i) => [n, STACK_HUES[i] ?? OTHER_HUE]));
 }
 
-/** The parts of the server that are not stacks, as the charts show them. */
-export const PARTS: { key: "services" | "sessions" | "kernel"; label: string; hue: Hue; href?: string }[] = [
-  { key: "services", label: "Core (Services)", hue: CORE_HUE, href: "/settings" },
-  { key: "sessions", label: "Sessions", hue: SESSIONS_HUE },
-  { key: "kernel", label: "Core (Kernel)", hue: KERNEL_HUE },
+/**
+ * The parts of the server that are not stacks: label is how the charts name
+ * one, short how it reads under Core in the table.
+ */
+export const PARTS: { key: "services" | "sessions" | "kernel"; label: string; short: string; hue: Hue }[] = [
+  { key: "services", label: "Core (Services)", short: "Services", hue: CORE_HUE },
+  { key: "sessions", label: "Sessions", short: "Sessions", hue: SESSIONS_HUE },
+  { key: "kernel", label: "Core (Kernel)", short: "Kernel", hue: KERNEL_HUE },
 ];
 
 /** A chart line; series is the scope it was drawn from, when it is one. */
@@ -170,7 +173,7 @@ export type Line = { label: string; hue: Hue; values: Col; href?: string; series
  * the palette are summed into "Other".
  */
 export function byScope(f: Frames, fig: "cpu" | "memory", hues: Map<string, Hue>, title: (stack: string) => string = (n) => n): Line[] {
-  const lines: Line[] = PARTS.map((p) => ({ label: p.label, hue: p.hue, values: f[p.key][fig], href: p.href, series: f[p.key] }));
+  const lines: Line[] = PARTS.map((p) => ({ label: p.label, hue: p.hue, values: f[p.key][fig], series: f[p.key] }));
   let other: Col | undefined;
   for (const name of Object.keys(f.stacks).sort()) {
     const hue = hues.get(name);
