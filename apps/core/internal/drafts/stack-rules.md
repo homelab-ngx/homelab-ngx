@@ -13,7 +13,7 @@ Unknown fields are refused. Fields:
   - `"env"`: a plain value. No default in the manifest: the value the module sets is the default. Optional `"type"` (`string`, `number`, `boolean`) and `"enum"` (allowed values).
   - `"secret"`: write-only, no default.
   - `"path"`: a host folder the person picks, bound into the stack at `"mount"` (required; an absolute path inside the stack, used once). Optional `"default"` (a host folder), `"read_only": true`, and `"owner"` / `"group"`: a user and a group the module declares, which then take the host folder's uid and gid. The person makes the folder from the stack's page, which gives it the host's ids for those names; they never pick a number. A path is a grant.
-  - `"address"`: IPv4 addresses or CIDRs, comma-separated, used by egress and ports as `"$NAME"`. No default.
+  - `"address"`: IPv4 addresses or CIDRs, comma-separated, used by egress and ports as `"$NAME"`. The operator may also tick `lan`, `vpn` and `tailnet`, which the stack receives as CIDRs. No default.
   The names `HOMELAB_API_TOKEN`, `HOMELAB_API_URL`, `HOMELAB_DOMAIN` and `HOMELAB_DASHBOARD_URL` are the host's; do not declare them.
 - `"egress"`: `[{ "to": "host" | "<CIDR>" | "$NAME", "port": <n>, "proto": "tcp" | "udp" }]`. The stack reaches the internet and the host's Caddy on 443 without one; the LAN, other host ports, Tailscale and IPv6 are blocked unless opened here. The host's mail relay is `"to": "host", "port": 25`.
 - `"ports"`: `[{ "port": <host port>, "to": <stack port>, "proto": "tcp" | "udp", "from": ["lan" | "<CIDR>" | "$NAME"] }]`, for protocols Caddy cannot carry (RTSP, a game server, a media server's direct connections). Never 22, 53, 80 or 443.

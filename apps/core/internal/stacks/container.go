@@ -57,8 +57,12 @@ type Host struct {
 	// stacks as HOMELAB_DASHBOARD_URL.
 	DashboardURL string
 	// LAN are the host's LAN subnets, the clients a port grant from "lan"
-	// lets through.
-	LAN []string
+	// lets through. VPN is the WireGuard VPN's subnet ("" while it is off)
+	// and Tailnet whether the host is on a tailnet: what the words vpn and
+	// tailnet in an address variable stand for.
+	LAN     []string
+	VPN     string
+	Tailnet bool
 	// GPU is what a version 8 stack with the GPU grant is given.
 	GPU GPU
 	// NetworkDir is where the daemon tells the host's systemd-networkd to

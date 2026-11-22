@@ -210,7 +210,7 @@ func TestRenderWritesAFilePerVariableAndOnlySafeOnesToEnv(t *testing.T) {
 		t.Helper()
 		svc.varsMu.Lock()
 		defer svc.varsMu.Unlock()
-		if err := svc.renderVarsLocked("mail", vars, true); err != nil {
+		if err := svc.renderVarsLocked("mail", Manifest{Version: 6}, vars); err != nil {
 			t.Fatal(err)
 		}
 	}

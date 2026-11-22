@@ -165,7 +165,7 @@
           "not": { "enum": ["HOMELAB_API_TOKEN", "HOMELAB_API_URL", "HOMELAB_DOMAIN", "HOMELAB_DASHBOARD_URL"] }
         },
         "kind": {
-          "description": "env: a plain value. secret: write-only. path: a host folder bound in at mount. address: IPv4 addresses or CIDRs, used by egress and ports as $NAME.",
+          "description": "env: a plain value. secret: write-only. path: a host folder bound in at mount. address: IPv4 addresses or CIDRs (and the words lan, vpn and tailnet, which the operator may tick), used by egress and ports as $NAME.",
           "enum": ["env", "secret", "path", "address"]
         },
         "description": {

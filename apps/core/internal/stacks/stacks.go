@@ -37,7 +37,7 @@ type Service struct {
 	src     Source
 	history History
 	host    Host
-	// hostMu guards host.DashboardURL and host.LAN, which the host settings change.
+	// hostMu guards host.DashboardURL and the host networks (LAN, VPN, Tailnet), which the host settings change.
 	hostMu   sync.RWMutex
 	r        cmdrunner.Runner
 	notifier Notifier
@@ -607,18 +607,19 @@ func revision(rev, url string, m Manifest, at int64) StackRevision {
 }
 
 // SetHostValues changes what the host gives version 8 stacks from now on:
-// the dashboard's address and the LAN. A running stack sees them on its
-// next boot or update.
-func (s *Service) SetHostValues(dashboardURL string, lan []string) {
+// the dashboard's address and the networks "lan" and the address words
+// stand for. A running stack sees them on its next boot or update.
+func (s *Service) SetHostValues(dashboardURL string, nets Nets) {
 	s.hostMu.Lock()
 	defer s.hostMu.Unlock()
-	s.host.DashboardURL, s.host.LAN = dashboardURL, slices.Clone(lan)
+	s.host.DashboardURL, s.host.LAN = dashboardURL, slices.Clone(nets.LAN)
+	s.host.VPN, s.host.Tailnet = nets.VPN, nets.Tailnet
 }
 
-func (s *Service) hostLAN() []string {
+func (s *Service) hostNets() Nets {
 	s.hostMu.RLock()
 	defer s.hostMu.RUnlock()
-	return s.host.LAN
+	return Nets{LAN: s.host.LAN, VPN: s.host.VPN, Tailnet: s.host.Tailnet}
 }
 
 func (s *Service) hostDashboardURL() string {

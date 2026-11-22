@@ -43,14 +43,20 @@ func invalid(format string, a ...any) error {
 }
 
 // Values are what the rest of the daemon reads from the settings: the
-// stacks (domain, dashboard address, LAN), the doctor and the security
-// audit (tunnel, firewall, VPN).
+// stacks (domain, dashboard address, LAN, the VPN's subnet and whether the
+// host is on a tailnet), the doctor and the security audit (tunnel,
+// firewall, VPN).
 type Values struct {
 	Domain       string
 	DashboardURL string
 	LAN          []string
-	Tunnel       config.CloudflareTunnel
-	Security     config.Security
+	// VPN is the WireGuard VPN's subnet, such as 10.10.0.0/24; "" while the
+	// VPN is off or has no address.
+	VPN string
+	// Tailnet is whether Tailscale is on.
+	Tailnet  bool
+	Tunnel   config.CloudflareTunnel
+	Security config.Security
 }
 
 // Applier writes what the host reads from a snapshot of the settings and
@@ -263,7 +269,10 @@ func (s *Service) Get(ctx context.Context) (HostSettings, error) {
 func (s *Service) Values(ctx context.Context) (Values, error) {
 	if s.managed == ManagedNixOS {
 		n := s.nix
-		return Values{Domain: n.Stacks.Domain, DashboardURL: n.Stacks.DashboardURL, LAN: n.Stacks.LAN, Tunnel: n.CloudflareTunnel, Security: n.Security}, nil
+		return Values{
+			Domain: n.Stacks.Domain, DashboardURL: n.Stacks.DashboardURL, LAN: n.Stacks.LAN,
+			Tailnet: n.Security.Tailscale.Enabled, Tunnel: n.CloudflareTunnel, Security: n.Security,
+		}, nil
 	}
 	snap, err := s.snapshot(ctx)
 	if err != nil {
@@ -294,7 +303,12 @@ func RouteTarget(target, domain string) string {
 }
 
 func valuesOf(st HostSettings) Values {
-	v := Values{Domain: st.Domain.Domain, LAN: slices.Clone(st.Network.LAN)}
+	v := Values{Domain: st.Domain.Domain, LAN: slices.Clone(st.Network.LAN), Tailnet: st.Tailscale.Enabled}
+	if st.WireGuard.Enabled {
+		if p, err := netip.ParsePrefix(st.WireGuard.Address); err == nil {
+			v.VPN = p.Masked().String()
+		}
+	}
 	if h := DashboardHost(st.Domain); h != "" {
 		v.DashboardURL = "https://" + h
 	}

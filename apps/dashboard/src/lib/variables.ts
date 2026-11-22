@@ -102,3 +102,24 @@ export function variableError(e: unknown, v: Pick<StackVariable, "name" | "kind"
       return e.detail || e.message;
   }
 }
+
+/** The words an address variable may hold for the host's networks, in the order the row shows them. */
+export const ADDRESS_WORDS = [
+  { word: "lan", label: "LAN" },
+  { word: "vpn", label: "VPN" },
+  { word: "tailnet", label: "Tailnet" },
+] as const;
+export type AddressWord = (typeof ADDRESS_WORDS)[number]["word"];
+const isWord = (s: string): s is AddressWord => ADDRESS_WORDS.some((w) => w.word === s);
+
+/** An address value split into its words and the other addresses, as typed. */
+export function addressParts(value: string): { words: AddressWord[]; other: string } {
+  const entries = value.split(/[\s,]+/).filter(Boolean);
+  return { words: entries.filter(isWord), other: entries.filter((e) => !isWord(e)).join(", ") };
+}
+
+/** The address value of ticked words and other addresses: the words first, then the rest. */
+export function addressValue(words: readonly AddressWord[], other: string): string {
+  const ticked = ADDRESS_WORDS.map((w) => w.word).filter((w) => words.includes(w));
+  return [...ticked, ...other.split(/[\s,]+/).filter(Boolean)].join(",");
+}

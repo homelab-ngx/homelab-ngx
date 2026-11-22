@@ -6,6 +6,9 @@
   import { stamp } from "#lib/format.ts";
   import { browseHref, trimSlash } from "#lib/storage.ts";
   import {
+    ADDRESS_WORDS,
+    addressParts,
+    addressValue,
     declaredReadOnly,
     generateKey,
     groupVariables,
@@ -56,6 +59,8 @@
 
   /** Unsaved input per variable; a stored plain value or path shows until edited. */
   let drafts = $state<Record<string, string>>({});
+  /** An address row's other addresses as typed, so a separator being typed is kept; its draft holds the parsed value. */
+  let otherText = $state<Record<string, string>>({});
   /** A request is out: Apply, a row's menu action, or Add. */
   let pending = $state(false);
   /** Refused requests, shown under the row (or the Add form) they came from. */
@@ -167,6 +172,7 @@
       const s = await request();
       client.setQueryData([...keys.stacks, stack.name], s);
       delete drafts[v.name];
+      delete otherText[v.name];
       return true;
     } catch (e) {
       errors[key] = variableError(e, v);
@@ -204,6 +210,7 @@
 
   function reset() {
     drafts = {};
+    otherText = {};
     errors = {};
     note = "";
   }
@@ -326,7 +333,7 @@
   {#if v.description}<span class="block">{v.description}</span>{/if}
   {#if v.kind === "path"}<span class="block">Mounts at {mountText(v)}.</span>{/if}
   {#if v.builtin}<span class="block">This host fills it in{v.secret ? ", and issues a new one when the stack's API access changes" : ""}.</span>{/if}
-  {#if v.kind === "address"}<span class="block">The stack's network access to or from these addresses follows what is entered here.</span>{/if}
+  {#if v.kind === "address"}<span class="block">The stack's network access to or from these addresses follows what is entered here. LAN, VPN and Tailnet are this host's networks; one that is off opens nothing.</span>{/if}
   {#if ownerText(v)}<span class="block">{ownerText(v)}</span>{/if}
   {#if ownedText(v)}<span class="block">{ownedText(v)}</span>{/if}
   {#if fileOnly(v)}<span class="block">Delivered only as /run/secrets/{v.name}, not in /run/secrets/env.</span>{/if}
@@ -374,6 +381,37 @@
           <option value="" disabled>{stackValue(v) ? "The stack's own value" : "Choose…"}</option>
           {#each choices as c (c)}<option value={c}>{c}</option>{/each}
         </select>
+      {:else if v.kind === "address"}
+        {@const parts = addressParts(draft ?? v.value ?? "")}
+        <span class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5" role="group" aria-label="Addresses for {v.name}">
+          {#each ADDRESS_WORDS as w (w.word)}
+            <label class="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={parts.words.includes(w.word)}
+                onchange={(e) =>
+                  (drafts[v.name] = addressValue(
+                    e.currentTarget.checked ? [...parts.words, w.word] : parts.words.filter((x) => x !== w.word),
+                    parts.other,
+                  ))}
+              />
+              {w.label}
+            </label>
+          {/each}
+          <input
+            class="input w-auto min-w-0 flex-1 basis-40"
+            aria-label="Other addresses for {v.name}"
+            aria-invalid={err ? "true" : undefined}
+            placeholder="192.168.1.20, 10.0.0.0/24"
+            autocomplete="off"
+            spellcheck="false"
+            value={otherText[v.name] ?? parts.other}
+            oninput={(e) => {
+              otherText[v.name] = e.currentTarget.value;
+              drafts[v.name] = addressValue(parts.words, e.currentTarget.value);
+            }}
+          />
+        </span>
       {:else if v.kind === "path"}
         <PathInput
           aria-label="Host path for {v.name}"
@@ -385,9 +423,9 @@
         <input
           class="input min-w-0"
           type={v.type === "number" ? "number" : "text"}
-          aria-label={v.kind === "address" ? `Addresses for ${v.name}` : `Value of ${v.name}`}
+          aria-label="Value of {v.name}"
           aria-invalid={err ? "true" : undefined}
-          placeholder={v.default ?? (v.kind === "address" ? "192.168.1.20, 192.168.1.0/24" : stackValue(v) ? "The stack's own value" : "Value")}
+          placeholder={v.default ?? (stackValue(v) ? "The stack's own value" : "Value")}
           autocomplete="off"
           spellcheck="false"
           value={draft ?? v.value ?? ""}

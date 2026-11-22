@@ -205,7 +205,7 @@ func (s *Service) applyRules(ctx context.Context, name, subnet string, m Manifes
 		if err != nil {
 			return err
 		}
-		egress, ports = concreteNet(m, vars, s.hostLAN())
+		egress, ports = concreteNet(m, vars, s.hostNets())
 	}
 	rules, err := nftRuleset(name, subnet, egress, ports, api)
 	if err != nil {
@@ -220,13 +220,14 @@ func (s *Service) applyRules(ctx context.Context, name, subnet string, m Manifes
 }
 
 // concreteNet is m's egress and port grants with every address variable
-// ($NAME) replaced by the addresses stored for it and "lan" by the host's LAN
-// subnets. A grant whose variable has no valid value opens nothing, and a
-// port grant left with no clients is dropped.
-func concreteNet(m Manifest, vars []storedVar, lan []string) ([]Egress, []Port) {
+// ($NAME) replaced by the addresses stored for it, and "lan" and the words
+// in those addresses by the host's networks they stand for. A grant whose
+// variable has no valid value opens nothing, and a port grant left with no
+// clients is dropped.
+func concreteNet(m Manifest, vars []storedVar, nets Nets) ([]Egress, []Port) {
 	addrs := func(ref string) []string {
 		if ref == FromLAN {
-			return lan
+			return slices.Clone(nets.LAN)
 		}
 		n, ok := varRef(ref)
 		if !ok {
@@ -240,15 +241,7 @@ func concreteNet(m Manifest, vars []storedVar, lan []string) ([]Egress, []Port) 
 		if src == SourceUnset {
 			return nil
 		}
-		ps, _, err := ParseAddresses(value)
-		if err != nil {
-			return nil
-		}
-		out := make([]string, len(ps))
-		for i, p := range ps {
-			out[i] = p.String()
-		}
-		return out
+		return nets.Resolve(value)
 	}
 	egress := []Egress{}
 	for _, e := range m.Egress {

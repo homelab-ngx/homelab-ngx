@@ -154,7 +154,7 @@ func run(configPath string) error {
 	}
 	if v, err := hostSvc.Values(ctx); err == nil {
 		stacks.SetPrivateDomain(v.Domain)
-		stackHost.DashboardURL, stackHost.LAN = v.DashboardURL, v.LAN
+		stackHost.DashboardURL, stackHost.LAN, stackHost.VPN, stackHost.Tailnet = v.DashboardURL, v.LAN, v.VPN, v.Tailnet
 	} else {
 		log.Error("host settings unreadable", "error", err)
 	}
@@ -162,7 +162,7 @@ func run(configPath string) error {
 	stacksSvc := stacks.New(st, stacks.NewNixSource(r), stackHost, notify, logging.Logger("stacks"))
 	hostSvc.OnChange(func(v hostcfg.Values) {
 		stacks.SetPrivateDomain(v.Domain)
-		stacksSvc.SetHostValues(v.DashboardURL, v.LAN)
+		stacksSvc.SetHostValues(v.DashboardURL, stacks.Nets{LAN: v.LAN, VPN: v.VPN, Tailnet: v.Tailnet})
 	})
 	svcs := services.New(sd, cfg, notify, nil)
 	svcs.SetStacks(stackUnits{stacksSvc})

@@ -103,7 +103,7 @@ func TestParseAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value != "192.168.1.102,192.168.10.0/24,10.0.0.7/32" || len(ps) != 3 || ps[0].String() != "192.168.1.102/32" {
+	if value != "192.168.1.102,192.168.10.0/24,10.0.0.7/32" || len(ps) != 3 || ps[0] != "192.168.1.102/32" {
 		t.Errorf("value=%q prefixes=%v", value, ps)
 	}
 	for _, bad := range []string{"", " , ", "0.0.0.0/0", "fd00::1", "mqtt.lan", "192.168.1.1:1883"} {
@@ -120,7 +120,7 @@ func TestConcreteNet(t *testing.T) {
 		t.Fatal(err)
 	}
 	vars := []storedVar{{Name: "MQTT_HOST", Value: "192.168.1.102"}}
-	egress, ports := concreteNet(m, vars, []string{"192.168.1.0/24"})
+	egress, ports := concreteNet(m, vars, Nets{LAN: []string{"192.168.1.0/24"}})
 	// CAMERAS is unset: its egress opens nothing.
 	if len(egress) != 1 || egress[0] != (Egress{To: "192.168.1.102/32", Port: 1883, Proto: "tcp"}) {
 		t.Errorf("egress = %+v", egress)
@@ -129,7 +129,7 @@ func TestConcreteNet(t *testing.T) {
 		t.Errorf("ports = %+v", ports)
 	}
 	// Without a LAN set, a port only for the LAN is dropped.
-	if _, ports := concreteNet(m, vars, nil); len(ports) != 1 || ports[0].Port != 32400 {
+	if _, ports := concreteNet(m, vars, Nets{}); len(ports) != 1 || ports[0].Port != 32400 {
 		t.Errorf("ports without a LAN = %+v", ports)
 	}
 	rules, err := nftRuleset("players", "10.99.3.0/24", egress, ports, false)

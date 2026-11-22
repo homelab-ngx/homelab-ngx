@@ -4439,7 +4439,7 @@ export interface components {
             /** @description The value (stored or default) is also a line of /run/secrets/env. A value with a line break, surrounding whitespace, a quote, a backslash or a $ is delivered only as its file. Never for a path, and from manifest version 7 never for a secret: the env file then overrides every service's environment. */
             in_env: boolean;
             /**
-             * @description env: a plain value. secret: write-only. path: a host directory bound into the stack. address: IPv4 addresses or CIDRs, which the stack's egress and port grants that name the variable use (version 8). The operator's own are env or secret.
+             * @description env: a plain value. secret: write-only. path: a host directory bound into the stack. address: IPv4 addresses or CIDRs, and the words lan, vpn and tailnet for the host's networks, which the stack's egress and port grants that name the variable use (version 8). The operator's own are env or secret.
              * @enum {string}
              */
             kind: "env" | "secret" | "path" | "address";

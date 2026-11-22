@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"slices"
@@ -232,6 +231,34 @@ func delivered(m Manifest, vars []storedVar, others ...Manifest) []storedVar {
 	return out
 }
 
+// resolveAddresses is vars with each word in the value of m's address
+// variables replaced by the CIDRs it stands for on a host with nets, so a
+// stack that reads the value never sees a word. Addresses and CIDRs stay as
+// stored; a word whose network is off is left out.
+func resolveAddresses(m Manifest, vars []storedVar, nets Nets) []storedVar {
+	out := slices.Clone(vars)
+	for i, v := range out {
+		d, ok := m.Variable(v.Name)
+		if !ok || d.Kind != VarAddress {
+			continue
+		}
+		var entries []string
+		for _, e := range strings.Split(v.Value, ",") {
+			cidrs, word := nets.Word(e)
+			if !word {
+				cidrs = []string{e}
+			}
+			for _, c := range cidrs {
+				if c != "" && !slices.Contains(entries, c) {
+					entries = append(entries, c)
+				}
+			}
+		}
+		out[i].Value = strings.Join(entries, ",")
+	}
+	return out
+}
+
 // secretsInEnv reports whether secrets are lines of /run/secrets/env for a
 // stack booting m. From version 7 the env file overrides the environment of
 // every service in the stack, so it holds env values only; a secret stays
@@ -265,15 +292,18 @@ func (s *Service) renderVars(ctx context.Context, name string, m Manifest) error
 	if err != nil {
 		return err
 	}
-	return s.renderVarsLocked(name, append(delivered(m, vars, others...), s.builtins(m)...), secretsInEnv(m))
+	return s.renderVarsLocked(name, m, append(delivered(m, vars, others...), s.builtins(m)...))
 }
 
 // renderVarsLocked writes /run/secrets as the stack sees it: a file per
 // variable and env, always, even when empty, so EnvironmentFile= never fails.
 // The directory stays in place while a stack may have it bound; files are
 // replaced, and those of removed variables deleted. vars are the delivered
-// ones. The caller holds s.varsMu.
-func (s *Service) renderVarsLocked(name string, vars []storedVar, withSecrets bool) error {
+// ones for a stack booting m; an address variable's words are written as
+// the CIDRs they stand for now. The caller holds s.varsMu.
+func (s *Service) renderVarsLocked(name string, m Manifest, vars []storedVar) error {
+	withSecrets := secretsInEnv(m)
+	vars = resolveAddresses(m, vars, s.hostNets())
 	if s.host.VarsDir == "" {
 		return errors.New("no directory for stack variables is configured")
 	}
@@ -624,7 +654,7 @@ func (s *Service) SetVariable(ctx context.Context, name, varName string, in Stac
 		if err := s.saveVars(name, vars); err != nil {
 			return fmt.Errorf("storing %s: %w", varName, err)
 		}
-		if err := s.renderVarsLocked(name, delivered(running, vars, approved, fetched), secretsInEnv(running)); err != nil {
+		if err := s.renderVarsLocked(name, running, delivered(running, vars, approved, fetched)); err != nil {
 			return fmt.Errorf("%s is stored but not delivered to the stack: %w", varName, err)
 		}
 		s.log.Info("stack variable set", "stack", name, "variable", varName, "secret", secret, "read_only", v.ReadOnly)
@@ -695,7 +725,7 @@ func (s *Service) DeleteVariable(ctx context.Context, name, varName string) (Sta
 		if err := s.saveVars(name, vars); err != nil {
 			return fmt.Errorf("removing %s: %w", varName, err)
 		}
-		if err := s.renderVarsLocked(name, delivered(running, vars, approved, fetched), secretsInEnv(running)); err != nil {
+		if err := s.renderVarsLocked(name, running, delivered(running, vars, approved, fetched)); err != nil {
 			return fmt.Errorf("%s is removed from the store but still delivered to the stack: %w", varName, err)
 		}
 		s.log.Info("stack variable removed", "stack", name, "variable", varName)
@@ -788,34 +818,6 @@ func (s *Service) builtins(m Manifest) []storedVar {
 		out = append(out, storedVar{Name: BuiltinDashboardURL, Value: u})
 	}
 	return out
-}
-
-// ParseAddresses reads an address variable's value: IPv4 addresses or
-// CIDRs, separated by commas or spaces. It returns them as prefixes, an
-// address as its /32, and the value as delivered: the entries joined by
-// commas.
-func ParseAddresses(value string) ([]netip.Prefix, string, error) {
-	fields := strings.FieldsFunc(value, func(r rune) bool { return r == ',' || unicode.IsSpace(r) })
-	if len(fields) == 0 {
-		return nil, "", errors.New("give at least one IPv4 address or CIDR")
-	}
-	out := make([]netip.Prefix, 0, len(fields))
-	for _, f := range fields {
-		var p netip.Prefix
-		if a, err := netip.ParseAddr(f); err == nil {
-			p = netip.PrefixFrom(a, a.BitLen())
-		} else if p, err = netip.ParsePrefix(f); err != nil {
-			return nil, "", fmt.Errorf("%q is not an IPv4 address or CIDR", f)
-		}
-		if !p.Addr().Is4() {
-			return nil, "", fmt.Errorf("%q is not IPv4", f)
-		}
-		if p.Bits() == 0 {
-			return nil, "", fmt.Errorf("%q covers every address", f)
-		}
-		out = append(out, p.Masked())
-	}
-	return out, strings.Join(fields, ","), nil
 }
 
 // SecretValues are the stored values of every stack's secret variables, so

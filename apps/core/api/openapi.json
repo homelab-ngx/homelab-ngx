@@ -6464,7 +6464,7 @@
             "type": "boolean"
           },
           "kind": {
-            "description": "env: a plain value. secret: write-only. path: a host directory bound into the stack. address: IPv4 addresses or CIDRs, which the stack's egress and port grants that name the variable use (version 8). The operator's own are env or secret.",
+            "description": "env: a plain value. secret: write-only. path: a host directory bound into the stack. address: IPv4 addresses or CIDRs, and the words lan, vpn and tailnet for the host's networks, which the stack's egress and port grants that name the variable use (version 8). The operator's own are env or secret.",
             "enum": [
               "env",
               "secret",

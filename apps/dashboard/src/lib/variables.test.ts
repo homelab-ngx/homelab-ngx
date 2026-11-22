@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProblemError, type Stack } from "./api/client.ts";
-import { generateKey, groupVariables, missingVariables, NAME_RE, nameProblem, needsValue, variableError, type StackVariable } from "./variables.ts";
+import { addressParts, addressValue, generateKey, groupVariables, missingVariables, NAME_RE, nameProblem, needsValue, variableError, type StackVariable } from "./variables.ts";
 
 const v = (name: string, over: Partial<StackVariable> = {}): StackVariable => ({
   name,
@@ -88,5 +88,13 @@ describe("variableError", () => {
     expect(variableError(kind, v("TZ"))).toBe("Declared as a setting; it cannot be made secret.");
     expect(variableError(new ProblemError(409, "other", "busy"), path)).toBe("busy");
     expect(variableError(new Error("down"), path)).toBe("down");
+  });
+});
+
+describe("address values", () => {
+  it("splits the words from the other addresses and joins them back", () => {
+    expect(addressParts("192.168.1.5, lan tailnet,10.0.0.0/8")).toEqual({ words: ["lan", "tailnet"], other: "192.168.1.5, 10.0.0.0/8" });
+    expect(addressValue(["tailnet", "lan"], "192.168.1.5, 10.0.0.0/8")).toBe("lan,tailnet,192.168.1.5,10.0.0.0/8");
+    expect(addressValue([], "")).toBe("");
   });
 });

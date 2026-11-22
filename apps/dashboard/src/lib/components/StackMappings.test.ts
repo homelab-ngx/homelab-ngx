@@ -246,6 +246,29 @@ describe("StackMappings", () => {
     }
   });
 
+  it("sets an address from the network boxes and the other addresses", async () => {
+    const put = vi.spyOn(api, "PUT").mockResolvedValue({ data: stack([]), response: new Response(null, { status: 200 }) } as never);
+    try {
+      const clients = variable("SMB_CLIENTS", { declared: true, kind: "address", source: "stored", value: "192.168.1.5" });
+      render(Harness, { props: { client: new QueryClient(), stack: stack([clients]) } });
+      const other = screen.getByLabelText("Other addresses for SMB_CLIENTS") as HTMLInputElement;
+      expect(other.value).toBe("192.168.1.5");
+      await fireEvent.click(screen.getByLabelText("Tailnet"));
+      await fireEvent.click(screen.getByLabelText("VPN"));
+      // A separator being typed stays in the field.
+      await fireEvent.input(other, { target: { value: "192.168.1.5, " } });
+      expect(other.value).toBe("192.168.1.5, ");
+      await fireEvent.input(other, { target: { value: "192.168.1.5, 10.0.0.0/24" } });
+      await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+      expect(put).toHaveBeenCalledWith("/stacks/{name}/variables/{var}", {
+        params: { path: { name: "media", var: "SMB_CLIENTS" } },
+        body: { value: "vpn,tailnet,192.168.1.5,10.0.0.0/24" },
+      });
+    } finally {
+      put.mockRestore();
+    }
+  });
+
   it("adds an env mapping as a secret", async () => {
     const put = vi.spyOn(api, "PUT").mockResolvedValue({ data: stack([]), response: new Response(null, { status: 200 }) } as never);
     try {

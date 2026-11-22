@@ -170,10 +170,11 @@ const (
 	VarSecret = "secret"
 	// VarPath is a host directory bound into the stack at Mount.
 	VarPath = "path"
-	// VarAddress (version 8) is a list of IPv4 addresses or CIDRs the
-	// operator gives: an egress destination or the clients of a port grant
-	// that name it ($NAME) take their addresses from it, and the stack reads
-	// it like an env value.
+	// VarAddress (version 8) is a list of IPv4 addresses, CIDRs and the
+	// words lan, vpn and tailnet (Nets) the operator gives: an egress
+	// destination or the clients of a port grant that name it ($NAME) take
+	// their addresses from it, and the stack reads it like an env value,
+	// with the words as CIDRs.
 	VarAddress = "address"
 )
 

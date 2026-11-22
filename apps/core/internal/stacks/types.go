@@ -509,7 +509,7 @@ type StackVariable struct {
 	InEnv bool `json:"in_env" doc:"The value (stored or default) is also a line of /run/secrets/env. A value with a line break, surrounding whitespace, a quote, a backslash or a $ is delivered only as its file. Never for a path, and from manifest version 7 never for a secret: the env file then overrides every service's environment."`
 
 	// Kind env, secret or path. The operator's own are env or secret.
-	Kind StackVariableKind `json:"kind" enum:"env,secret,path,address" doc:"env: a plain value. secret: write-only. path: a host directory bound into the stack. address: IPv4 addresses or CIDRs, which the stack's egress and port grants that name the variable use (version 8). The operator's own are env or secret."`
+	Kind StackVariableKind `json:"kind" enum:"env,secret,path,address" doc:"env: a plain value. secret: write-only. path: a host directory bound into the stack. address: IPv4 addresses or CIDRs, and the words lan, vpn and tailnet for the host's networks, which the stack's egress and port grants that name the variable use (version 8). The operator's own are env or secret."`
 
 	// Mount Where a path is bound inside the stack.
 	Mount string `json:"mount,omitempty" doc:"Where a path is bound inside the stack. Only for a path."`
