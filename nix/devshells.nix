@@ -53,6 +53,7 @@ in
       nodejs
       nixfmt
       gnumake
+      shellcheck
     ];
     shellHook = ''
       echo "homelab dev shell (go $(go version | cut -d' ' -f3), node $(node --version))"

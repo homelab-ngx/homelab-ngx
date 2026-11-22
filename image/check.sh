@@ -81,38 +81,123 @@
 # Steps 9-10 need two versions in image/out and step 11 three. The third is
 # only installed and broken, so a copy of the second does (image/variant.sh):
 #   make image VERSION=0.0.1 && make image VERSION=0.0.2 && make image-variant FROM=0.0.2 VERSION=0.0.3
+# The versions are the newest three in image/out, or the ones VERSIONS names,
+# in its order (VERSIONS="0.0.1 0.0.2 0.0.3"); the run starts by saying which.
+# A release from before a feature has that part of a step left out, and the
+# last line lists what was. The newest version that boots (the second, or the
+# only one) is the one under test: it has to have every feature, so a part
+# left out there fails the run.
 # Run inside the image shell (`make image-check`). Each VM disk is deleted
 # after the last step that uses it, and a guest's discards free its file's
 # blocks: a hosted runner has little room. A run that passes leaves the logs
-# in image/out/vm; one that fails leaves the disks it had too. KEEP=1 leaves
-# the VM running when a step fails. CPUS and MEM (MiB) size the VM: by
-# default a small host's 4 CPUs and 4 GB, 6 GB with BUILD=1.
-set -euo pipefail
+# in image/out/vm; one that fails leaves the disks it had too, and the VM's
+# journal, failed units and daemon log (failed-*.log). KEEP=1 leaves the VM
+# running when a step fails. CPUS and MEM (MiB) size the VM: by default a
+# small host's 4 CPUs and 4 GB, 6 GB with BUILD=1.
+#
+# A command for the VM is in single quotes so that the VM's shell expands it
+# (SC2016), and `A && B || die` means what it says: die unless both hold
+# (SC2015).
+# shellcheck disable=SC2016,SC2015
+set -Eeuo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 out=$here/out
 vm=$out/vm
-mapfile -t versions < <(ls "$out"/homelab_*.efi 2>/dev/null | sed -E 's|.*/homelab_(.+)\.efi$|\1|' | sort -V)
-[ "${#versions[@]}" -gt 0 ] || { echo "no image in $out: run make image first" >&2; exit 1; }
+# refuse WHY: before the first boot, something the run needs is not there.
+refuse() {
+  echo "image-check: $*" >&2
+  exit 1
+}
+# keepvm: with KEEP=1 a failed run leaves its VM up. A marker, not a
+# variable: a check may fail in a subshell ($(op ...)).
+keepvm() { if [ "${KEEP:-}" = 1 ] && [ -d "$vm" ]; then touch "$vm/keep"; fi; }
+# A command that fails without a check of its own ends the run (set -e), and
+# ssh -q and curl -s say nothing: the trap names the line. In a subshell it
+# stays quiet, since the line that reads the subshell's answer fails too.
+failed() {
+  [ "$BASH_SUBSHELL" -eq 0 ] || return 0
+  printf '  ✗ line %s: %s (exit %s)\n' "$2" "$3" "$1" >&2
+  keepvm
+}
+trap 'failed "$?" "$LINENO" "$BASH_COMMAND"' ERR
+
+if [ -n "${VERSIONS:-}" ]; then
+  read -ra versions <<<"$VERSIONS"
+  [ "${#versions[@]}" -le 3 ] || refuse "VERSIONS names more than three versions"
+  for v in "${versions[@]}"; do [ -e "$out/homelab_$v.efi" ] || refuse "no image $v in $out"; done
+else
+  mapfile -t versions < <(for f in "$out"/homelab_*.efi; do [ ! -e "$f" ] || basename "$f" .efi; done | sed 's/^homelab_//' | sort -V)
+fi
+[ "${#versions[@]}" -gt 0 ] || refuse "no image in $out: run make image first"
 # Boot the oldest of the newest three, update to the next, break the last.
 n=${#versions[@]}
-version=${versions[$((n > 3 ? n - 3 : 0))]} next= broken=
-[ "$n" -ge 2 ] && next=${versions[$((n > 3 ? n - 2 : 1))]}
-[ "$n" -ge 3 ] && broken=${versions[-1]}
-core=$out/core/homelab-core_$version.raw
+version=${versions[$((n > 3 ? n - 3 : 0))]} next='' broken=''
+[ "$n" -lt 2 ] || next=${versions[$((n > 3 ? n - 2 : 1))]}
+[ "$n" -lt 3 ] || broken=${versions[-1]}
+# The version under test: the newest that boots. ($broken is only installed
+# and broken.) It has every feature the check knows; see has.
+latest=${next:-$version}
 # Steps 14 on install from a stick of their own and judge that version: the
 # one under test where its installer medium was built, not the release
 # before it, which is published and cannot be fixed.
 under=$version
-[ -n "$next" ] && [ -e "$out/homelab_$next.raw" ] && under=$next
-[ -e "$out/homelab_$version.raw" ] && [ -e "$core" ] || { echo "image $version is incomplete in $out: run make image again" >&2; exit 1; }
+if [ -n "$next" ] && [ -e "$out/homelab_$next.raw" ]; then under=$next; fi
 domain=check.example.com
 
-# step "N. what": a step's heading; scripts/run reads the progress line.
-steps=19
+# Before the first boot: what the run needs, so that no step stops for it
+# half an hour in.
+missing=''
+for t in qemu-system-x86_64 qemu-img sfdisk jq curl ssh scp ssh-keygen mkfs.vfat mmd mcopy gpg python3 fsck.erofs mkfs.erofs flock; do
+  command -v "$t" >/dev/null || missing+=" $t"
+done
+[ -z "$missing" ] || refuse "not on PATH:$missing (make image-check runs this in the image shell)"
+[ -e "${HOMELAB_OVMF:-}/OVMF_CODE.fd" ] && [ -e "${HOMELAB_OVMF:-}/OVMF_VARS.fd" ] ||
+  refuse "HOMELAB_OVMF does not name the firmware's folder (the image shell sets it)"
+[ -r /dev/kvm ] && [ -w /dev/kvm ] || refuse "no KVM: /dev/kvm cannot be opened"
+# needs VERSION FILE...: the files of a version that a step reads.
+needs() {
+  local v=$1 f
+  shift
+  for f in "$@"; do
+    compgen -G "$out/$f" >/dev/null || refuse "image $v is incomplete in $out: no $f (run make image again)"
+  done
+}
+needs "$version" "homelab_$version.raw" "core/homelab-core_$version.raw"
+[ -z "$next" ] || needs "$next" "homelab_$next.efi" "homelab_$next.root*.raw" "core/homelab-core_$next.raw"
+[ -z "$broken" ] || needs "$broken" "homelab_$broken.efi" "homelab_$broken.root*.raw" "core/homelab-core_$broken.raw"
+# One check at a time in image/out: a second would delete the first one's
+# disks. The VM and the release server do not hold the lock (9>&-), so a
+# check that was killed leaves it free; the VM it left is stopped here, or it
+# would keep its memory and the blocks of its deleted disks.
+exec 9>"$out/.check.lock"
+flock -n 9 || refuse "another image check is running in $out"
+if old=$(cat "$vm/qemu.pid" 2>/dev/null) && [ -n "$old" ] && grep -aqF "$vm/" "/proc/$old/cmdline" 2>/dev/null; then
+  echo "image-check: stopping the VM an earlier run left (pid $old)"
+  kill "$old" 2>/dev/null || true
+  for _ in $(seq 1 20); do
+    kill -0 "$old" 2>/dev/null || break
+    sleep 0.5
+  done
+  kill -9 "$old" 2>/dev/null || true
+fi
+echo "image-check: $version is installed${next:+ and updated to $next}${broken:+; $broken is installed and broken}; steps 14 on install $under"
+[ -n "$next" ] || echo "image-check: steps 9 and 10 (the updates) are left out: they need a second version"
+[ -n "$broken" ] || echo "image-check: step 11 (the fall back) is left out: it needs a third version"
+[ "${BUILD:-}" = 1 ] || echo "image-check: step 12 (a build on the host) is left out: it needs BUILD=1"
+if [ -z "${VERSIONS:-}" ] && [ "$n" -gt 3 ]; then echo "image-check: older in $out and not used: ${versions[*]:0:n-3}"; fi
+
+# step "N. what": a step's heading, after how long the step before it took;
+# scripts/run reads the progress line. The last step's number is read from
+# this file.
+steps=$(grep -oE '^ *step "[0-9]+' "${BASH_SOURCE[0]}" | grep -oE '[0-9]+$' | sort -n | tail -n1)
+stepname='' stepstart=$SECONDS
+took() { printf '%d min %02d s' $(((SECONDS - $1) / 60)) $(((SECONDS - $1) % 60)); }
 step() {
   roomused
-  printf '\nprogress: %d%%\n▸ %s\n' "$(((${1%%.*} - 1) * 100 / steps))" "$*"
+  [ -z "$stepname" ] || printf '  step %s took %s\n' "$stepname" "$(took "$stepstart")"
+  stepname=${1%%.*} stepstart=$SECONDS
+  printf '\nprogress: %d%%\n▸ %s\n' "$(((${stepname%%-*} - 1) * 100 / steps))" "$*"
 }
 # roomused: the most the VM's files have taken so far (MB, in $peak), read
 # at every step and before a disk is deleted.
@@ -131,10 +216,53 @@ drop() {
 ok() { printf '  ✓ %s\n' "$*"; }
 die() {
   printf '  ✗ %s\n' "$*" >&2
-  # KEEP=1 leaves the VM running to look at: ssh -i image/out/vm/key -p PORT root@127.0.0.1
-  # A marker, not just the trap: die may run in a subshell ($(op ...)).
-  [ "${KEEP:-}" = 1 ] && { touch "$vm/keep"; echo "  VM kept: ssh -i $vm/key -p $sshport root@127.0.0.1" >&2; }
+  keepvm
   exit 1
+}
+# seen [GREP OPTION...] PATTERN: the pattern is in the input, read to its
+# end. grep -q leaves at the first match; the command before it in the pipe
+# may then be writing to a closed pipe, and pipefail takes that for a check
+# that failed.
+seen() { grep "$@" >/dev/null; }
+# is WANT COMMAND...: the command prints WANT.
+is() { [ "$("${@:2}")" = "$1" ]; }
+# wait_for SECONDS COMMAND...: try the command every 2 s until it holds;
+# false when it has not within SECONDS, or when the VM is gone. The command
+# may fail in any way while it is waited for.
+wait_for() {
+  local end=$((SECONDS + $1))
+  shift
+  until "$@" >/dev/null 2>&1; do
+    [ "$SECONDS" -lt "$end" ] || return 1
+    [ -z "$qemupid" ] || vmalive || return 1
+    sleep 2
+  done
+}
+# has WHAT PROBE...: whether the booted version has a feature. A release
+# from before it has not, and the part of the step that checks it is left
+# out; that is noted for the last line. The version under test has every
+# feature, so there a no fails the run. PROBE answers 0 or 1; anything else
+# (ssh could not connect, the daemon did not answer) is not an answer, and
+# fails the run too: a part must not be left out because a probe broke.
+running='' skipped=''
+has() {
+  local what=$1 rc=0
+  shift
+  "$@" >/dev/null 2>&1 || rc=$?
+  case $rc in
+    0) return 0 ;;
+    1) ;;
+    *) die "could not tell whether $running has $what: $* (exit $rc)" ;;
+  esac
+  [ "$running" != "$latest" ] || die "$running has no $what, and it is the version under test"
+  case "$skipped" in
+    *"$what ($running)"*) ;;
+    *)
+      skipped+="${skipped:+, }$what ($running)"
+      printf '  - not checked on %s, which is from before it: %s\n' "$running" "$what"
+      ;;
+  esac
+  return 1
 }
 
 rm -rf "$vm"
@@ -185,7 +313,18 @@ windisk "$vm/win2.raw"
 cpus=${CPUS:-4}
 # A build on the host (BUILD=1): one Go compile takes about 2.5 GB.
 mem=${MEM:-$([ "${BUILD:-}" = 1 ] && echo 6144 || echo 4096)}
-sshport=$(shuf -i 20000-29999 -n1)
+# Three ports next to each other, free now. They start at a multiple of ten,
+# so another check's three (on a machine that runs two) do not overlap them.
+listening() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+sshport=''
+for _ in $(seq 1 50); do
+  p=$((20000 + 10 * (RANDOM % 1000)))
+  if ! listening "$p" && ! listening $((p + 1)) && ! listening $((p + 2)); then
+    sshport=$p
+    break
+  fi
+done
+[ -n "$sshport" ] || refuse "found no three free ports on 127.0.0.1"
 httpport=$((sshport + 1))
 # The release server step 9 runs; the VM reaches it at 10.0.2.2.
 relport=$((sshport + 2))
@@ -207,6 +346,10 @@ fwuuid=9a0c1e2f-3b4d-4e5f-8a9b-0c1d2e3f4a5b
 # set to start from USB first. Every disk is in that order: OVMF deletes the
 # boot entries of a disk that is not, also the ones an install registered.
 # --no-uuid leaves the machine without a firmware UUID, as some boards are.
+# Every boot has a serial log of its own, named by the boot's number, the
+# step and the first disk ($serial).
+qemupid='' boots=0 serial=''
+vmalive() { [ -n "$qemupid" ] && kill -0 "$qemupid" 2>/dev/null; }
 boot() {
   local order='' uuid=(-uuid "$fwuuid") disks=() first='' n=0 d dev
   while [ $# -gt 0 ]; do
@@ -238,38 +381,32 @@ boot() {
     fi
     n=$((n + 1))
   done
+  boots=$((boots + 1))
+  serial=$vm/serial-$(printf '%02d' "$boots")-step$stepname-$(basename "$first" .raw).log
   qemu-system-x86_64 -machine q35,accel=kvm -cpu host -smp "$cpus" -m "$mem" "${uuid[@]}" \
     -drive "if=pflash,format=raw,readonly=on,file=$HOMELAB_OVMF/OVMF_CODE.fd" \
     -drive "if=pflash,format=raw,file=$vm/vars.fd" "${disks[@]}" \
     -smbios "type=11,value=io.systemd.credential.binary:ssh.authorized_keys.root=$(base64 -w0 < "$vm/key.pub")" \
     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:$sshport-:22,hostfwd=tcp:127.0.0.1:$httpport-:80" \
-    -display none -serial "file:$vm/serial-$(basename "$first" .raw).log" \
-    -monitor "unix:$vm/monitor.sock,server,nowait" -daemonize -pidfile "$vm/qemu.pid"
+    -display none -serial "file:$serial" \
+    -monitor "unix:$vm/monitor.sock,server,nowait" -daemonize -pidfile "$vm/qemu.pid" 9>&-
+  qemupid=$(cat "$vm/qemu.pid")
   up
 }
-up() {
-  for _ in $(seq 1 60); do
-    if vssh true 2>/dev/null; then return 0; fi
-    sleep 3
-  done
-  die "no SSH after 3 minutes (serial log in $vm)"
-}
+# gone: why a wait for the VM ended, for its message.
+gone() { if vmalive; then echo "$1"; else echo "QEMU ended"; fi; }
+up() { wait_for 480 vssh true || die "$(gone "no SSH after 8 minutes") (serial log $serial)"; }
 # A reboot stops the stacks and unmounts the pools first, and logind lets
 # that hold it for up to five minutes. So a host that answers SSH may still
 # be the boot that was told to go: the boot id says which one it is. mark
 # notes the running boot, and newboot waits for another one to answer
-# (TRIES, 3 s apart: 8 minutes unless given). restart is both around a
-# plain reboot.
-mark() { lastboot=$(vssh 'cat /proc/sys/kernel/random/boot_id') || die "no boot id before the reboot (serial log in $vm)"; }
-newboot() {
+# (SECONDS: 20 minutes unless given). restart is both around a plain reboot.
+mark() { lastboot=$(vssh 'cat /proc/sys/kernel/random/boot_id') || die "no boot id before the reboot (serial log $serial)"; }
+otherboot() {
   local now
-  for _ in $(seq 1 "${1:-160}"); do
-    now=$(vssh 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) || now=
-    if [ -n "$now" ] && [ "$now" != "$lastboot" ]; then return 0; fi
-    sleep 3
-  done
-  die "the VM did not start again (serial log in $vm)"
+  now=$(vssh 'cat /proc/sys/kernel/random/boot_id') && [ -n "$now" ] && [ "$now" != "$lastboot" ]
 }
+newboot() { wait_for "${1:-1200}" otherboot || die "$(gone "the VM did not start again") (serial log $serial)"; }
 restart() {
   mark
   vssh 'systemctl reboot' || true
@@ -278,31 +415,130 @@ restart() {
 reboot_vm() {
   restart
   # The daemon applies the host settings and mounts the pool after start.
-  for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
+  daemon 240 || die "the daemon does not answer after the reboot"
 }
 # The keepalive ends a connection the VM's reboot cut: QEMU's port forward
 # keeps it open, and without one it waits forever.
-vssh() {
-  ssh -q -i "$vm/key" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=3 -p "$sshport" root@127.0.0.1 "$@"
-}
-vscp() { scp -q -i "$vm/key" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -P "$sshport" "$@"; }
+# scp has the same options: a copy cut by a reboot would wait the same way.
+sshopts=(-q -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+  -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=3)
+vssh() { ssh "${sshopts[@]}" -i "$vm/key" -p "$sshport" root@127.0.0.1 "$@"; }
+vscp() { scp "${sshopts[@]}" -i "$vm/key" -P "$sshport" "$@"; }
+relpid=''
 stop() {
-  [ -n "${relpid:-}" ] && kill "$relpid" 2>/dev/null && relpid=
-  [ -e "$vm/qemu.pid" ] && [ ! -e "$vm/keep" ] || return 0
+  if [ -n "$relpid" ]; then
+    kill "$relpid" 2>/dev/null || true
+    relpid=''
+  fi
+  [ -n "$qemupid" ] && [ ! -e "$vm/keep" ] || return 0
   vssh poweroff 2>/dev/null || true
-  for _ in $(seq 1 30); do kill -0 "$(cat "$vm/qemu.pid")" 2>/dev/null || break; sleep 1; done
-  kill "$(cat "$vm/qemu.pid")" 2>/dev/null || true
+  for _ in $(seq 1 30); do
+    vmalive || break
+    sleep 1
+  done
+  kill "$qemupid" 2>/dev/null || true
+  qemupid=''
   rm -f "$vm/qemu.pid"
 }
-trap stop EXIT
+# evidence: what the VM can say about a run that failed, kept next to the
+# serial logs: its journal, the units that failed and the daemon's log.
+evidence() {
+  vmalive || return 0
+  if ! vssh true 2>/dev/null; then
+    echo "  the VM does not answer SSH; its serial log is $serial" >&2
+    return 0
+  fi
+  vssh 'systemctl --failed --no-legend --plain; echo; systemctl list-jobs --no-legend' >"$vm/failed-units.log" 2>&1
+  vssh 'journalctl -b --no-pager -o short-precise -n 20000' >"$vm/failed-journal.log" 2>&1
+  vssh 'journalctl -b -u homelab-daemon --no-pager -o cat -n 5000' >"$vm/failed-daemon.log" 2>&1
+  echo "  the VM's journal, failed units and daemon log: $vm/failed-*.log" >&2
+}
+# finish: however the run ends. A failed one (not one that was interrupted)
+# keeps the VM's evidence before the VM is turned off.
+finish() {
+  local rc=$?
+  trap - ERR
+  set +e
+  if [ "$rc" -ne 0 ] && [ "$rc" -lt 128 ]; then evidence; fi
+  if [ -e "$vm/keep" ] && vmalive; then echo "  VM kept: ssh -i $vm/key -p $sshport root@127.0.0.1" >&2; fi
+  stop
+}
+trap finish EXIT
 # off: wait for the VM to turn itself off.
 off() {
-  for _ in $(seq 1 60); do kill -0 "$(cat "$vm/qemu.pid")" 2>/dev/null || break; sleep 1; done
-  kill -0 "$(cat "$vm/qemu.pid")" 2>/dev/null && die "the VM did not turn off"
+  for _ in $(seq 1 60); do
+    vmalive || break
+    sleep 1
+  done
+  ! vmalive || die "the VM did not turn off"
+  qemupid=''
   rm -f "$vm/qemu.pid"
 }
-api() { vssh "curl -s --fail-with-body --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json' $*"; }
+# The daemon's API on its socket, asked from inside the VM. No request waits
+# more than ten minutes: one that hangs fails the check then, not the
+# workflow at its limit hours later.
+sock="--max-time 600 --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json'"
+# api [CURL OPTION...] URL: a request; false on an error status, with the
+# answer printed all the same.
+api() { vssh "curl -s --fail-with-body $sock $*"; }
+# send METHOD PATH [BODY] [CURL OPTION...]: a request to /api/PATH. The body
+# goes over stdin, so nothing in it meets a shell's quoting.
+send() {
+  local method=$1 path=$2 body=${3-}
+  shift 2
+  [ $# -eq 0 ] || shift
+  if [ -n "$body" ]; then
+    vssh "curl -s --fail-with-body $sock -X $method -d @- $* 'http://x/api/$path'" <<<"$body"
+  else
+    vssh "curl -s --fail-with-body $sock -X $method $* 'http://x/api/$path'" </dev/null
+  fi
+}
+# ask METHOD PATH [BODY] [CURL OPTION...]: the same, for a request whose
+# answer nothing reads: it is printed only when the request fails, as the
+# reason.
+ask() {
+  local r
+  r=$(send "$@") || {
+    printf '    %s\n' "$r" >&2
+    return 1
+  }
+}
+# answers STATUS METHOD PATH [BODY]: a probe for has: the API answers with
+# STATUS. A version without the route (404, 405) has not got the feature.
+answers() {
+  case "$(code "${@:2}")" in
+    "$1") return 0 ;;
+    404 | 405) return 1 ;;
+    *) return 2 ;;
+  esac
+}
+# apihas PATH FILTER: a probe for has: jq's FILTER holds for what GET PATH
+# answers.
+apihas() {
+  local b
+  b=$(api "http://x/api/$1") || return 2
+  jq -e "$2" <<<"$b" >/dev/null
+}
+# nofailed [WHERE]: no unit has failed; else which, and what each last said.
+nofailed() {
+  local units
+  units=$(vssh 'systemctl --failed --no-legend --plain') || die "could not list the failed units${1:+ $1}"
+  [ -n "$units" ] || return 0
+  printf '%s\n' "$units" >&2
+  vssh 'systemctl --failed --no-legend --plain | while read -r u _; do echo "== $u"; journalctl -b -u "$u" --no-pager -n 15 -o cat; done' >&2 || true
+  die "failed units${1:+ $1}"
+}
+# nologin [WHEN]: nobody is logged in on a console, as on an installed host.
+nologin() {
+  local users
+  users=$(console_users) || die "could not list the logins on the consoles"
+  [ -z "$users" ] || die "the installed host logs someone in on a console${1:+ $1}: $(tr '\n' ';' <<<"$users")"
+}
+# overhttp: the dashboard's page answers on the host's port 80.
+overhttp() {
+  local page
+  page=$(curl -sf --max-time 30 "http://127.0.0.1:$httpport/") && seen '<html' <<<"$page" || die "the dashboard does not answer over HTTP"
+}
 # console_users: who is logged in on a console and on which (a login
 # session, not SSH), a line each: "root ttyS0" on the serial port; the
 # screen's is tty1, or a pty under kmscon.
@@ -313,19 +549,18 @@ console_users() {
 }
 # autologin: root is logged in on the screen and on the serial port, as the
 # installer medium does.
-autologin() {
+bothconsoles() {
   local users
-  for _ in $(seq 1 15); do
-    users=$(console_users)
-    awk '$1 == "root" && $2 == "ttyS0" { serial = 1 } $1 == "root" && $2 != "ttyS0" { screen = 1 }
-      END { exit !(serial && screen) }' <<<"$users" && return 0
-    sleep 2
-  done
-  die "root is not logged in on both the screen and the serial port: $(tr '\n' ';' <<<"$users")"
+  users=$(console_users) && awk '$1 == "root" && $2 == "ttyS0" { serial = 1 } $1 == "root" && $2 != "ttyS0" { screen = 1 }
+    END { exit !(serial && screen) }' <<<"$users"
+}
+autologin() {
+  wait_for 60 bothconsoles ||
+    die "root is not logged in on both the screen and the serial port: $(console_users | tr '\n' ';')"
 }
 # installer: the installer's state, once its API answers.
 installer() {
-  for _ in $(seq 1 30); do api http://x/api/installer >/dev/null 2>&1 && break; sleep 2; done
+  wait_for 120 api http://x/api/installer || die "the installer does not answer"
   api http://x/api/installer || die "the installer does not answer"
 }
 # stickname: the installer medium's kernel name in the VM (vda as a virtio
@@ -362,19 +597,19 @@ ownid() {
   id=$(vssh 'cat /etc/machine-id')
   [[ $id =~ ^[0-9a-f]{32}$ ]] || die "the machine ID is not one: $id"
   [ "$id" = "$(vssh 'cat /var/lib/homelab/machine-id')" ] || die "the machine ID $id is not the one on /var"
-  vssh 'findmnt -no SOURCE /etc/machine-id' | grep -q '\[/lib/homelab/machine-id\]$' ||
+  vssh 'findmnt -no SOURCE /etc/machine-id' | seen '\[/lib/homelab/machine-id\]$' ||
     die "/etc/machine-id is not /var's file bound over it: $(vssh 'findmnt -no SOURCE /etc/machine-id')"
   [ "$id" != "${fwuuid//-/}" ] || die "the machine ID is the firmware's UUID"
   case " $ids " in *" $id "*) die "another install has the machine ID $id too" ;; esac
   ids+=" $id"
 }
-# put PATH JSON: PUT a body to the daemon's API, the body over stdin.
-put() { vssh "cat > /tmp/body.json" <<<"$2" && api -X PUT "http://x/api/$1" -d @/tmp/body.json >/dev/null; }
+# put PATH JSON: PUT a body to the daemon's API; a refusal's reason is printed.
+put() { ask PUT "$@"; }
 # post PATH JSON: the same with POST; prints the answer.
-post() { vssh "cat > /tmp/body.json" <<<"$2" && api -X POST "http://x/api/$1" -d @/tmp/body.json; }
+post() { send POST "$@"; }
 # code METHOD PATH [BODY]: the status an API request answers with.
 code() {
-  vssh "curl -s -o /dev/null -w '%{http_code}' --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json' -X $1 'http://x/api/$2' ${3:+-d '$3'}"
+  vssh "curl -s -o /dev/null -w '%{http_code}' $sock -X $1 ${3:+-d @-} 'http://x/api/$2'" <<<"${3-}"
 }
 # spare: the disks a pool can be made from, as "path:contents" words.
 spare() { api http://x/api/storage | jq -r '[.unassigned[] | "\(.path):\(.contents)"] | join(" ")'; }
@@ -384,7 +619,7 @@ spare() { api http://x/api/storage | jq -r '[.unassigned[] | "\(.path):\(.conten
 lifecycle=
 pool_lifecycle() {
   [ -z "$lifecycle" ] || return 0
-  api http://x/api/storage | jq -e '.unassigned | length > 0 and (.[0] | has("contents"))' >/dev/null || return 0
+  has "pools made, changed and deleted by the daemon" apihas storage '.unassigned | length > 0 and (.[0] | has("contents"))' || return 0
   local st uuid main mainname sum op
   [ "$(spare)" = "/dev/vde: /dev/vdf: /dev/vdg:" ] || die "the spare disks are not vde, vdf and vdg, blank: $(spare)"
   [ "$(code POST storage/pools '{"name":"scratch","disks":["/dev/vde"],"copies":2}')" = 409 ] || die "two copies on one disk were not refused"
@@ -393,14 +628,13 @@ pool_lifecycle() {
   uuid=$(jq -r .uuid <<<"$st")
   [ "$(jq -r '"\(.state) \(.mountdir) \(.data_replicas) \(.auto_mount) \(.disks | length)"' <<<"$st")" = "mounted /var/mnt/scratch 2 true 2" ] ||
     die "the new pool is not mounted at /var/mnt/scratch with 2 copies on 2 disks: $st"
-  vssh 'findmnt -no FSTYPE /var/mnt/scratch' | grep -q bcachefs || die "/var/mnt/scratch is not mounted"
+  vssh 'findmnt -no FSTYPE /var/mnt/scratch' | seen bcachefs || die "/var/mnt/scratch is not mounted"
 
   # A disk with a file system on it is erased only with the pool's name.
   vssh 'mkfs.ext4 -q -L Old /dev/vdg'
-  for _ in $(seq 1 10); do [ "$(spare)" = '/dev/vdg:ext4 "Old"' ] && break; sleep 2; done
-  [ "$(spare)" = '/dev/vdg:ext4 "Old"' ] || die "vdg is not offered with its contents: $(spare)"
+  wait_for 30 is '/dev/vdg:ext4 "Old"' spare || die "vdg is not offered with its contents: $(spare)"
   [ "$(code POST "storage/pools/$uuid/disks" '{"disk":"/dev/vdg"}')" = 422 ] || die "a disk with contents was added without the pool's name"
-  vssh 'blkid -o value -s TYPE /dev/vdg' | grep -q ext4 || die "the refused add touched vdg"
+  vssh 'blkid -o value -s TYPE /dev/vdg' | seen ext4 || die "the refused add touched vdg"
   [ "$(code POST "storage/pools/$uuid/disks" '{"disk":"/dev/vdg","confirm":"scratch"}')" = 204 ] || die "vdg was not added"
   [ "$(api http://x/api/storage | jq -r --arg u "$uuid" '.pools[] | select(.uuid == $u) | .disks | length')" = 3 ] || die "the pool does not have 3 disks"
 
@@ -408,11 +642,12 @@ pool_lifecycle() {
   vssh 'dd if=/dev/urandom of=/var/mnt/scratch/file bs=1M count=300 status=none && sync'
   sum=$(vssh 'sha256sum < /var/mnt/scratch/file')
   [ "$(code DELETE "storage/pools/$uuid/disks?disk=/dev/vde")" = 202 ] || die "the removal of vde did not start"
-  for _ in $(seq 1 60); do
-    op=$(api http://x/api/storage | jq -c --arg u "$uuid" '.pools[] | select(.uuid == $u) | .operation')
-    jq -e '.finished_at' <<<"$op" >/dev/null && break
-    sleep 2
-  done
+  op=''
+  removed() {
+    op=$(api http://x/api/storage | jq -c --arg u "$uuid" '.pools[] | select(.uuid == $u) | .operation') &&
+      jq -e '.finished_at' <<<"$op"
+  }
+  wait_for 300 removed || die "the removal of vde did not end: $op"
   [ "$(jq -r '"\(.phase) \(.error // "")"' <<<"$op")" = "done " ] || die "the removal of vde did not end well: $op"
   [ "$(api http://x/api/storage | jq -r --arg u "$uuid" '.pools[] | select(.uuid == $u) | [.disks[].path] | join(" ")')" = "/dev/vdf /dev/vdg" ] ||
     die "the pool's disks are not vdf and vdg after the removal"
@@ -431,12 +666,12 @@ pool_lifecycle() {
   [ "$(spare)" = "/dev/vde: /dev/vdf: /dev/vdg:" ] || die "the deleted pool's disks are not blank spare disks: $(spare)"
   vssh '! bcachefs show-super /dev/vdf >/dev/null 2>&1' || die "a deleted pool's disk still has a superblock"
   [ "$(api http://x/api/storage | jq -r '[.pools[].mountdir] | join(" ")')" = "$pool" ] || die "the pools left are not just $pool"
-  vssh "findmnt -no FSTYPE $pool" | grep -q bcachefs || die "$pool is not mounted any more"
+  vssh "findmnt -no FSTYPE $pool" | seen bcachefs || die "$pool is not mounted any more"
   lifecycle=1
   ok "a pool made on vde and vdf, grown with vdg (erased by name), shrunk by vde with its file kept, and deleted; the stack's pool refused"
 }
-# daemon: wait for the daemon's API.
-daemon() { for _ in $(seq 1 ${1:-30}); do api http://x/api/version >/dev/null 2>&1 && return 0; sleep 2; done; return 1; }
+# daemon [SECONDS]: wait for the daemon's API (2 minutes unless given).
+daemon() { wait_for "${1:-120}" api http://x/api/version; }
 # stage_image V: put version V's image files in the host's update folder, as
 # a build there would.
 stage_image() {
@@ -457,14 +692,10 @@ release() {
 # restart on the way); prints the record.
 op() {
   local started id d
-  if [ -n "${2:-}" ]; then
-    vssh "cat > /tmp/body.json" <<<"$2"
-    started=$(api -X POST "http://x/api/$1" -d @/tmp/body.json) || die "$1 refused: $started"
-  else
-    started=$(api -X POST "http://x/api/$1") || die "$1 refused: $started"
-  fi
-  id=$(jq -r .id <<<"$started")
-  for _ in $(seq 1 ${OPWAIT:-180}); do
+  started=$(send POST "$1" "${2-}") || die "$1 refused: $started"
+  id=$(jq -r '.id // empty' <<<"$started") || id=''
+  [ -n "$id" ] || die "$1 started no operation: $started"
+  for _ in $(seq 1 "${OPWAIT:-180}"); do
     sleep 5
     d=$(api http://x/api/system-updates/deploys 2>/dev/null | jq -c ".[] | select(.id == $id)") || continue
     [ -n "$d" ] && [ "$(jq -r .result <<<"$d")" != running ] && { echo "$d"; return; }
@@ -472,34 +703,45 @@ op() {
   die "$1 did not finish"
 }
 # https NAME PATH: GET https://NAME.$domain PATH through Caddy in the VM.
-https() { vssh "curl -skf --resolve $1.$domain:443:127.0.0.1 https://$1.$domain$2"; }
+https() { vssh "curl -skf --max-time 30 --resolve $1.$domain:443:127.0.0.1 https://$1.$domain$2"; }
 
+# booted VERSION: the VM runs VERSION (from here on $running, which has asks
+# about), its boot check passed, on its verity root.
 booted() {
-  vssh 'grep -q "^IMAGE_VERSION=\"\?'"$1"'\"\?$" /etc/os-release' || die "booted something other than $1"
+  local got
+  got=$(vssh '. /etc/os-release && echo "$IMAGE_VERSION"') || die "could not read the booted version"
+  [ "$got" = "$1" ] || die "booted $got, not $1"
+  running=$1
   # The boot check waits for the daemon (up to two minutes) before it passes.
-  for _ in $(seq 1 75); do vssh 'systemctl is-active -q boot-complete.target' && break; sleep 2; done
-  vssh 'systemctl is-active -q boot-complete.target' || die "boot-complete.target not reached"
+  wait_for 240 vssh 'systemctl is-active -q boot-complete.target' || die "boot-complete.target not reached"
   vssh 'findmnt -no SOURCE / | grep -q /dev/mapper/root' || die "/ is not on the verity device"
 }
 
 # served: the dashboard's API answers through Caddy at homelab.$domain: 200,
 # or 401 on a version with the sign-in. hassignin: the booted version has
 # the sign-in (an older release, booted first in a release's check, has not).
-apicode() { vssh "curl -sk -o /dev/null -w '%{http_code}' --resolve homelab.$domain:443:127.0.0.1 https://homelab.$domain$1"; }
+apicode() { vssh "curl -sk --max-time 30 -o /dev/null -w '%{http_code}' --resolve homelab.$domain:443:127.0.0.1 https://homelab.$domain$1"; }
 served() { case "$(apicode /api/version)" in 200 | 401) ;; *) return 1 ;; esac; }
-hassignin() { [ "$(apicode /api/auth)" = 200 ]; }
+# A probe for has: no status at all (000, or nothing from ssh) is no answer.
+hassignin() {
+  case "$(apicode /api/auth)" in
+    200) return 0 ;;
+    000 | '') return 2 ;;
+    *) return 1 ;;
+  esac
+}
 
 # signin: through Caddy the dashboard's API wants a session; the first visitor
 # sets the password, a second cannot, and the CLI can remove it.
 signin() {
-  local u="https://homelab.$domain" r="--resolve homelab.$domain:443:127.0.0.1"
+  local u="https://homelab.$domain" r="--max-time 30 --resolve homelab.$domain:443:127.0.0.1"
   local post="-H 'Origin: $u' -H 'Content-Type: application/json' -d '{\"password\":\"image-check-pw\"}'"
   [ "$(vssh "curl -sk $r $u/api/stacks" | jq -r .code)" = setup_required ] || die "the API answers before a password is set"
   vssh "curl -sk $r -c /tmp/jar $post $u/api/auth/setup" | jq -e .signed_in >/dev/null || die "the first password was refused"
   vssh "curl -skf $r -b /tmp/jar $u/api/stacks" >/dev/null || die "signed in, the API still refuses"
   [ "$(vssh "curl -sk $r $u/api/stacks" | jq -r .code)" = login_required ] || die "the API answers without a session"
   [ "$(vssh "curl -sk $r $post $u/api/auth/setup" | jq -r .code)" = password_set ] || die "a second visitor could set the password"
-  vssh 'homelab auth status' | grep -q 'has a password' || die "the CLI does not see the password"
+  vssh 'homelab auth status' | seen 'has a password' || die "the CLI does not see the password"
   vssh 'homelab auth reset' >/dev/null || die "the CLI could not remove the password"
   [ "$(vssh "curl -sk $r -b /tmp/jar $u/api/stacks" | jq -r .code)" = setup_required ] || die "a session outlived the reset"
 }
@@ -525,17 +767,20 @@ stackrefused() {
 # were fixed.
 fixedids() {
   local got
-  vssh 'grep -q "^u caddy 956 " /usr/lib/sysusers.d/homelab.conf' || return 1
+  has "fixed ids for the image's accounts" vssh 'grep -qs "^u caddy 956 " /usr/lib/sysusers.d/homelab.conf || exit 1' || return 1
   got=$(vssh 'echo "$(id -u caddy):$(id -g caddy) $(getent group homelab-daemon | cut -d: -f3) $(id -u homelab-nixd)"')
   [ "$got" = "956:956 957 955" ] || die "the image's accounts have other ids than the ones it fixes: caddy, homelab-daemon, homelab-nixd are $got"
 }
 
+# storeonvar: a probe for has: the booted version keeps the Nix store on
+# /var. (Its generator came with the reason a 100 MB ESP is refused, which
+# step 1 tells by it.)
+storeonvar() { vssh 'test -e /usr/lib/systemd/system-generators/homelab-nix'; }
+
 # hasdevicekeys: the booted version makes a VPN device's keys: it answers an
 # add without a name with 422; an older release, booted first in a release's
 # check, has no such route (404).
-hasdevicekeys() {
-  [ "$(vssh "curl -s -o /dev/null -w '%{http_code}' --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json' -X POST -d '{}' http://x/api/host-settings/wireguard/peers")" = 422 ]
-}
+hasdevicekeys() { answers 422 POST host-settings/wireguard/peers '{}'; }
 # devicekeys: a VPN device whose keys the host makes. Its config holds the
 # next address, the endpoint and the private key of the public key the VPN
 # now has. vpndevices is how many devices hostcheck expects.
@@ -566,10 +811,10 @@ stackfault() {
   addr=$(jq -r '.address // empty' <<<"$s")
   if [ -n "$addr" ]; then
     gw=${addr%.*}.1
-    vssh 'ip -4 -o addr show dev ve-site' 2>/dev/null | grep -qF " $gw/" || { echo "ve-site does not have the host's address $gw"; return; }
-    vssh "curl -sf -m 5 http://$addr:8080/" 2>/dev/null | grep -q image-check || { echo "the stack does not answer at $addr:8080"; return; }
+    vssh 'ip -4 -o addr show dev ve-site' 2>/dev/null | seen -F " $gw/" || { echo "ve-site does not have the host's address $gw"; return; }
+    vssh "curl -sf -m 5 http://$addr:8080/" 2>/dev/null | seen image-check || { echo "the stack does not answer at $addr:8080"; return; }
   fi
-  https site / 2>/dev/null | grep -q image-check || echo "the stack's route is not served at site.$domain"
+  https site / 2>/dev/null | seen image-check || echo "the stack's route is not served at site.$domain"
 }
 # stackevidence: what each layer looks like, for the log of a failed run.
 stackevidence() {
@@ -581,6 +826,11 @@ stackevidence() {
       journalctl -b -u systemd-networkd -o short-precise --no-pager | grep -iE "ve-site|reconfigur" | tail -15
       journalctl -b -u homelab-daemon -o cat --no-pager | grep -E "\"module\":\"(stacks|hostcfg)\"" | grep -vF "\"kind\":\"cmd\"" | tail -15'
   } 2>&1 | sed 's/^/    /' >&2 || true
+}
+# stackis FILTER WANT: jq's FILTER of the stack, as the daemon has it, is WANT.
+stackis() {
+  local s
+  s=$(api http://x/api/stacks/site) && [ "$(jq -r "$1" <<<"$s")" = "$2" ]
 }
 # stackrunning LIMIT: the daemon has the stack running within LIMIT seconds.
 # After a boot it answers before it has started the stacks again, so this is
@@ -616,37 +866,44 @@ stackup() {
 # daemon and its service list still answer at once; thawed, the same
 # processes serve the page. False on a version without freezing.
 stackfreeze() {
-  local leader st t0
-  api http://x/api/stacks/site | jq -e 'has("frozen")' >/dev/null || return 1
+  local leader st t0 c
+  has "freezing a stack" apihas stacks/site 'has("frozen")' || return 1
   leader=$(vssh "machinectl show site -p Leader --value")
   st=$(post stacks/site/freeze '{}') || die "the freeze was refused: $st"
   jq -e '.frozen and .running' <<<"$st" >/dev/null || die "the stack is not frozen after a freeze: $(jq -c '{frozen, running}' <<<"$st")"
   [ "$(vssh 'systemctl show -p FreezerState --value site.scope')" = frozen ] || die "the stack's scope is not frozen"
-  ! vssh "curl -skf --max-time 5 --resolve site.$domain:443:127.0.0.1 https://site.$domain/" >/dev/null 2>&1 ||
-    die "the frozen stack still answers"
+  # No answer in 5 s (000), or Caddy's own error for a silent backend.
+  c=$(vssh "curl -sk -o /dev/null -w '%{http_code}' --max-time 5 --resolve site.$domain:443:127.0.0.1 https://site.$domain/; true") ||
+    die "could not ask for the frozen stack's page"
+  case $c in '' | 2?? | 3??) die "the frozen stack still answers (${c:-no status})" ;; esac
   t0=$(date +%s)
   api http://x/api/stacks/site | jq -e .frozen >/dev/null || die "the stack does not show as frozen"
   api http://x/api/services >/dev/null || die "the service list fails while a stack is frozen"
   [ $(($(date +%s) - t0)) -le 5 ] || die "the API took $(($(date +%s) - t0))s with a frozen stack"
   [ "$(code POST system/power '{"action":"reboot"}')" = 409 ] || die "a reboot was not refused with a frozen stack"
   post stacks/site/thaw '{}' | jq -e '.frozen | not' >/dev/null || die "the stack is still frozen after a thaw"
-  https site / | grep -q image-check || die "the thawed stack does not serve its page"
+  https site / | seen image-check || die "the thawed stack does not serve its page"
   [ "$(vssh "machinectl show site -p Leader --value")" = "$leader" ] || die "the stack restarted over the freeze"
 }
 
 stackfork() {
-  local d s rev w=0
-  [ "$(api -X POST http://x/api/stacks/nope/fork 2>/dev/null | jq -r .code)" = unknown_stack ] || return 1
+  local d s='' rev w=0
+  # A fork of a stack that is not there: the route answers that it knows none.
+  forks() {
+    local b
+    b=$(vssh "curl -s $sock -X POST http://x/api/stacks/nope/fork") || return 2
+    [ "$(jq -r '.code // empty' <<<"$b" 2>/dev/null)" = unknown_stack ]
+  }
+  has "a stack forked into a draft" forks || return 1
   d=$(api -X POST http://x/api/stacks/site/fork) || die "the fork was refused: $d"
   [ "$(jq -r '"\(.forked_from) \(.forked_rev)"' <<<"$d")" = "git+file:///var/lib/stack-src/site $1" ] ||
     die "the draft does not record its origin: $(jq -c '{forked_from, forked_rev}' <<<"$d")"
-  vssh "cat > /tmp/save.json" <<<'{"changes":[{"path":"notes/fork.txt","content":"forked\n"}],"message":"Add a note"}'
-  d=$(api -X PUT http://x/api/drafts/site -d @/tmp/save.json) || die "the save was refused: $d"
+  d=$(send PUT drafts/site '{"changes":[{"path":"notes/fork.txt","content":"forked\n"}],"message":"Add a note"}') || die "the save was refused: $d"
   rev=$(jq -r .rev <<<"$d")
   s=$(api http://x/api/stacks/site)
   [ "$(jq -r .source <<<"$s")" = git+file:///var/lib/homelab-daemon/drafts/site ] || die "the stack's source is $(jq -r .source <<<"$s")"
   [ "$(jq -r .approved.rev <<<"$s")" = "$rev" ] || die "the saved commit $rev is not approved: $(jq -r .approved.rev <<<"$s")"
-  api -X POST http://x/api/stacks/site/update >/dev/null || die "update refused"
+  ask POST stacks/site/update || die "update refused"
   until s=$(api http://x/api/stacks/site 2>/dev/null) &&
     jq -e --arg r "$rev" '.generation as $g | .running and .operation.finished_at != null and ([.generations[] | select(.id == $g and .rev == $r)] | length == 1)' <<<"$s" >/dev/null; do
     jq -e '.operation.error // empty' <<<"$s" >/dev/null 2>&1 && die "the update failed: $(jq -r .operation.error <<<"$s")"
@@ -673,12 +930,11 @@ stackrace() {
   vssh 'networkctl reconfigure ve-site' || die "networkctl reconfigure refused"
   sleep 3
   stackup 0 "after systemd-networkd reconfigured the link"
-  api -X POST http://x/api/stacks/site/stop >/dev/null || die "stop refused"
-  for _ in $(seq 1 60); do [ "$(api http://x/api/stacks/site | jq -r .running)" = false ] && break; sleep 2; done
-  [ "$(api http://x/api/stacks/site | jq -r .running)" = false ] || die "the stack did not stop in 2 minutes"
+  ask POST stacks/site/stop || die "stop refused"
+  wait_for 180 stackis .running false || die "the stack did not stop in 3 minutes"
   vssh 'for _ in $(seq 1 60); do networkctl reload; networkctl reconfigure ve-site 2>/dev/null; sleep 0.5; done' &
   racer=$!
-  api -X POST http://x/api/stacks/site/start >/dev/null || die "start refused"
+  ask POST stacks/site/start || die "start refused"
   stackrunning 300
   wait "$racer" || true
   sleep 3
@@ -691,12 +947,12 @@ hostcheck() {
   stackrunning 300
   stackup 20
   [ "$(vssh 'wg show wg-homelab peers' | wc -l)" -eq "$vpndevices" ] || die "the VPN does not have its $vpndevices devices: $(vssh 'wg show wg-homelab peers' | wc -l)"
-  vssh 'ip -4 -o addr show wg-homelab' | grep -q 10.10.0.1/24 || die "the VPN interface has no address"
+  vssh 'ip -4 -o addr show wg-homelab' | seen -F 10.10.0.1/24 || die "the VPN interface has no address"
   vssh 'grep -q "originServerName: site.'"$domain"'" /var/lib/homelab/cloudflared/config.yml' || die "the tunnel route is not in cloudflared's config"
-  vssh 'systemctl is-enabled homelab-cloudflared' | grep -q runtime || die "the tunnel is not turned on"
-  vssh 'nft list table inet homelab_host' | grep -q 'dport 8443 accept' || die "the firewall table is not loaded"
+  vssh 'systemctl is-enabled homelab-cloudflared' | seen runtime || die "the tunnel is not turned on"
+  vssh 'nft list table inet homelab_host' | seen 'dport 8443 accept' || die "the firewall table is not loaded"
   [ "$(vssh cat /proc/sys/kernel/hostname)" = checkhost ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
-  vssh 'readlink /etc/localtime' | grep -q Europe/Stockholm || die "the time zone is not set"
+  vssh 'readlink /etc/localtime' | seen Europe/Stockholm || die "the time zone is not set"
   [ "$(api http://x/api/stacks/site | jq -r .running)" = true ] || die "the stack is not running"
   # Caddy's way to the daemon is web.sock, behind the sign-in. In the daemon's
   # group it could open the CLI's socket, which asks for none.
@@ -717,17 +973,18 @@ claim() {
 # medium through the installer's API (into the free region starting at byte
 # REGION). The installer's token stays in $token.
 installto() {
-  local st
+  local st='' planned
   claim
   local plan="{\"disk\":\"$1\",\"erase\":$2${5:+,\"esp\":\"$5\"}${6:+,\"region\":$6}}"
-  [ "$(api -X POST http://x/api/installer/plan -d "'$plan'" | jq -r .ok)" = true ] ||
-    die "no plan for $1: $(api -X POST http://x/api/installer/plan -d "'$plan'" | jq -r .reason)"
-  api -X POST -H "'X-Installer-Token: $token'" http://x/api/installer/install \
-    -d "'{\"disk\":\"$1\",\"erase\":$2,\"hostname\":\"$3\",\"timezone\":\"Europe/Stockholm\",\"ssh_keys\":[\"$(cat "$vm/key2.pub")\"]${4:+,\"ipv4\":$4}${5:+,\"esp\":\"$5\"}${6:+,\"region\":$6}}'" >/dev/null || die "install refused"
+  planned=$(post installer/plan "$plan") || die "no plan for $1: $planned"
+  [ "$(jq -r .ok <<<"$planned")" = true ] || die "no plan for $1: $(jq -r .reason <<<"$planned")"
+  ask POST installer/install "{\"disk\":\"$1\",\"erase\":$2,\"hostname\":\"$3\",\"timezone\":\"Europe/Stockholm\",\"ssh_keys\":[\"$(cat "$vm/key2.pub")\"]${4:+,\"ipv4\":$4}${5:+,\"esp\":\"$5\"}${6:+,\"region\":$6}}" \
+    -H "'X-Installer-Token: $token'" || die "install refused"
+  # One poll that fails is not the install's end: the VM is busy writing.
   for _ in $(seq 1 120); do
-    st=$(api http://x/api/installer | jq -r .step)
-    [ "$st" = installing ] || break
     sleep 5
+    st=$(api http://x/api/installer | jq -r .step) || continue
+    [ "$st" = installing ] || break
   done
   [ "$st" = installed ] || die "install onto $1: $st: $(api http://x/api/installer | jq -r '.error + "\n" + (.log[-15:] | join("\n"))')"
   # Every install can be restarted into: the firmware has its boot entry,
@@ -738,7 +995,7 @@ installto() {
 # install ...: installto, then turn the machine off from the page's button.
 install() {
   installto "$@"
-  api -X POST -H "'X-Installer-Token: $token'" http://x/api/installer/poweroff >/dev/null || true
+  send POST installer/poweroff '' -H "'X-Installer-Token: $token'" >/dev/null || true
   off
 }
 # espfiles DEV: the other system's files on an ESP, as one line; read where
@@ -774,22 +1031,22 @@ size=$(stat -c %s "$out/homelab_$version.raw")
 # disk UUID, the same in every build: the constant it carries must be this.
 medium=$(sfdisk --disk-id "$out/homelab_$version.raw" | tr A-F a-f)
 for f in mkosi.extra/usr/lib/udev/rules.d/61-homelab-disk.rules mkosi.initrd.conf/mkosi.extra/usr/lib/homelab/loader-disk-wait; do
-  grep -v '^ *#' "$here/base/$f" | grep -qi "$medium" || die "the installer medium's disk UUID is $medium, which image/base/$f does not name"
+  grep -v '^ *#' "$here/base/$f" | seen -i "$medium" || die "the installer medium's disk UUID is $medium, which image/base/$f does not name"
 done
 boot "$vm/stick.raw" "$vm/disk.raw" "$vm/beside.raw" "$vm/small.raw" "$vm/win100.raw"
 booted "$version"
-vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
+nofailed
 [ "$(stickname)" = vda ] || die "the disk with the medium's UUID is $(stickname), not vda"
 runs_from vda
 st=$(installer)
 jq -e '.active and (.disks[] | select(.name == "vda") | .in_use) and (.disks[] | select(.name == "vdb") | .erase.ok)
   and (.disks[] | select(.name == "vdc") | .beside.ok)' <<<"$st" >/dev/null || die "unexpected disks: $(jq -c '[.disks[] | {name, in_use, erase, beside}]' <<<"$st")"
-curl -sf "http://127.0.0.1:$httpport/" | grep -q '<html' || die "the dashboard does not answer over HTTP"
+overhttp
 autologin
 # A disk sold as 64 GB takes an install, where the image's partitions fit it
 # (a version before that says it is too small).
 small=
-if [ "$(jq -r '.min_bytes' <<<"$st")" -le 64000000000 ]; then
+if has "an install onto a 64 GB disk" jq -e '.min_bytes != null and .min_bytes <= 64000000000' <<<"$st"; then
   jq -e '.disks[] | select(.name == "vdd") | .erase.ok' <<<"$st" >/dev/null || die "a 64 GB disk is refused: $(jq -c '.disks[] | select(.name == "vdd") | .erase' <<<"$st")"
   plan=$(post installer/plan '{"disk":"vdd","erase":true}')
   [ "$(jq -r .ok <<<"$plan")" = true ] || die "no plan for a 64 GB disk: $(jq -r .reason <<<"$plan")"
@@ -800,10 +1057,10 @@ fi
 # reason named Windows refuses it too.)
 tiny=$(jq -c '.disks[] | select(.name == "vde")' <<<"$st")
 jq -e '.erase.ok and (.beside.ok | not)' <<<"$tiny" >/dev/null || die "a disk with a 100 MB ESP: $(jq -c '{erase, beside}' <<<"$tiny")"
-if vssh 'test -e /usr/lib/systemd/system-generators/homelab-nix'; then
-  jq -r .beside.reason <<<"$tiny" | grep -q 'Windows makes one of 100 MB' || die "the refusal does not say why: $(jq -r .beside.reason <<<"$tiny")"
+if has "the reason a 100 MB ESP is refused" storeonvar; then
+  jq -r .beside.reason <<<"$tiny" | seen 'Windows makes one of 100 MB' || die "the refusal does not say why: $(jq -r .beside.reason <<<"$tiny")"
   plan=$(post installer/plan '{"disk":"vde","erase":false}')
-  [ "$(jq -r .ok <<<"$plan")" = false ] && jq -r .reason <<<"$plan" | grep -q '400 MB' || die "a plan next to a 100 MB ESP: $plan"
+  [ "$(jq -r .ok <<<"$plan")" = false ] && jq -r .reason <<<"$plan" | seen '400 MB' || die "a plan next to a 100 MB ESP: $plan"
   small="$small; free space next to a 100 MB ESP refused with the reason"
 fi
 # The installer is one browser's, and not for ever: a second claim is
@@ -812,7 +1069,7 @@ fi
 # which has no tries to count. (A version before the take-over has none of
 # this.)
 held=
-if vssh 'test -e /run/homelab-installer/takeover-code'; then
+if has "the installer's take-over" vssh 'test -e /run/homelab-installer/takeover-code'; then
   code=$(vssh 'cat /run/homelab-installer/takeover-code')
   [[ $code =~ ^[0-9]{6}$ ]] || die "the take-over code is not six digits: $code"
   first=$(api -X POST http://x/api/installer/claim | jq -r .token) || die "the first claim was refused"
@@ -821,7 +1078,7 @@ if vssh 'test -e /run/homelab-installer/takeover-code'; then
   second=$(post installer/takeover "{\"code\":\"$code\"}" | jq -r .token) || die "the console's code did not take the installer over"
   [ "$(api -H "'X-Installer-Token: $second'" http://x/api/installer | jq -r .mine)" = true ] || die "the installer is not the taker's"
   [ "$(api -H "'X-Installer-Token: $first'" http://x/api/installer | jq -r .mine)" = false ] || die "the token from before the take-over still holds the installer"
-  # Read whole, then searched: grep -q would close the pipe on ssh.
+  # Read whole, then searched (see seen).
   greeting=$(vssh 'bash -lic true 2>/dev/null')
   grep -q "take-over code: $code" <<<"$greeting" || die "the console's greeting does not show the take-over code"
   grep -q '█' <<<"$greeting" || die "the console's greeting draws no QR code of the address"
@@ -840,7 +1097,7 @@ drop small win100
 ntfs=$(sfdisk -J "$vm/beside.raw" | jq '.partitiontable.partitions[] | select(.type == "EBD0A0A2-B9E5-4433-87C0-68B6B72699C7") | .start')
 ingap=$(sfdisk -J "$vm/beside.raw" | jq --argjson n "$ntfs" '[.partitiontable.partitions[] | select(.start > 2048 and .start < $n)] | length')
 [ "$ingap" = 0 ] || die "$ingap new partitions went into the gap before the other system's: $(sfdisk -d "$vm/beside.raw")"
-sfdisk -d "$vm/beside.raw" | grep -q homelab-reserved && die "a temporary partition was left on the disk"
+! sfdisk -d "$vm/beside.raw" | seen homelab-reserved || die "a temporary partition was left on the disk"
 ok "installed into vdc's selected free region (not the gap before the other system) and turned off"
 
 step "3. the USB stick boots as the installer next to that install; erase a disk and install"
@@ -861,7 +1118,7 @@ autologin
 # Step 13 starts the first install through its boot entry: the firmware must
 # have kept it when it was told an order (see boot).
 esp=$(sfdisk -J "$vm/beside.raw" | jq -r '.partitiontable.partitions[0].uuid')
-vssh efibootmgr | grep -qi "GPT,$esp," || die "the firmware dropped the first install's boot entry: $(vssh efibootmgr | tr '\n' ';')"
+vssh efibootmgr | seen -i "GPT,$esp," || die "the firmware dropped the first install's boot entry: $(vssh efibootmgr | tr '\n' ';')"
 install vda true installed
 # Every install has partition UUIDs of its own, and none the medium's disk UUID.
 [ "$(sfdisk --disk-id "$vm/disk.raw" | tr A-F a-f)" != "$medium" ] || die "the installed disk has the medium's disk UUID"
@@ -879,33 +1136,32 @@ vssh 'test "$(findmnt -no SIZE /var | tr -d G | cut -d. -f1)" -gt 30' || die "/v
 # The Nix store is on /var: no partition of its own takes room from it (a
 # release from before that, installed first in a release's check, has one).
 onvar=
-if vssh 'test -e /usr/lib/systemd/system-generators/homelab-nix'; then
+if has "the Nix store on /var" storeonvar; then
   onvar=1
-  vssh 'findmnt -no SOURCE -M /nix' | grep -q '\[/nix\]$' || die "/nix is not /var's folder: $(vssh 'findmnt -no SOURCE -M /nix')"
-  sfdisk -d "$vm/disk.raw" | grep -q 'name="nix"' && die "the install made a nix partition" || true
+  vssh 'findmnt -no SOURCE -M /nix' | seen '\[/nix\]$' || die "/nix is not /var's folder: $(vssh 'findmnt -no SOURCE -M /nix')"
+  ! sfdisk -d "$vm/disk.raw" | seen 'name="nix"' || die "the install made a nix partition"
 else
   vssh 'mountpoint -q /nix' || die "/nix is not mounted"
 fi
-vssh 'systemd-sysext status --no-legend' | grep -q homelab-core || die "the core extension is not merged"
-for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
-api http://x/api/version >/dev/null || die "the daemon does not answer"
+vssh 'systemd-sysext status --no-legend' | seen homelab-core || die "the core extension is not merged"
+daemon || die "the daemon does not answer"
 [ "$(api http://x/api/installer | jq -r .active)" = false ] || die "the installed host runs the installer"
-console_users | grep -q . && die "the installed host logs someone in on a console: $(console_users | tr '\n' ';')" || true
+nologin
 [ "$(vssh cat /proc/sys/kernel/hostname)" = installed ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname), not the installer's"
 [ "$(api http://x/api/host-settings | jq -r .host.hostname)" = installed ] || die "the installer's host name is not in the settings"
-vssh 'readlink /etc/localtime' | grep -q Europe/Stockholm || die "the installer's time zone is not set"
+vssh 'readlink /etc/localtime' | seen Europe/Stockholm || die "the installer's time zone is not set"
 vssh 'grep -q "^# This machine runs homelab-ngx" /etc/claude-code/CLAUDE.md && grep -q "^name: homelab" /etc/claude-code/.claude/skills/homelab/SKILL.md /etc/codex/skills/homelab/SKILL.md && grep -q /usr/share/homelab/agent/brief.md /etc/codex/config.toml /etc/opencode/opencode.json && test -s "$(jq -r ".instructions[0]" /etc/opencode/opencode.json)"' ||
   die "the coding agents' guidance is not reachable from /etc"
-ssh -q -i "$vm/key2" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -p "$sshport" root@127.0.0.1 true ||
+ssh "${sshopts[@]}" -i "$vm/key2" -p "$sshport" root@127.0.0.1 true ||
   die "the SSH key given to the installer does not let root in"
-vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
-curl -sf "http://127.0.0.1:$httpport/" | grep -q '<html' || die "the dashboard does not answer over HTTP"
+nofailed
+overhttp
 [ "$(api http://x/api/host-settings | jq -r .managed)" = image ] || die "the daemon does not see an image host"
 # Wake-on-LAN: the wired card takes the image's link file under the name it
 # would have had, and the settings show its MAC address. (A version before
 # the link file has neither.)
 wol=
-if vssh 'test -e /usr/lib/systemd/network/80-wired.link'; then
+if has "Wake-on-LAN for the wired card" vssh 'test -e /usr/lib/systemd/network/80-wired.link'; then
   nic=$(vssh 'ls /sys/class/net' | grep -E '^(en|eth)' | head -n1)
   link=$(vssh "udevadm info -q property /sys/class/net/$nic")
   grep -qx 'ID_NET_LINK_FILE=/usr/lib/systemd/network/80-wired.link' <<<"$link" || die "$nic does not take 80-wired.link: $(grep LINK_FILE <<<"$link")"
@@ -915,10 +1171,12 @@ if vssh 'test -e /usr/lib/systemd/network/80-wired.link'; then
   wol="; $nic takes 80-wired.link (Wake-on-LAN) under its own name, its MAC address in the settings"
 fi
 put host-settings/domain "{\"domain\":\"$domain\"}" || die "domain refused"
-for _ in $(seq 1 15); do served 2>/dev/null && break; sleep 2; done
-served || die "the dashboard is not served at homelab.$domain"
+wait_for 60 served || die "the dashboard is not served at homelab.$domain"
 signed=" (no sign-in on $version)"
-hassignin && signin && signed=" behind its sign-in"
+if has "the dashboard's sign-in" hassignin; then
+  signin
+  signed=" behind its sign-in"
+fi
 ok "daemon $(api http://x/api/version | jq -r .version), dashboard over HTTP and at https://homelab.$domain$signed$wol"
 
 fixedids && ok "caddy, homelab-daemon and homelab-nixd have their fixed ids"
@@ -929,22 +1187,22 @@ vssh 'bcachefs format -q --replicas=2 /dev/vdb /dev/vdc >/dev/null'
 # the first version of a check that updates from it) has /pool in its image
 # and takes a path.
 pool=/var/mnt/pool guarded=
-if vssh 'test -L /mnt'; then
-  api -X POST http://x/api/storage/mount -d "'{\"devices\":[\"/dev/vdb\",\"/dev/vdc\"]}'" >/dev/null || die "mount refused"
-  vssh "findmnt -no FSTYPE $pool" | grep -q bcachefs || die "$pool is not mounted"
+if has "pools mounted under /var/mnt" vssh 'test -L /mnt'; then
+  ask POST storage/mount '{"devices":["/dev/vdb","/dev/vdc"]}' || die "mount refused"
+  vssh "findmnt -no FSTYPE $pool" | seen bcachefs || die "$pool is not mounted"
   vssh 'touch /mnt/pool/.check && rm /var/mnt/pool/.check' || die "/mnt/pool is not the pool"
-  code=$(vssh "curl -s -o /dev/null -w '%{http_code}' --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json' -X POST http://x/api/storage/mount -d '{\"devices\":[\"/dev/vdb\"],\"name\":\"../x\"}'")
+  code=$(code POST storage/mount '{"devices":["/dev/vdb"],"name":"../x"}')
   [ "$code" = 422 ] || [ "$code" = 400 ] || die "a pool name with a path in it answered $code"
   # Unmounted, its directory takes no writes: they would land on /var.
-  api -X POST http://x/api/storage/unmount -d "'{\"mountpoint\":\"$pool\"}'" >/dev/null || die "unmount refused"
+  ask POST storage/unmount "{\"mountpoint\":\"$pool\"}" || die "unmount refused"
   vssh "! touch $pool/x 2>/dev/null" || die "the unmounted $pool can be written to"
-  api -X POST http://x/api/storage/mount -d "'{\"devices\":[\"/dev/vdb\",\"/dev/vdc\"]}'" >/dev/null || die "the second mount was refused"
-  vssh "findmnt -no FSTYPE $pool" | grep -q bcachefs || die "$pool is not mounted again under the name it had"
+  ask POST storage/mount '{"devices":["/dev/vdb","/dev/vdc"]}' || die "the second mount was refused"
+  vssh "findmnt -no FSTYPE $pool" | seen bcachefs || die "$pool is not mounted again under the name it had"
   guarded="; unmounted, its directory takes no writes"
 else
   pool=/pool
-  api -X POST http://x/api/storage/mount -d "'{\"devices\":[\"/dev/vdb\",\"/dev/vdc\"],\"mountpoint\":\"/pool\"}'" >/dev/null || die "mount refused"
-  vssh 'findmnt -no FSTYPE /pool' | grep -q bcachefs || die "/pool is not mounted"
+  ask POST storage/mount '{"devices":["/dev/vdb","/dev/vdc"],"mountpoint":"/pool"}' || die "mount refused"
+  vssh 'findmnt -no FSTYPE /pool' | seen bcachefs || die "/pool is not mounted"
 fi
 ok "pool mounted at $pool ($(vssh 'bcachefs version'))$guarded"
 
@@ -952,24 +1210,21 @@ ok "pool mounted at $pool ($(vssh 'bcachefs version'))$guarded"
 # it is offered, not the ESP, the root slots, /var or the pool's disks; it
 # mounts under its label's name, and is remembered for the next boot.
 part=
-if api http://x/api/storage | jq -e 'has("partitions")' >/dev/null; then
+if has "a partition that is not a pool, mounted from the API" apihas storage 'has("partitions")'; then
   vssh 'mkfs.ext4 -q -L "Check Data" /dev/vdd'
-  for _ in $(seq 1 10); do
-    st=$(api http://x/api/storage)
-    [ "$(jq -r '[.partitions[].path] | join(" ")' <<<"$st")" = /dev/vdd ] && break
-    sleep 2
-  done
+  offered() { st=$(api http://x/api/storage) && [ "$(jq -r '[.partitions[].path] | join(" ")' <<<"$st")" = /dev/vdd ]; }
+  wait_for 30 offered || true
   [ "$(jq -r '[.partitions[] | "\(.path) \(.fstype) \(.state) \(.mount_name)"] | join(", ")' <<<"$st")" = "/dev/vdd ext4 unmounted check-data" ] ||
     die "the partitions offered are not just vdd: $(jq -c .partitions <<<"$st")"
   partuuid=$(jq -r '.partitions[0].uuid' <<<"$st")
   part=/var/mnt/check-data
-  api -X POST "http://x/api/storage/partitions/$partuuid/mount" -d "'{}'" >/dev/null || die "the partition's mount was refused"
-  vssh "findmnt -no FSTYPE,OPTIONS $part" | grep -q '^ext4 .*nosuid' || die "$part is not mounted: $(vssh "findmnt -no FSTYPE,OPTIONS $part")"
-  code=$(vssh "curl -s -o /dev/null -w '%{http_code}' --unix-socket /run/homelab-daemon/daemon.sock -H 'Content-Type: application/json' -X POST http://x/api/storage/partitions/$partuuid/mount -d '{\"name\":\"pool\"}'")
+  ask POST "storage/partitions/$partuuid/mount" '{}' || die "the partition's mount was refused"
+  vssh "findmnt -no FSTYPE,OPTIONS $part" | seen '^ext4 .*nosuid' || die "$part is not mounted: $(vssh "findmnt -no FSTYPE,OPTIONS $part")"
+  code=$(code POST "storage/partitions/$partuuid/mount" '{"name":"pool"}')
   [ "$code" = 409 ] || die "mounting a mounted partition answered $code"
-  api -X POST "http://x/api/storage/partitions/$partuuid/unmount" >/dev/null || die "the partition's unmount was refused"
+  ask POST "storage/partitions/$partuuid/unmount" || die "the partition's unmount was refused"
   vssh "! touch $part/x 2>/dev/null" || die "the unmounted $part can be written to"
-  api -X POST "http://x/api/storage/partitions/$partuuid/mount" -d "'{}'" >/dev/null || die "the partition's second mount was refused"
+  ask POST "storage/partitions/$partuuid/mount" '{}' || die "the partition's second mount was refused"
   vssh "echo kept > $part/file"
   ok "partition vdd mounted at $part, the only one offered; unmounted, its directory takes no writes"
 fi
@@ -981,60 +1236,66 @@ for f in homelab-stack.json flake.nix; do
 done
 vssh 'cd /var/lib/stack-src/site && git init -q && git add -A && git -c user.name=check -c user.email=check@example.com commit -qm site'
 rev=$(vssh 'git -C /var/lib/stack-src/site rev-parse HEAD')
-api -X POST http://x/api/stacks -d "'{\"name\":\"site\",\"source\":\"git+file:///var/lib/stack-src/site\"}'" >/dev/null || die "install refused"
+ask POST stacks '{"name":"site","source":"git+file:///var/lib/stack-src/site"}' || die "install refused"
 # The stack's page makes the folder: a subvolume on the pool, owned by the
 # host's ids for the user and group the template declares (nginx, the first
 # name, so 2000). A version from before that takes a folder made by hand.
 madefolder=
-if api http://x/api/stacks-ids >/dev/null 2>&1; then
-  api -X POST http://x/api/stacks/site/variables/SITE_DIR/folder -d "'{\"place\":\"$pool\",\"folder\":\"site\"}'" >/dev/null || die "the folder was not made"
+if has "a stack's folder made from the API" answers 200 GET stacks-ids; then
+  ask POST stacks/site/variables/SITE_DIR/folder "{\"place\":\"$pool\",\"folder\":\"site\"}" || die "the folder was not made"
   [ "$(vssh "stat -c %u:%g $pool/site")" = 2000:2000 ] || die "$pool/site is owned by $(vssh "stat -c %u:%g $pool/site"), not the stack ids 2000:2000"
-  vssh "bcachefs subvolume list $pool" | grep -qw site || die "$pool/site is not a subvolume"
+  vssh "bcachefs subvolume list $pool" | seen -w site || die "$pool/site is not a subvolume"
   [ "$(api http://x/api/stacks/site | jq -r '.variables[] | select(.name == "SITE_DIR") | "\(.value) \(.owner_state)"')" = "$pool/site ok" ] || die "SITE_DIR is not the made folder on the stack ids"
   madefolder="; its folder a subvolume made from the API, owned by the stack ids"
 else
   vssh "mkdir -p $pool/site && chown 2000:2000 $pool/site"
-  api -X PUT http://x/api/stacks/site/variables/SITE_DIR -d "'{\"value\":\"$pool/site\"}'" >/dev/null || die "variable refused"
+  put stacks/site/variables/SITE_DIR "{\"value\":\"$pool/site\"}" || die "variable refused"
 fi
 vssh "echo '<p>image-check</p>' > $pool/site/index.html"
 # A folder bound on top of what the manifest asks for, read-only. A version
 # from before added folders has none.
 added=
-if api http://x/api/stacks/site | jq -e 'has("folders")' >/dev/null; then
+if has "a host folder added to a stack" apihas stacks/site 'has("folders")'; then
   vssh "mkdir -p $pool/library && echo shared > $pool/library/file"
-  api -X PUT http://x/api/stacks/site/folders -d "'{\"folders\":[{\"path\":\"$pool/library\",\"mount\":\"/library\",\"read_only\":true}]}'" >/dev/null ||
+  put stacks/site/folders "{\"folders\":[{\"path\":\"$pool/library\",\"mount\":\"/library\",\"read_only\":true}]}" ||
     die "the added folder was refused"
   added=1
 fi
-api -X POST http://x/api/stacks/site/approve -d "'{\"rev\":\"$rev\"}'" >/dev/null || die "approve refused"
-api -X POST http://x/api/stacks/site/start >/dev/null || die "start refused"
+ask POST stacks/site/approve "{\"rev\":\"$rev\"}" || die "approve refused"
+ask POST stacks/site/start || die "start refused"
+# Nix builds the stack: the VM is busy, and one poll that fails is not the
+# stack's failure.
+s=''
 for _ in $(seq 1 120); do
-  s=$(api http://x/api/stacks/site)
-  [ "$(jq -r .running <<<"$s")" = true ] && break
-  jq -e '.operation.error // empty' <<<"$s" >/dev/null && die "stack failed: $(jq -r .operation.error <<<"$s")"
   sleep 5
+  s=$(api http://x/api/stacks/site) || continue
+  [ "$(jq -r .running <<<"$s")" != true ] || break
+  ! jq -e '.operation.error // empty' <<<"$s" >/dev/null || die "stack failed: $(jq -r .operation.error <<<"$s")"
 done
 [ "$(jq -r .running <<<"$s")" = true ] || die "the stack did not start in 10 minutes"
-https site / | grep -q image-check || die "the stack's route is not served at site.$domain"
+https site / | seen image-check || die "the stack's route is not served at site.$domain"
 refused=""
-hassignin && stackrefused site && refused="; the dashboard refuses it"
+if has "the dashboard's sign-in" hassignin; then
+  stackrefused site
+  refused="; the dashboard refuses it"
+fi
 if [ -n "$onvar" ]; then
   st=$(api http://x/api/stacks-store)
   jq -e '.total_bytes > 0 and .free_bytes > 0 and (.own_partition | not)' <<<"$st" >/dev/null || die "the Nix store's disk is not reported: $st"
 fi
-[ -z "$madefolder" ] || grep -q '^nginx:x:2000:' <(vssh 'cat /var/lib/homelab/appdata/stacks/site/root/etc/passwd') || die "nginx in the stack does not have the id 2000"
+[ -z "$madefolder" ] || vssh 'cat /var/lib/homelab/appdata/stacks/site/root/etc/passwd' | seen '^nginx:x:2000:' || die "nginx in the stack does not have the id 2000"
 if [ -n "$added" ]; then
   leader=$(vssh "machinectl show site -p Leader --value")
   # Through the leader's root: the stack's mounts, read-only flag and all,
   # without a binary of the host's inside the stack.
   [ "$(vssh "cat /proc/$leader/root/library/file")" = shared ] || die "the added folder is not at /library in the stack"
-  ! vssh "touch /proc/$leader/root/library/new" 2>/dev/null || die "the stack wrote to the read-only added folder"
+  vssh "! touch /proc/$leader/root/library/new 2>/dev/null" || die "the stack wrote to the read-only added folder"
   vssh "grep -q ' /library ro,' /proc/$leader/mountinfo" || die "/library is not mounted read-only in the stack"
   added="; a host folder added read-only at /library"
 fi
 ok "stack site built, serving the page from the pool at https://site.$domain$refused$madefolder$added"
 stackfork "$rev" || true
-https site / | grep -q image-check || die "the stack's route is not served after the fork"
+https site / | seen image-check || die "the stack's route is not served after the fork"
 stackfreeze && ok "stack site frozen with its processes kept, its route silent and the API answering; thawed, the same processes serve it"
 pool_lifecycle
 
@@ -1042,7 +1303,7 @@ step "7. host settings: VPN, tunnel, firewall, name and time zone"
 peer=$(vssh 'wg genkey | wg pubkey')
 put host-settings/wireguard "$(jq -n --arg k "$peer" '{enabled: true, address: "10.10.0.1/24", endpoint: "vpn.example.net:51820",
   peers: [{name: "laptop", public_key: $k, address: "10.10.0.2"}]}')" || die "VPN refused"
-hasdevicekeys && devicekeys
+if has "a VPN device's keys made by the host" hasdevicekeys; then devicekeys; fi
 creds='{"AccountTag":"acc","TunnelID":"0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","TunnelSecret":"c2VjcmV0"}'
 put host-settings/tunnel "$(jq -n --arg c "$creds" '{enabled: true, credentials: $c, routes: [{hostname: "site.example.net", target: "site"}]}')" || die "tunnel refused"
 put host-settings/firewall '{"openings":[{"port":8443,"proto":"tcp","from":["10.0.2.0/24"]}]}' || die "firewall refused"
@@ -1055,7 +1316,7 @@ ok "VPN devices$made, tunnel route, firewall, host name and time zone in place"
 
 step "8. after a reboot"
 froze=""
-if api http://x/api/stacks/site | jq -e 'has("frozen")' >/dev/null; then
+if has "freezing a stack" apihas stacks/site 'has("frozen")'; then
   post stacks/site/freeze '{}' >/dev/null || die "the freeze before the reboot was refused"
   [ "$(post system/power '{"action":"reboot"}' | jq -r .code)" = stacks_frozen ] ||
     die "a reboot from the API was not refused with the stack frozen"
@@ -1077,11 +1338,12 @@ if [ -n "$next" ]; then
   gpg --homedir "$vm/gnupg" --batch --quiet --passphrase '' --quick-gen-key 'image check <check@example.com>' ed25519 sign never
   gpg --homedir "$vm/gnupg" --armor --export > "$vm/release.asc"
   mkdir -p "$vm/release"
-  python3 -m http.server --bind 127.0.0.1 --directory "$vm/release" "$relport" >"$vm/release.log" 2>&1 &
+  python3 -m http.server --bind 127.0.0.1 --directory "$vm/release" "$relport" >"$vm/release.log" 2>&1 9>&- &
   relpid=$!
+  wait_for 30 listening "$relport" || die "the release server did not start: $(tail -n 3 "$vm/release.log" | tr '\n' ';')"
   vscp "$vm/release.asc" root@127.0.0.1:/var/lib/homelab/release.asc
   vssh "printf 'HOMELAB_RELEASE_URL=http://10.0.2.2:$relport\nHOMELAB_RELEASE_KEYRING=/var/lib/homelab/release.asc\n' > /var/lib/homelab/daemon.env && systemctl restart homelab-daemon"
-  for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
+  daemon || die "the daemon does not answer with the release server set"
   # Sums changed after they were signed: refused, nothing staged.
   release "$next"
   echo "0000000000000000000000000000000000000000000000000000000000000000  homelab_$next.efi" >> "$vm/release/$next/SHA256SUMS"
@@ -1100,9 +1362,16 @@ if [ -n "$next" ]; then
   [ "$(api http://x/api/system-updates/image | jq -r .core.active)" = "$next" ] || die "core $next is not active"
   [ "$(vssh 'machinectl show site -p Timestamp --value')" = "$since" ] || die "the stack's container was restarted"
   hostcheck
-  # A core update restarts Caddy too: an older version's open API is gated now.
+  # A core update restarts Caddy too: an older version's open API is gated
+  # now. The core is $next's from here on, and has what $next has.
+  running=$next
   signed=""
-  hassignin && signin && stackrefused site && signed="; the dashboard behind its sign-in, refused to the stack"
+  if has "the dashboard's sign-in" hassignin; then
+    signin
+    stackrefused site
+    signed="; the dashboard behind its sign-in, refused to the stack"
+  fi
+  running=$version
   ok "core $next active, no reboot, the stack's container untouched$signed"
 
   step "10. an image update to $next through the API"
@@ -1110,19 +1379,19 @@ if [ -n "$next" ]; then
   op system-updates/image/install '{"reboot":"now"}' >/dev/null || true
   # The install reboots the host: wait for the next boot.
   newboot
-  for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
+  daemon 240 || die "the daemon does not answer after the update to $next"
   booted "$next"
-  vssh 'systemd-sysext status --no-legend' | grep -q homelab-core || die "the core extension is not merged on $next"
+  vssh 'systemd-sysext status --no-legend' | seen homelab-core || die "the core extension is not merged on $next"
   fixedids || true
   # $next has no /pool: a pool the first version mounted there is mounted
   # again by hand, under its name, and the stack is given its new path.
-  if [ "$pool" = /pool ] && vssh 'test -L /mnt'; then
+  if [ "$pool" = /pool ] && has "pools mounted under /var/mnt" vssh 'test -L /mnt'; then
     pool=/var/mnt/pool
-    api -X POST http://x/api/storage/mount -d "'{\"devices\":[\"/dev/vdb\",\"/dev/vdc\"]}'" >/dev/null || die "mount refused on $next"
-    api -X PUT http://x/api/stacks/site/variables/SITE_DIR -d "'{\"value\":\"$pool/site\"}'" >/dev/null || die "variable refused on $next"
-    api -X POST http://x/api/stacks/site/stop >/dev/null 2>&1 || true
-    for _ in $(seq 1 30); do [ "$(api http://x/api/stacks/site | jq -r '.operation.running // false')" = false ] && break; sleep 2; done
-    api -X POST http://x/api/stacks/site/start >/dev/null || die "start refused on $next"
+    ask POST storage/mount '{"devices":["/dev/vdb","/dev/vdc"]}' || die "mount refused on $next"
+    put stacks/site/variables/SITE_DIR "{\"value\":\"$pool/site\"}" || die "variable refused on $next"
+    send POST stacks/site/stop >/dev/null 2>&1 || true
+    wait_for 90 stackis '.operation.running // false' false || die "the stack's stop did not end on $next"
+    ask POST stacks/site/start || die "start refused on $next"
   fi
   hostcheck
   # A release before the VPN device's keys left that part of step 7 to $next.
@@ -1161,7 +1430,7 @@ if [ -n "$broken" ]; then
   # A downloaded core is in use after a restart, unless it names a newer
   # image than the host runs. (An image from before that leaves it staged.)
   atboot=
-  if vssh 'test -x /usr/lib/homelab/core-at-boot'; then
+  if has "a downloaded core in use after a restart" vssh 'test -x /usr/lib/homelab/core-at-boot'; then
     atboot=1
     need=$next.1
     rm -rf "$vm/core" && fsck.erofs --extract="$vm/core" "$out/core/homelab-core_$next.raw" >/dev/null
@@ -1182,7 +1451,7 @@ if [ -n "$broken" ]; then
     booted "$next"
     daemon || die "the daemon does not answer on the core applied at boot"
     [ "$(api http://x/api/system-updates/image | jq -r .core.active)" = "$broken" ] || die "the downloaded core $broken is not in use after a restart: $(vssh 'journalctl -b -u homelab-core-update --no-pager | tail -5')"
-    vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
+    nofailed
     ok "a core for a newer image refused and left staged; the downloaded core $broken in use after a restart"
   fi
   stage_image "$broken"
@@ -1206,8 +1475,8 @@ test -n "$root"
 dd if=/dev/urandom of="$root" bs=1M count=8 conv=notrunc,fsync status=none
 EOS
   # Three failed tries of the broken version, then the one before.
-  restart 280
-  for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
+  restart 1800
+  daemon 240 || die "the daemon does not answer after the fall back"
   booted "$next"
   [ "$(api http://x/api/system-updates/image | jq -r .fell_back_from)" = "$broken" ] || die "the daemon does not say it fell back from $broken"
   hostcheck
@@ -1219,7 +1488,7 @@ EOS
   vssh 'systemctl stop homelab-daemon && mv /var/lib/homelab-daemon /var/lib/homelab-daemon.keep && touch /var/lib/homelab-daemon'
   restart
   bootid=$(vssh 'cat /proc/sys/kernel/random/boot_id')
-  for _ in $(seq 1 120); do [ "$(vssh 'systemctl is-failed homelab-boot-check.service' 2>/dev/null)" = failed ] && break; sleep 5; done
+  wait_for 900 is failed vssh 'systemctl is-failed homelab-boot-check.service' || true
   [ "$(vssh 'systemctl is-failed homelab-boot-check.service')" = failed ] || die "the boot check did not fail with the daemon broken: $(vssh 'systemctl is-active homelab-boot-check.service')"
   sleep 30
   [ "$(vssh 'cat /proc/sys/kernel/random/boot_id')" = "$bootid" ] || die "the host restarted after the boot check failed on a good version"
@@ -1235,7 +1504,7 @@ EOS
   # check merges the one before.
   vssh "dd if=/dev/urandom of=/var/lib/extensions.d/homelab-core_$broken.raw bs=1M count=4 conv=notrunc,fsync status=none"
   restart
-  daemon 150 || die "the daemon does not answer on the core before"
+  daemon 600 || die "the daemon does not answer on the core before"
   booted "$next"
   api http://x/api/system-updates/image | jq -e --arg b "$broken" --arg n "$next" '.core.fell_back_from == $b and .core.active == $n and (.boot_check // "") == ""' >/dev/null ||
     die "after a broken core: $(api http://x/api/system-updates/image | jq -c '{core, boot_check}')"
@@ -1260,7 +1529,7 @@ if [ "${BUILD:-}" = 1 ]; then
   git -C "$root" bundle create "$vm/src.bundle" HEAD 2>/dev/null
   vscp "$vm/src.bundle" root@127.0.0.1:/var/lib/homelab/src.bundle
   vssh 'echo HOMELAB_CORE_SOURCE=git+file:///var/lib/homelab/src.bundle > /var/lib/homelab/daemon.env && systemctl restart homelab-daemon'
-  for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
+  daemon || die "the daemon does not answer with its source set"
   # The memory the whole host uses while it builds: what a host that builds
   # its own updates needs.
   vssh 'cat > /var/tmp/memwatch.sh' <<'EOS'
@@ -1285,11 +1554,11 @@ runs_from vda
 ownid
 [ "$(vssh cat /proc/sys/kernel/hostname)" = beside ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
 [ "$(espfiles /dev/vda1)" = "WINDOWS-BOOTMGR WINDOWS-FALLBACK " ] || die "the other system's loaders changed: $(espfiles /dev/vda1)"
-vssh 'lsblk -no PARTTYPENAME /dev/vda' | grep -q "Microsoft basic data" || die "the other system's partition is gone"
-vssh 'bootctl list' | grep -q 'id: auto-windows' || die "the boot menu has no Windows entry"
+vssh 'lsblk -no PARTTYPENAME /dev/vda' | seen "Microsoft basic data" || die "the other system's partition is gone"
+vssh 'bootctl list' | seen 'id: auto-windows' || die "the boot menu has no Windows entry"
 vssh 'grep -q "^Address=10.0.2.15/24" /etc/systemd/network/10-homelab-wired.network' || die "the installer's static address is not set"
-vssh 'ip -4 -o addr show' | grep -q 'inet 10.0.2.15/24 .* global' || die "the static address is not on the interface"
-vssh 'bootctl list' | grep -B1 'id: homelab_' | grep -q '(default)' || die "the system is not the boot menu's default"
+vssh 'ip -4 -o addr show' | seen 'inet 10.0.2.15/24 .* global' || die "the static address is not on the interface"
+vssh 'bootctl list' | grep -B1 'id: homelab_' | seen '(default)' || die "the system is not the boot menu's default"
 ok "boots alone with its static address, as the menu's default next to Windows Boot Manager; its loaders and partition untouched"
 
 step "14. $under: a blank disk whose boot loader goes on another disk's ESP"
@@ -1313,25 +1582,26 @@ ownid
 crossdisk=$id
 # Where this version keeps the store, for step 19.
 onvar=
-vssh 'test -e /usr/lib/systemd/system-generators/homelab-nix' && onvar=1
+if has "the Nix store on /var" storeonvar; then onvar=1; fi
 [ "$(vssh cat /proc/sys/kernel/hostname)" = crossdisk ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
-vssh 'ls /boot/EFI/Linux/ >/dev/null; findmnt -no SOURCE /boot' | grep -q '^/dev/vdb1$' || die "/boot is not the other disk's ESP: $(vssh 'findmnt -no SOURCE /boot')"
-vssh 'ls /boot/EFI/Linux/' | grep -q "^homelab_$under.efi$" || die "the kernel is not on the other disk's ESP"
-vssh 'lsblk -no PARTTYPENAME /dev/vda' | grep -q "EFI System" && die "the system disk got an ESP of its own"
-vssh 'bootctl list' | grep -q 'id: auto-windows' || die "the boot menu has no Windows entry"
-vssh 'bootctl list' | grep -B1 'id: homelab_' | grep -q '(default)' || die "the system is not the boot menu's default"
+vssh 'ls /boot/EFI/Linux/ >/dev/null; findmnt -no SOURCE /boot' | seen '^/dev/vdb1$' || die "/boot is not the other disk's ESP: $(vssh 'findmnt -no SOURCE /boot')"
+vssh 'ls /boot/EFI/Linux/' | seen -Fx "homelab_$under.efi" || die "the kernel is not on the other disk's ESP"
+parts=$(vssh 'lsblk -no PARTTYPENAME /dev/vda') || die "could not list the system disk's partitions"
+! seen "EFI System" <<<"$parts" || die "the system disk got an ESP of its own"
+vssh 'bootctl list' | seen 'id: auto-windows' || die "the boot menu has no Windows entry"
+vssh 'bootctl list' | grep -B1 'id: homelab_' | seen '(default)' || die "the system is not the boot menu's default"
 [ "$(espfiles /dev/vdb1)" = "WINDOWS-BOOTMGR WINDOWS-FALLBACK " ] || die "the other system's loaders changed: $(espfiles /dev/vdb1)"
 ok "boots from the other disk's ESP, mounted at /boot; Windows in its menu, its loaders untouched"
 
 step "15. that boot had the stick left in"
 [ -n "$(stickname)" ] || die "the stick is not among the VM's disks"
-for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
+daemon || die "the daemon does not answer with the stick in"
 [ "$(api http://x/api/installer | jq -r .active)" = false ] || die "the installed host runs the installer with the stick in"
 [ "$(vssh cat /proc/sys/kernel/hostname)" = crossdisk ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
 [ "$(vssh 'cat /etc/machine-id')" = "$crossdisk" ] || die "the machine ID changed with the stick in"
-vssh 'ls /boot/EFI/Linux/ >/dev/null; findmnt -no SOURCE /boot' | grep -q '^/dev/vdb1$' || die "/boot is not the other disk's ESP: $(vssh 'findmnt -no SOURCE /boot')"
-console_users | grep -q . && die "the installed host logs someone in on a console with the stick in: $(console_users | tr '\n' ';')" || true
-vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
+vssh 'ls /boot/EFI/Linux/ >/dev/null; findmnt -no SOURCE /boot' | seen '^/dev/vdb1$' || die "/boot is not the other disk's ESP: $(vssh 'findmnt -no SOURCE /boot')"
+nologin "with the stick in"
+nofailed
 ok "runs from its own disk and the other disk's ESP, the stick ($(stickname)) unused; nobody logged in on a console"
 
 step "16. the stick boots next to that install, installs over it and restarts into the new system"
@@ -1351,26 +1621,22 @@ jq -e --arg s "$stick" '.active and (.disks[] | select(.name == $s) | .in_use)
 autologin
 installto vda true again
 [ "$(api http://x/api/installer | jq -r .can_restart)" = true ] || die "the installer cannot restart into the new system: $(vssh efibootmgr | tr '\n' ';')"
-qemu=$(cat "$vm/qemu.pid")
-was=$(vssh 'cat /proc/sys/kernel/random/boot_id')
-api -X POST -H "'X-Installer-Token: $token'" http://x/api/installer/restart >/dev/null || true
+mark
+send POST installer/restart '' -H "'X-Installer-Token: $token'" >/dev/null || true
 # The same VM comes back by itself, the stick still first in the order the
 # firmware was told.
-now=''
-for _ in $(seq 1 60); do
-  now=$(vssh 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null) && [ "$now" != "$was" ] && break
-  sleep 3
-done
-[ -n "$now" ] && [ "$now" != "$was" ] || die "the machine did not restart (serial log in $vm)"
-kill -0 "$qemu" 2>/dev/null || die "the VM turned off instead of restarting"
+if ! wait_for 480 otherboot; then
+  vmalive || die "the VM turned off instead of restarting"
+  die "the machine did not restart (serial log $serial)"
+fi
 booted "$under"
-for _ in $(seq 1 30); do api http://x/api/version >/dev/null 2>&1 && break; sleep 2; done
+daemon || die "the daemon does not answer after the restart"
 [ "$(api http://x/api/installer | jq -r .active)" = false ] || die "the restart started the installer again, not the new system"
 [ -n "$(stickname)" ] || die "the stick is not among the VM's disks"
 runs_from vda
 [ "$(vssh cat /proc/sys/kernel/hostname)" = again ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname)"
-console_users | grep -q . && die "the installed host logs someone in on a console with the stick in: $(console_users | tr '\n' ';')" || true
-vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
+nologin "with the stick in"
+nofailed
 ok "the stick ($stick) ran from itself and offered the installed disk; after the install the page's restart brought up the new system from vda, the stick still in"
 
 step "17. the machine ID without a firmware UUID, and one for every install"
@@ -1389,7 +1655,8 @@ ctl() {
   runs_from sda vda
 }
 drivers=
-if inuki "$under" scsi/vmw_pvscsi && inuki "$under" scsi/megaraid/megaraid_sas && inuki "$under" usb/storage/uas; then
+storagedrivers() { inuki "$under" scsi/vmw_pvscsi && inuki "$under" scsi/megaraid/megaraid_sas && inuki "$under" usb/storage/uas; }
+if has "the storage drivers the image names, in the initrd" storagedrivers; then
   drivers=", its disk behind VMware's paravirtual SCSI"
   read -r espstart espsize < <(sfdisk -J "$vm/sys.raw" |
     jq -r '.partitiontable.partitions[] | select(.type == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B") | "\(.start) \(.size)"')
@@ -1403,7 +1670,7 @@ else
 fi
 [ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "the machine ID changed over a boot: $(vssh 'cat /etc/machine-id'), was $id"
 [ "$(vssh 'cat /var/lib/homelab/machine-id')" = "$id" ] || die "the machine ID on /var changed over a boot"
-vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
+nofailed
 ok "the same on the next boot$drivers; $(wc -w <<<"$ids") installs, each with its own"
 
 step "18. the system boots with its disk behind other controllers"
@@ -1412,7 +1679,7 @@ if [ -n "$drivers" ]; then
     stop
     ctl "$c"
     [ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "behind $c another system booted"
-    vssh 'systemctl --failed --no-legend' | grep . && die "failed units behind $c" || true
+    nofailed "behind $c"
   done
   ok "the same system with its disk behind a MegaRAID and USB UAS"
 else
@@ -1439,7 +1706,7 @@ if [ -n "$onvar" ]; then
   [ "$(vssh 'cat /etc/machine-id')" = "$id" ] || die "another system booted"
   daemon || die "the daemon does not answer"
   [ "$(api http://x/api/stacks-store | jq -r .own_partition)" = true ] || die "the daemon does not see the store's own partition: $(api http://x/api/stacks-store)"
-  vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true
+  nofailed
   ok "/nix is the disk's nix partition ($nixpart)"
 else
   ok "skipped: $under has the store on a partition of its own already"
@@ -1448,4 +1715,6 @@ fi
 # A run that passed needs none of its disks.
 stop
 drop sys esp
-printf '\nimage-check passed: %s%s%s (the disks of the VM took at most %d MB)\n' "$version" "${next:+ → $next}" "${broken:+, fell back from $broken}" "$peak"
+printf '  step %s took %s\n' "$stepname" "$(took "$stepstart")"
+printf '\nimage-check passed in %s: %s%s%s (the disks of the VM took at most %d MB)\n' "$(took 0)" "$version" "${next:+ → $next}" "${broken:+, fell back from $broken}" "$peak"
+[ -z "$skipped" ] || printf 'not checked, on a version from before it: %s\n' "$skipped"
