@@ -158,6 +158,9 @@ func versionsIn(dir string, re *regexp.Regexp) []string {
 var (
 	stagedImageRE = regexp.MustCompile(`^homelab_([^+]+)\.efi$`)
 	coreFileRE    = regexp.MustCompile(`^homelab-core_(.+)\.raw$`)
+	// stagedFileRE is any of a staged version's files: its UKI, root and
+	// root verity.
+	stagedFileRE = regexp.MustCompile(`^homelab_(.+)\.(?:efi|root(?:-verity)?\.[0-9a-fA-F-]+\.raw)$`)
 )
 
 func bootedVersion() string {
@@ -398,21 +401,27 @@ func stageWith(out, v string, put func(from, to string) error) error {
 	if err := put(filepath.Join(out, "core", "homelab-core_"+v+".raw"), filepath.Join(core, "homelab-core_"+v+".raw")); err != nil {
 		return err
 	}
-	prune(imageUpdates, stagedImageRE, func(v string) string { return "homelab_" + v + "." })
-	prune(core, coreFileRE, func(v string) string { return "homelab-core_" + v + "." })
+	prune(imageUpdates, stagedImageRE, stagedFileRE)
+	prune(core, coreFileRE, coreFileRE)
 	return nil
 }
 
-// prune removes all but the newest imageKeep versions in dir.
-func prune(dir string, re *regexp.Regexp, prefix func(string) string) {
+// prune removes all but the newest imageKeep versions in dir: the files
+// that files matches with an old version as its group. A version is matched
+// whole, not as a prefix: 0.1.0's files are not 0.1.0.202611190130's.
+func prune(dir string, re, files *regexp.Regexp) {
 	vs := versionsIn(dir, re)
 	if len(vs) <= imageKeep {
 		return
 	}
-	for _, old := range vs[imageKeep:] {
-		matches, _ := filepath.Glob(filepath.Join(dir, prefix(old)+"*"))
-		for _, f := range matches {
-			_ = os.Remove(f)
+	old := map[string]bool{}
+	for _, v := range vs[imageKeep:] {
+		old[v] = true
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if m := files.FindStringSubmatch(e.Name()); m != nil && old[m[1]] {
+			_ = os.Remove(filepath.Join(dir, e.Name()))
 		}
 	}
 }

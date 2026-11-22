@@ -276,6 +276,37 @@ func TestStage(t *testing.T) {
 	}
 }
 
+// A release's version is a prefix of the builds of main that follow it.
+// Pruning the release keeps those builds' files.
+func TestStageKeepsBuildsAfterARelease(t *testing.T) {
+	imageHost(t, "1")
+	out := filepath.Join(imageBuildDir, "out")
+	_ = os.MkdirAll(filepath.Join(out, "core"), 0o755)
+	vs := []string{"0.3.2", "0.3.2.202611221827", "0.3.2.202611221934"}
+	for _, v := range vs {
+		touch(t, filepath.Join(out, "homelab_"+v+".efi"), filepath.Join(out, "homelab_"+v+".root.aa.raw"),
+			filepath.Join(out, "homelab_"+v+".root-verity.bb.raw"), filepath.Join(out, "core", "homelab-core_"+v+".raw"))
+		if err := stage(out, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := versionsIn(imageUpdates, stagedImageRE); len(got) != 2 || got[0] != vs[2] || got[1] != vs[1] {
+		t.Fatalf("staged = %v", got)
+	}
+	for _, v := range vs[1:] {
+		for _, f := range []string{"homelab_" + v + ".efi", "homelab_" + v + ".root.aa.raw", "homelab_" + v + ".root-verity.bb.raw", "core/homelab-core_" + v + ".raw"} {
+			if _, err := os.Stat(filepath.Join(imageUpdates, f)); err != nil {
+				t.Errorf("%s: %v", f, err)
+			}
+		}
+	}
+	for _, f := range []string{"homelab_0.3.2.efi", "homelab_0.3.2.root.aa.raw", "homelab_0.3.2.root-verity.bb.raw", "core/homelab-core_0.3.2.raw"} {
+		if _, err := os.Stat(filepath.Join(imageUpdates, f)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s was not pruned", f)
+		}
+	}
+}
+
 func TestGitURL(t *testing.T) {
 	for in, want := range map[string]string{
 		"github:o/r":                    "https://github.com/o/r.git",
