@@ -28,11 +28,13 @@ import (
 )
 
 // Stacks is what drafts needs of the installed stacks: which were installed
-// from a draft, reading a draft's new commit into them, and for a fork the
-// stack's approved commit and moving the stack onto the draft.
+// from a draft, reading a draft's new commit into them, a stack's files to
+// show, and for a fork the stack's approved commit and moving the stack onto
+// the draft.
 type Stacks interface {
 	List(ctx context.Context) ([]stacks.Stack, error)
 	Fetch(ctx context.Context, name string) (stacks.Stack, error)
+	Tree(ctx context.Context, name string) (dir, source, rev string, err error)
 	ApprovedTree(ctx context.Context, name string) (dir, source, rev string, err error)
 	SetSource(ctx context.Context, name, source string) (stacks.Stack, error)
 }

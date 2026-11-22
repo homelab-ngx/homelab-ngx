@@ -8,8 +8,15 @@ import "time"
 type DraftFile struct {
 	Path    string `json:"path" doc:"The file's path in the repo, with / between folders."`
 	Size    int64  `json:"size" doc:"Its size in bytes."`
-	Binary  bool   `json:"binary" doc:"Not UTF-8 text, or larger than 256 KiB: listed and kept, but not edited here, and content is empty."`
+	Binary  bool   `json:"binary" doc:"A symlink, not UTF-8 text, or larger than 256 KiB: listed and kept, but not edited here, and content is empty."`
 	Content string `json:"content" doc:"The file's text; empty when binary is true."`
+}
+
+// StackFiles is an installed stack's files at one commit, for reading.
+type StackFiles struct {
+	Source string      `json:"source" doc:"The stack's source the files were read from."`
+	Rev    string      `json:"rev" doc:"The commit read: the approved one, or the fetched one while nothing is approved."`
+	Files  []DraftFile `json:"files" doc:"Every file of the commit, by path, without .git."`
 }
 
 // DraftChange is one change to a draft's files: a file written whole, or a

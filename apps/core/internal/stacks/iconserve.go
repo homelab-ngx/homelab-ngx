@@ -33,8 +33,6 @@ const (
 	iconErrFor  = time.Minute
 	// iconFetchTimeout bounds one download from the set.
 	iconFetchTimeout = 15 * time.Second
-	// maxIconTrees bounds the store paths remembered per locked source.
-	maxIconTrees = 256
 )
 
 // Icon is a stack's or a service's icon as the API serves it: the image and
@@ -69,20 +67,18 @@ func (s *Service) Icon(ctx context.Context, name, unit string) (Icon, error) {
 }
 
 // iconCache resolves icons. Icons from the set are kept in dir, one file per
-// slug; the store path of each commit's tree is kept in memory.
+// slug; a file in the repo is read from the commit's tree in trees.
 type iconCache struct {
 	dir    string // "": icons from the set are fetched each time
 	base   string
 	client *http.Client
-	// tree returns the store path of a locked flake reference.
-	tree func(ctx context.Context, url string) (string, error)
-	now  func() time.Time
-	log  *slog.Logger
+	trees  *treeCache
+	now    func() time.Time
+	log    *slog.Logger
 
 	flight singleflight.Group
 	mu     sync.Mutex
 	misses map[string]iconMiss // slug: the answer until it may be asked again
-	trees  map[string]string   // locked flake reference: store path
 }
 
 type iconMiss struct {
@@ -90,11 +86,10 @@ type iconMiss struct {
 	err   error
 }
 
-func newIconCache(dir string, tree func(context.Context, string) (string, error), log *slog.Logger) *iconCache {
+func newIconCache(dir string, trees *treeCache, log *slog.Logger) *iconCache {
 	return &iconCache{
 		dir: dir, base: DashboardIconsURL, client: &http.Client{Timeout: iconFetchTimeout},
-		tree: tree, now: time.Now, log: log,
-		misses: map[string]iconMiss{}, trees: map[string]string{},
+		trees: trees, now: time.Now, log: log, misses: map[string]iconMiss{},
 	}
 }
 
@@ -135,7 +130,7 @@ func (c *iconCache) file(ctx context.Context, url, rel string) (Icon, error) {
 	if typ == "" || url == "" {
 		return Icon{}, noIcon("%s is not an icon file", rel)
 	}
-	root, err := c.storePath(ctx, url)
+	root, err := c.trees.storePath(ctx, url)
 	if err != nil {
 		return Icon{}, err
 	}
@@ -155,39 +150,6 @@ func (c *iconCache) file(ctx context.Context, url, rel string) (Icon, error) {
 		return Icon{}, err
 	}
 	return Icon{Type: typ, Data: data}, nil
-}
-
-// storePath is the tree of the commit at url, looked up once per commit and
-// again when the store has collected it.
-func (c *iconCache) storePath(ctx context.Context, url string) (string, error) {
-	c.mu.Lock()
-	p, ok := c.trees[url]
-	c.mu.Unlock()
-	if ok {
-		if _, err := os.Stat(p); err == nil {
-			return p, nil
-		}
-	}
-	// Shared with every caller waiting on the same commit: one that goes
-	// away does not cancel it for the others.
-	ctx = context.WithoutCancel(ctx)
-	v, err, _ := c.flight.Do("tree "+url, func() (any, error) {
-		p, err := c.tree(ctx, url)
-		if err != nil {
-			return "", httpx.BadGateway("fetch_failed", "reading the stack's commit: %v", err)
-		}
-		c.mu.Lock()
-		if len(c.trees) >= maxIconTrees {
-			clear(c.trees)
-		}
-		c.trees[url] = p
-		c.mu.Unlock()
-		return p, nil
-	})
-	if err != nil {
-		return "", err
-	}
-	return v.(string), nil
 }
 
 // slug serves an icon from the set: from dir when it was fetched before,

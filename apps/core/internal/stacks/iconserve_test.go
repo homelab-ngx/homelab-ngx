@@ -64,7 +64,7 @@ func iconService(t *testing.T, files map[string]string) (*Service, http.Handler,
 	write(t, filepath.Join(tree, "icons", "jellyfin.svg"), testSVG)
 	var lookups atomic.Int32
 	svc.icons.dir, svc.icons.base, svc.icons.client = filepath.Join(t.TempDir(), "icons"), srv.URL, srv.Client()
-	svc.icons.tree = func(_ context.Context, url string) (string, error) {
+	svc.trees.lookup = func(_ context.Context, url string) (string, error) {
 		lookups.Add(1)
 		if url != "github:o/r/aaaaaaa1" {
 			t.Errorf("tree of %q, want the approved commit", url)
@@ -247,7 +247,7 @@ func TestIconUnapprovedReadsTheFetchedCommit(t *testing.T) {
 	}
 	tree := t.TempDir()
 	write(t, filepath.Join(tree, "icons", "jellyfin.svg"), testSVG)
-	svc.icons.tree = func(_ context.Context, url string) (string, error) {
+	svc.trees.lookup = func(_ context.Context, url string) (string, error) {
 		if url != "github:o/r/bbbbbbb1" {
 			t.Errorf("tree of %q, want the fetched commit", url)
 		}
@@ -268,7 +268,7 @@ func TestIconFileRefusals(t *testing.T) {
 	must(t, os.Symlink(filepath.Join(outside, "secret.svg"), filepath.Join(tree, "link.svg")))
 	must(t, os.Symlink(outside, filepath.Join(tree, "dir")))
 	must(t, os.Mkdir(filepath.Join(tree, "folder.svg"), 0o755))
-	c := newIconCache("", func(context.Context, string) (string, error) { return tree, nil }, nil)
+	c := newIconCache("", newTreeCache(func(context.Context, string) (string, error) { return tree, nil }), nil)
 
 	for file, want := range map[string]string{
 		"icons/ok.png":   "",

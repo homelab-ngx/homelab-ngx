@@ -2190,7 +2190,7 @@
         "additionalProperties": false,
         "properties": {
           "binary": {
-            "description": "Not UTF-8 text, or larger than 256 KiB: listed and kept, but not edited here, and content is empty.",
+            "description": "A symlink, not UTF-8 text, or larger than 256 KiB: listed and kept, but not edited here, and content is empty.",
             "type": "boolean"
           },
           "content": {
@@ -5441,6 +5441,32 @@
           "stack",
           "prepare",
           "folders"
+        ],
+        "type": "object"
+      },
+      "StackFiles": {
+        "additionalProperties": false,
+        "properties": {
+          "files": {
+            "description": "Every file of the commit, by path, without .git.",
+            "items": {
+              "$ref": "#/components/schemas/DraftFile"
+            },
+            "type": "array"
+          },
+          "rev": {
+            "description": "The commit read: the approved one, or the fetched one while nothing is approved.",
+            "type": "string"
+          },
+          "source": {
+            "description": "The stack's source the files were read from.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "rev",
+          "files"
         ],
         "type": "object"
       },
@@ -20312,6 +20338,77 @@
         "summary": "Read the newest commit and its manifest from the stack's source.",
         "tags": [
           "stacks"
+        ]
+      }
+    },
+    "/stacks/{name}/files": {
+      "get": {
+        "operationId": "getStackFiles",
+        "parameters": [
+          {
+            "description": "The installed stack's name.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "The installed stack's name.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StackFiles"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "An installed stack's files at its approved commit, or the fetched one while nothing is approved. A repo of more than 500 files or 16 MiB of text is refused.",
+        "tags": [
+          "drafts"
         ]
       }
     },

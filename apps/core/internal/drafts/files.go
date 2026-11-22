@@ -76,7 +76,17 @@ func textFile(p string, b []byte) DraftFile {
 // readTree reads the files of the repo in dir, leaving out .git. A symlink
 // is listed as binary: it is kept, not followed.
 func readTree(dir string) (tree, error) {
+	return readTreeUpTo(dir, false)
+}
+
+// readTreeUpTo is readTree that, when bounded, refuses with too_large a repo
+// of more than maxFiles files or maxTotal bytes of text. Past a bound no
+// more files are read; the rest are only counted.
+func readTreeUpTo(dir string, bounded bool) (tree, error) {
 	t := tree{}
+	var files int
+	var text int64
+	over := func() bool { return bounded && (files > maxFiles || text > maxTotal) }
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -89,11 +99,16 @@ func readTree(dir string) (tree, error) {
 			}
 			return nil
 		}
-		if !d.Type().IsRegular() {
-			info, err := d.Info()
-			if err != nil {
-				return err
-			}
+		files++
+		if over() {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		// A symlink, or a file too large to edit, is listed without reading it.
+		if !d.Type().IsRegular() || info.Size() > maxFile {
 			t[rel] = DraftFile{Path: rel, Size: info.Size(), Binary: true}
 			return nil
 		}
@@ -101,10 +116,20 @@ func readTree(dir string) (tree, error) {
 		if err != nil {
 			return err
 		}
-		t[rel] = textFile(rel, b)
+		f := textFile(rel, b)
+		text += int64(len(f.Content))
+		t[rel] = f
 		return nil
 	})
-	return t, err
+	switch {
+	case err != nil:
+		return nil, err
+	case bounded && files > maxFiles:
+		return nil, httpx.Unprocessable("too_large", "the repo has %d files; at most %d are shown", files, maxFiles)
+	case bounded && text > maxTotal:
+		return nil, httpx.Unprocessable("too_large", "the repo has more than %d MiB of text; that is more than is shown", maxTotal>>20)
+	}
+	return t, nil
 }
 
 // validPath refuses a path a change may not name: not relative and clean,

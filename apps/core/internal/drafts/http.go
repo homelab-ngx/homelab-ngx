@@ -24,6 +24,12 @@ type nameIn struct {
 	Name string `path:"name" doc:"The draft's name."`
 }
 
+type stackIn struct {
+	Name string `path:"name" doc:"The installed stack's name."`
+}
+
+type stackFilesBody struct{ Body StackFiles }
+
 type draftBody struct{ Body Draft }
 
 type draftsBody struct{ Body []DraftSummary }
@@ -93,6 +99,16 @@ func (h *HTTP) Register(a httpx.APIs) {
 		draft(func(ctx context.Context, n string) (Draft, error) {
 			return h.svc.Convert(ctx, n)
 		}))
+	httpx.Register(a, httpx.ScopeOperator, op("getStackFiles", http.MethodGet, "/stacks/{name}/files",
+		"An installed stack's files at its approved commit, or the fetched one while nothing is approved. "+
+			"A repo of more than 500 files or 16 MiB of text is refused.", 0),
+		func(ctx context.Context, in *stackIn) (*stackFilesBody, error) {
+			f, err := h.svc.StackFiles(ctx, in.Name)
+			if err != nil {
+				return nil, err
+			}
+			return &stackFilesBody{Body: f}, nil
+		})
 	httpx.Register(a, httpx.ScopeOperator, op("getDraft", http.MethodGet, "/drafts/{name}",
 		"A draft's saved files with its last check and build.", 0), draft(func(ctx context.Context, n string) (Draft, error) {
 		return h.svc.Get(ctx, n)

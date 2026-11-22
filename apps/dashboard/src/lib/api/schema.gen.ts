@@ -1587,6 +1587,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks/{name}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** An installed stack's files at its approved commit, or the fetched one while nothing is approved. A repo of more than 500 files or 16 MiB of text is refused. */
+        get: operations["getStackFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks/{name}/folders": {
         parameters: {
             query?: never;
@@ -3022,7 +3039,7 @@ export interface components {
             name: string;
         };
         DraftFile: {
-            /** @description Not UTF-8 text, or larger than 256 KiB: listed and kept, but not edited here, and content is empty. */
+            /** @description A symlink, not UTF-8 text, or larger than 256 KiB: listed and kept, but not edited here, and content is empty. */
             binary: boolean;
             /** @description The file's text; empty when binary is true. */
             content: string;
@@ -4119,6 +4136,14 @@ export interface components {
             /** @description The unit the stack asks to run before its folders are copied; empty for none. */
             prepare: string;
             stack: string;
+        };
+        StackFiles: {
+            /** @description Every file of the commit, by path, without .git. */
+            files: components["schemas"]["DraftFile"][];
+            /** @description The commit read: the approved one, or the fetched one while nothing is approved. */
+            rev: string;
+            /** @description The stack's source the files were read from. */
+            source: string;
         };
         StackFolder: {
             /**
@@ -12033,6 +12058,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Stack"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getStackFiles: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The installed stack's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StackFiles"];
                 };
             };
             /** @description Error */

@@ -22,7 +22,7 @@ import (
 func init() { stacks.SetPrivateDomain("example.test") }
 
 // fakeStacks is the installed stacks; fetched records the Fetch calls.
-// tree is every stack's approved commit; moveErr fails SetSource.
+// tree is every stack's commit, approved or fetched; moveErr fails SetSource.
 type fakeStacks struct {
 	list    []stacks.Stack
 	fetched []string
@@ -37,6 +37,15 @@ func (f *fakeStacks) ApprovedTree(_ context.Context, name string) (string, strin
 		}
 	}
 	return "", "", "", errors.New("no such stack")
+}
+
+func (f *fakeStacks) Tree(_ context.Context, name string) (string, string, string, error) {
+	for _, st := range f.list {
+		if st.Name == name {
+			return f.tree, st.Source, "abcdef1234567", nil
+		}
+	}
+	return "", "", "", httpx.NotFound("unknown_stack", "no stack named %q is installed", name)
 }
 
 func (f *fakeStacks) SetSource(_ context.Context, name, source string) (stacks.Stack, error) {

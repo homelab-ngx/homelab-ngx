@@ -103,6 +103,7 @@ type Service struct {
 	// update brought (OnBackupFoldersAdded); guarded by mu.
 	backupAdded func(ctx context.Context, stack string, keys []string)
 
+	trees *treeCache // each commit's tree in the store (tree.go)
 	icons *iconCache // the stacks' and services' icons (iconserve.go)
 }
 
@@ -118,7 +119,7 @@ func New(st *store.Store, src Source, host Host, notifier Notifier, log *slog.Lo
 		statDir: isDir, timeZone: HostTimeZone, statOwner: statOwner, statfs: diskRoom, bootID: readBootID,
 	}
 	s.chown = chownPath(host.Runner)
-	s.icons = newIconCache(host.IconsDir, func(ctx context.Context, url string) (string, error) {
+	s.trees = newTreeCache(func(ctx context.Context, url string) (string, error) {
 		f, err := prefetch(ctx, s.r, url)
 		if err != nil {
 			return "", err
@@ -127,7 +128,8 @@ func New(st *store.Store, src Source, host Host, notifier Notifier, log *slog.Lo
 			return "", errors.New("nix flake prefetch: no store path for the commit")
 		}
 		return f.StorePath, nil
-	}, log)
+	})
+	s.icons = newIconCache(host.IconsDir, s.trees, log)
 	s.resolveNixpkgs = func(ctx context.Context, spec string) (string, error) { return ResolveNixpkgs(ctx, s.r, spec) }
 	s.listChannels = func(ctx context.Context) ([]string, error) { return ListChannels(ctx, s.r) }
 	s.nixpkgsRelease = func(ctx context.Context, rev string) (NixpkgsRelease, error) {
