@@ -73,14 +73,26 @@ func (h *HTTP) Register(a httpx.APIs) {
 			return &draftsBody{Body: l}, nil
 		})
 	httpx.Register(a, httpx.ScopeOperator, op("createDraft", http.MethodPost, "/drafts",
-		"Start writing a stack from the template.", http.StatusCreated),
+		"Start writing a stack from the template, or fork an installed stack.", http.StatusCreated),
 		func(ctx context.Context, in *createIn) (*draftBody, error) {
+			if in.Body.From != "" {
+				d, err := h.svc.Fork(ctx, in.Body.Name, in.Body.From)
+				if err != nil {
+					return nil, err
+				}
+				return &draftBody{Body: d}, nil
+			}
 			d, err := h.svc.Create(ctx, in.Body.Name)
 			if err != nil {
 				return nil, err
 			}
 			return &draftBody{Body: d}, nil
 		})
+	httpx.Register(a, httpx.ScopeOperator, op("convertStack", http.MethodPost, "/stacks/{name}/fork",
+		"Fork an installed stack into a draft of its name and move the stack onto it, so it is edited in the dashboard.", http.StatusCreated),
+		draft(func(ctx context.Context, n string) (Draft, error) {
+			return h.svc.Convert(ctx, n)
+		}))
 	httpx.Register(a, httpx.ScopeOperator, op("getDraft", http.MethodGet, "/drafts/{name}",
 		"A draft's saved files with its last check and build.", 0), draft(func(ctx context.Context, n string) (Draft, error) {
 		return h.svc.Get(ctx, n)

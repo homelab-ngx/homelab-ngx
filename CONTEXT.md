@@ -36,6 +36,10 @@ _Avoid_: base image, template, stack base config
 A stack written in the dashboard: a git repo the daemon keeps at `/var/lib/homelab-daemon/drafts/<name>`, holding the manifest, `flake.nix` and any other file the module reads, started from an embedded template. The editor changes text files of up to 256 KiB and keeps any other file as it is; a draft holds at most 500 files and 16 MiB. Save is a commit; Check reads the manifest as an install would and parses each Nix file; Build builds the saved commit as an install would, without installing it. Installed, it is an ordinary stack whose source is that repo (`git+file://`), and each save shows as an update. The drafts folder is in the Core backup.
 _Avoid_: scratch stack, local stack, template
 
+**Fork**:
+A draft that starts from an installed stack's approved commit instead of the template: that commit's files as its first commit, without the repo's history, with the stack's source and commit recorded. A copy installs under a name of its own while the stack stays on its source; converting moves the stack itself onto the draft of its name, so its updates are the draft's saves.
+_Avoid_: clone, eject
+
 **Assistant**:
 The optional language model the stack editor asks for help (Claude, or an OpenAI-compatible endpoint), set up in System Settings. One request per question: the draft's list of files, its manifest, `flake.nix`, the open file and every changed one, what Check and the last Build printed, and the authoring guide (`internal/drafts/guide.md`). No tools, no loop, no variable values; its answer is notes and whole files the operator applies or discards.
 _Avoid_: agent, copilot, AI

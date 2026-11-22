@@ -1914,6 +1914,14 @@
             },
             "type": "array"
           },
+          "forked_from": {
+            "description": "The source of the stack the draft was forked from; absent for one started from the template.",
+            "type": "string"
+          },
+          "forked_rev": {
+            "description": "The commit of that stack the draft started from.",
+            "type": "string"
+          },
           "installed_as": {
             "description": "The installed stacks built from this draft; empty when none is. A save shows there as an update.",
             "items": {
@@ -2164,6 +2172,10 @@
       "DraftCreate": {
         "additionalProperties": false,
         "properties": {
+          "from": {
+            "description": "An installed stack to fork: the draft starts from a copy of its approved commit, and the stack stays on its own source. Absent: the template.",
+            "type": "string"
+          },
           "name": {
             "description": "1-12 characters of a-z, 0-9 and '-', starting with a letter. It is also the stack's name once installed.",
             "type": "string"
@@ -2246,6 +2258,14 @@
       "DraftSummary": {
         "additionalProperties": false,
         "properties": {
+          "forked_from": {
+            "description": "The source of the stack the draft was forked from; absent for one started from the template.",
+            "type": "string"
+          },
+          "forked_rev": {
+            "description": "The commit of that stack the draft started from.",
+            "type": "string"
+          },
           "installed_as": {
             "description": "The installed stacks built from this draft; empty when none is.",
             "items": {
@@ -11210,7 +11230,7 @@
             "description": "Error"
           }
         },
-        "summary": "Start writing a stack from the template.",
+        "summary": "Start writing a stack from the template, or fork an installed stack.",
         "tags": [
           "drafts"
         ]
@@ -19918,6 +19938,77 @@
         "summary": "Replace the folders the operator binds into a stack on top of its manifest; the stack sees them at its next restart.",
         "tags": [
           "stacks"
+        ]
+      }
+    },
+    "/stacks/{name}/fork": {
+      "post": {
+        "operationId": "convertStack",
+        "parameters": [
+          {
+            "description": "The draft's name.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "The draft's name.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Draft"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Fork an installed stack into a draft of its name and move the stack onto it, so it is edited in the dashboard.",
+        "tags": [
+          "drafts"
         ]
       }
     },

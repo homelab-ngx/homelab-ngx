@@ -26,6 +26,8 @@ type DraftSummary struct {
 	Rev         string    `json:"rev" doc:"The commit of the last save."`
 	SavedAt     time.Time `json:"saved_at" doc:"When it was last saved."`
 	InstalledAs []string  `json:"installed_as" doc:"The installed stacks built from this draft; empty when none is."`
+	ForkedFrom  string    `json:"forked_from,omitempty" doc:"The source of the stack the draft was forked from; absent for one started from the template."`
+	ForkedRev   string    `json:"forked_rev,omitempty" doc:"The commit of that stack the draft started from."`
 }
 
 // Draft is a stack written in the dashboard: its files at the last save, and
@@ -40,11 +42,14 @@ type Draft struct {
 	InstalledAs []string    `json:"installed_as" doc:"The installed stacks built from this draft; empty when none is. A save shows there as an update."`
 	Check       *DraftCheck `json:"check,omitempty" doc:"The last check, absent before the first."`
 	Build       *DraftBuild `json:"build,omitempty" doc:"The running or last build, absent before the first."`
+	ForkedFrom  string      `json:"forked_from,omitempty" doc:"The source of the stack the draft was forked from; absent for one started from the template."`
+	ForkedRev   string      `json:"forked_rev,omitempty" doc:"The commit of that stack the draft started from."`
 }
 
 // DraftCreate starts a draft.
 type DraftCreate struct {
 	Name string `json:"name" doc:"1-12 characters of a-z, 0-9 and '-', starting with a letter. It is also the stack's name once installed."`
+	From string `json:"from,omitempty" doc:"An installed stack to fork: the draft starts from a copy of its approved commit, and the stack stays on its own source. Absent: the template."`
 }
 
 // DraftSave saves changes to a draft's files as a commit.

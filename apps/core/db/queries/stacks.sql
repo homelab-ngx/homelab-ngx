@@ -135,3 +135,6 @@ UPDATE stacks SET booted_args = sqlc.arg(args) WHERE name = sqlc.arg(name);
 
 -- name: SetStackBootedVars :exec
 UPDATE stacks SET booted_vars = sqlc.arg(digest) WHERE name = sqlc.arg(name);
+
+-- name: SetStackSource :exec
+UPDATE stacks SET source = sqlc.arg(source) WHERE name = sqlc.arg(name);

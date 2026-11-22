@@ -3,13 +3,14 @@
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { api, call, describe, type Stack } from "#lib/api/client.ts";
-  import { busy, busyPoll, fetchServices, fetchStack, fetchUpdates, idlePoll, keys } from "#lib/api/queries.ts";
+  import { busy, busyPoll, fetchDraft, fetchServices, fetchStack, fetchUpdates, idlePoll, keys } from "#lib/api/queries.ts";
   import Disclosure from "#lib/components/Disclosure.svelte";
   import HistoryDialog from "#lib/components/HistoryDialog.svelte";
   import LogsDialog from "#lib/components/LogsDialog.svelte";
   import Modal from "#lib/components/Modal.svelte";
   import OperationCard from "#lib/components/OperationCard.svelte";
   import Pill from "#lib/components/Pill.svelte";
+  import ForkStack from "#lib/components/ForkStack.svelte";
   import RenameStack from "#lib/components/RenameStack.svelte";
   import StackTable from "#lib/components/StackTable.svelte";
   import ReviewDialog from "#lib/components/ReviewDialog.svelte";
@@ -29,6 +30,13 @@
     refetchInterval: (q) => (q.state.data && busy(q.state.data) ? busyPoll : idlePoll),
   }));
   const services = createQuery(() => ({ queryKey: keys.services, queryFn: fetchServices, refetchInterval: idlePoll }));
+  /** The draft a stack runs from, for where a fork came from. */
+  const draftName = $derived(stack.data ? draftOf(stack.data.source) : null);
+  const draft = createQuery(() => ({
+    queryKey: keys.draft(draftName ?? ""),
+    queryFn: () => fetchDraft(draftName!),
+    enabled: draftName !== null,
+  }));
   const attempts = createQuery(() => ({
     queryKey: keys.updates(name),
     queryFn: () => fetchUpdates(name, 100),
@@ -39,6 +47,7 @@
   let removing = $state(false);
   let historyOpen = $state(false);
   let renaming = $state(false);
+  let forking = $state(false);
   let reviewing = $state<Stack | null>(null);
   // A link to a service's logs (?logs=<unit>, from an old /logs link) opens them.
   let logsUnit = $state<string | null>(page.url.searchParams.get("logs"));
@@ -151,6 +160,11 @@
     <div class="flex flex-wrap gap-2">
       <button type="button" class="btn" onclick={() => (renaming = true)}>Rename…</button>
       <button type="button" class="btn" onclick={() => (historyOpen = true)}>History</button>
+      {#if draftOf(s.source)}
+        <a class="btn" href="/stacks/drafts/{draftOf(s.source)}">Edit</a>
+      {:else}
+        <button type="button" class="btn" disabled={!s.approved} onclick={() => (forking = true)}>Fork…</button>
+      {/if}
       <button type="button" class="btn" disabled={own.length === 0} onclick={() => (logsUnit = logId(own[0]!.name))}>Logs</button>
       {#if s.running}
         <button type="button" class="btn" disabled={working} onclick={restart}>Restart</button>
@@ -239,9 +253,6 @@
   <!-- Looked at rarely: closed until opened, and an opened one stays open on this device. -->
   <section class="card mt-4" aria-label="Source">
     <Disclosure section label="Source" summary={src.repo} remember="stack-source">
-      {#if draftOf(s.source)}
-        <p class="mb-2"><a class="link" href="/stacks/drafts/{draftOf(s.source)}">Edit in the dashboard</a></p>
-      {/if}
       <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5">
         <dt class="text-muted">{src.local ? "Folder" : "Repo"}</dt>
         <dd class="break-all">{src.repo}</dd>
@@ -249,6 +260,10 @@
         <dd>{src.branch}</dd>
         <dt class="text-muted">Pinned</dt>
         <dd>{s.approved ? `${shortRev(s.approved.rev)} · ${stamp(s.approved.at)}` : "nothing approved"}</dd>
+        {#if draft.data?.forked_from}
+          <dt class="text-muted">Forked from</dt>
+          <dd class="break-all">{draft.data.forked_from} · {shortRev(draft.data.forked_rev ?? "")}</dd>
+        {/if}
       </dl>
       {#if s.source_dirty}
         <p class="mt-3 text-warn">Uncommitted changes in the folder are not installed.</p>
@@ -309,6 +324,7 @@
   <LogsDialog stack={s.name} {title} services={own} unit={logsUnit} onClose={() => (logsUnit = null)} />
   <ReviewDialog stack={reviewing} onClose={() => (reviewing = null)} />
   {#if renaming}<RenameStack stack={s} onClose={() => (renaming = false)} />{/if}
+  {#if forking}<ForkStack stack={s} onClose={() => (forking = false)} />{/if}
 {:else}
   <p class="mt-3 text-muted">Loading…</p>
 {/if}

@@ -22,9 +22,33 @@ import (
 func init() { stacks.SetPrivateDomain("example.test") }
 
 // fakeStacks is the installed stacks; fetched records the Fetch calls.
+// tree is every stack's approved commit; moveErr fails SetSource.
 type fakeStacks struct {
 	list    []stacks.Stack
 	fetched []string
+	tree    string
+	moveErr error
+}
+
+func (f *fakeStacks) ApprovedTree(_ context.Context, name string) (string, string, string, error) {
+	for _, st := range f.list {
+		if st.Name == name {
+			return f.tree, st.Source, "abcdef1234567", nil
+		}
+	}
+	return "", "", "", errors.New("no such stack")
+}
+
+func (f *fakeStacks) SetSource(_ context.Context, name, source string) (stacks.Stack, error) {
+	if f.moveErr != nil {
+		return stacks.Stack{}, f.moveErr
+	}
+	for i := range f.list {
+		if f.list[i].Name == name {
+			f.list[i].Source = source
+		}
+	}
+	return stacks.Stack{Name: name, Source: source}, nil
 }
 
 func (f *fakeStacks) List(context.Context) ([]stacks.Stack, error) { return f.list, nil }
@@ -428,7 +452,7 @@ func TestCreateFromCopiesATree(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "run.sh"), []byte("#!/bin/sh\n"), 0o555); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.createFrom(ctx, "photos", src, "Copy of github:o/photos at abc"); err != nil {
+	if err := s.createFrom(ctx, "photos", src, "Copy of github:o/photos at abc", ""); err != nil {
 		t.Fatal(err)
 	}
 	d, err := s.Get(ctx, "photos")
@@ -445,7 +469,7 @@ func TestCreateFromCopiesATree(t *testing.T) {
 		t.Fatalf("commit = %q", msg)
 	}
 	// A tree without the stack's files is not a stack.
-	if err := s.createFrom(ctx, "empty", t.TempDir(), "x"); code(err) != "not_a_stack" {
+	if err := s.createFrom(ctx, "empty", t.TempDir(), "x", ""); code(err) != "not_a_stack" {
 		t.Fatalf("empty: %v", err)
 	}
 	if _, err := os.Stat(s.repo("empty")); !os.IsNotExist(err) {

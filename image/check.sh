@@ -22,7 +22,8 @@
 #      another file system is offered as a partition and mounted by name
 #   6. a stack (the drafts template) is built by Nix and serves a page from
 #      the pool at its route under the domain, and reads a host folder added
-#      read-only, which it cannot write. A second pool is made from
+#      read-only, which it cannot write. It is forked into a draft, and a
+#      file saved there is an update it runs. A second pool is made from
 #      three more disks through the daemon, grown with a disk that held
 #      ext4, shrunk by one disk with its files kept, and deleted; the pool
 #      the stack uses is not
@@ -602,6 +603,33 @@ stackup() {
     w=$((w + 2))
   done
 }
+# stackfork: the stack moves onto a draft of its own name (a fork of its
+# approved commit), a file saved in the draft arrives as an approved update,
+# and the stack runs that commit after the update. A version from before
+# forks has no such operation, and nothing is checked.
+stackfork() {
+  local d s rev w=0
+  [ "$(api -X POST http://x/api/stacks/nope/fork 2>/dev/null | jq -r .code)" = unknown_stack ] || return 1
+  d=$(api -X POST http://x/api/stacks/site/fork) || die "the fork was refused: $d"
+  [ "$(jq -r '"\(.forked_from) \(.forked_rev)"' <<<"$d")" = "git+file:///var/lib/stack-src/site $1" ] ||
+    die "the draft does not record its origin: $(jq -c '{forked_from, forked_rev}' <<<"$d")"
+  vssh "cat > /tmp/save.json" <<<'{"changes":[{"path":"notes/fork.txt","content":"forked\n"}],"message":"Add a note"}'
+  d=$(api -X PUT http://x/api/drafts/site -d @/tmp/save.json) || die "the save was refused: $d"
+  rev=$(jq -r .rev <<<"$d")
+  s=$(api http://x/api/stacks/site)
+  [ "$(jq -r .source <<<"$s")" = git+file:///var/lib/homelab-daemon/drafts/site ] || die "the stack's source is $(jq -r .source <<<"$s")"
+  [ "$(jq -r .approved.rev <<<"$s")" = "$rev" ] || die "the saved commit $rev is not approved: $(jq -r .approved.rev <<<"$s")"
+  api -X POST http://x/api/stacks/site/update >/dev/null || die "update refused"
+  until s=$(api http://x/api/stacks/site 2>/dev/null) &&
+    jq -e --arg r "$rev" '.generation as $g | .running and .operation.finished_at != null and ([.generations[] | select(.id == $g and .rev == $r)] | length == 1)' <<<"$s" >/dev/null; do
+    jq -e '.operation.error // empty' <<<"$s" >/dev/null 2>&1 && die "the update failed: $(jq -r .operation.error <<<"$s")"
+    [ "$w" -lt 600 ] || die "the stack did not run $rev within 10 minutes"
+    sleep 5
+    w=$((w + 5))
+  done
+  ok "stack site forked into a draft; a saved file arrived as an update and runs (commit ${rev:0:12})"
+}
+
 # stackrace: systemd-networkd reading its configuration again leaves the
 # stack's link alone. The daemon gives ve-site its address, and networkd
 # also has a file for ve-* links, so a reconfigure takes the address off:
@@ -976,6 +1004,8 @@ if [ -n "$added" ]; then
   added="; a host folder added read-only at /library"
 fi
 ok "stack site built, serving the page from the pool at https://site.$domain$refused$madefolder$added"
+stackfork "$rev" || true
+https site / | grep -q image-check || die "the stack's route is not served after the fork"
 pool_lifecycle
 
 step "7. host settings: VPN, tunnel, firewall, name and time zone"

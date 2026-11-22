@@ -422,7 +422,7 @@ export interface paths {
         /** Stacks written in the dashboard. */
         get: operations["listDrafts"];
         put?: never;
-        /** Start writing a stack from the template. */
+        /** Start writing a stack from the template, or fork an installed stack. */
         post: operations["createDraft"];
         delete?: never;
         options?: never;
@@ -1574,6 +1574,23 @@ export interface paths {
         /** Replace the folders the operator binds into a stack on top of its manifest; the stack sees them at its next restart. */
         put: operations["setStackFolders"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/stacks/{name}/fork": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Fork an installed stack into a draft of its name and move the stack onto it, so it is edited in the dashboard. */
+        post: operations["convertStack"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2832,6 +2849,10 @@ export interface components {
             created_at: string;
             /** @description Every file of the repo at the last save, by path. */
             files: components["schemas"]["DraftFile"][];
+            /** @description The source of the stack the draft was forked from; absent for one started from the template. */
+            forked_from?: string;
+            /** @description The commit of that stack the draft started from. */
+            forked_rev?: string;
             /** @description The installed stacks built from this draft; empty when none is. A save shows there as an update. */
             installed_as: string[];
             /** @description The draft's name; the name it is installed under. */
@@ -2917,6 +2938,8 @@ export interface components {
             changes?: components["schemas"]["DraftChange"][];
         };
         DraftCreate: {
+            /** @description An installed stack to fork: the draft starts from a copy of its approved commit, and the stack stays on its own source. Absent: the template. */
+            from?: string;
             /** @description 1-12 characters of a-z, 0-9 and '-', starting with a letter. It is also the stack's name once installed. */
             name: string;
         };
@@ -2946,6 +2969,10 @@ export interface components {
             message?: string;
         };
         DraftSummary: {
+            /** @description The source of the stack the draft was forked from; absent for one started from the template. */
+            forked_from?: string;
+            /** @description The commit of that stack the draft started from. */
+            forked_rev?: string;
             /** @description The installed stacks built from this draft; empty when none is. */
             installed_as: string[];
             /** @description The draft's name; the name it is installed under. */
@@ -11742,6 +11769,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Stack"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    convertStack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The draft's name. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Draft"];
                 };
             };
             /** @description Error */

@@ -28,10 +28,13 @@ import (
 )
 
 // Stacks is what drafts needs of the installed stacks: which were installed
-// from a draft, and reading a draft's new commit into them.
+// from a draft, reading a draft's new commit into them, and for a fork the
+// stack's approved commit and moving the stack onto the draft.
 type Stacks interface {
 	List(ctx context.Context) ([]stacks.Stack, error)
 	Fetch(ctx context.Context, name string) (stacks.Stack, error)
+	ApprovedTree(ctx context.Context, name string) (dir, source, rev string, err error)
+	SetSource(ctx context.Context, name, source string) (stacks.Stack, error)
 }
 
 // branch is the one branch of a draft's repo.
@@ -133,7 +136,10 @@ func (s *Service) List(ctx context.Context) ([]DraftSummary, error) {
 		if err != nil {
 			s.log.Warn("draft repo not read", "draft", r.Name, "error", err)
 		}
-		out = append(out, DraftSummary{Name: r.Name, Rev: rev, SavedAt: at, InstalledAs: orEmpty(installed[r.Name])})
+		out = append(out, DraftSummary{
+			Name: r.Name, Rev: rev, SavedAt: at, InstalledAs: orEmpty(installed[r.Name]),
+			ForkedFrom: r.ForkedFrom, ForkedRev: r.ForkedRev,
+		})
 	}
 	return out, nil
 }
@@ -160,6 +166,7 @@ func (s *Service) view(ctx context.Context, r store.StackDraft) (Draft, error) {
 		Name: r.Name, Source: s.source(r.Name), Rev: rev, SavedAt: at,
 		CreatedAt: time.UnixMilli(r.CreatedAt), Files: files.list(),
 		InstalledAs: orEmpty(s.installed(ctx)[r.Name]),
+		ForkedFrom:  r.ForkedFrom, ForkedRev: r.ForkedRev,
 	}
 	if r.CheckResult != "" {
 		var c DraftCheck
@@ -205,10 +212,8 @@ func (s *Service) installed(ctx context.Context) map[string][]string {
 		s.log.Warn("stacks not listed", "error", err)
 		return out
 	}
-	prefix := "git+file://" + s.dir + "/"
 	for _, st := range list {
-		src, _, _ := strings.Cut(st.Source, "?")
-		if name, ok := strings.CutPrefix(src, prefix); ok && stacks.ValidName(name) {
+		if name := s.draftOf(st.Source); name != "" {
 			out[name] = append(out[name], st.Name)
 		}
 	}
@@ -236,7 +241,7 @@ func (s *Service) Create(ctx context.Context, name string) (Draft, error) {
 		}
 		return nil
 	}
-	if err := s.create(ctx, name, fill, "Start from the template"); err != nil {
+	if err := s.create(ctx, name, fill, "Start from the template", ""); err != nil {
 		return Draft{}, err
 	}
 	s.log.Info("draft created", "draft", name)
@@ -246,7 +251,7 @@ func (s *Service) Create(ctx context.Context, name string) (Draft, error) {
 // createFrom starts the draft name from a copy of the files under src
 // (a stack's commit in the store, say), as its first commit with msg. The
 // copy must hold the manifest and flake.nix.
-func (s *Service) createFrom(ctx context.Context, name, src, msg string) error {
+func (s *Service) createFrom(ctx context.Context, name, src, msg, ownStack string) error {
 	fill := func(dir string) error {
 		if err := copyTree(src, dir); err != nil {
 			return err
@@ -258,12 +263,13 @@ func (s *Service) createFrom(ctx context.Context, name, src, msg string) error {
 		}
 		return nil
 	}
-	return s.create(ctx, name, fill, msg)
+	return s.create(ctx, name, fill, msg, ownStack)
 }
 
 // create makes the draft's repo, has fill put its files in, and commits them
-// as msg. A failure leaves no repo and no draft.
-func (s *Service) create(ctx context.Context, name string, fill func(dir string) error, msg string) error {
+// as msg. A failure leaves no repo and no draft. The name may be an installed
+// stack's only when it is ownStack: the stack a fork moves onto the draft.
+func (s *Service) create(ctx context.Context, name string, fill func(dir string) error, msg, ownStack string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.st.Queries().GetDraft(ctx, name); err == nil {
@@ -274,7 +280,7 @@ func (s *Service) create(ctx context.Context, name string, fill func(dir string)
 	if s.stacks != nil {
 		if list, err := s.stacks.List(ctx); err == nil {
 			for _, st := range list {
-				if st.Name == name {
+				if st.Name == name && st.Name != ownStack {
 					return httpx.Conflict("stack_exists", "a stack named %q is already installed; pick another name", name)
 				}
 			}

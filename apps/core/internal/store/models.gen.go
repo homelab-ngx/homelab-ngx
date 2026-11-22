@@ -231,6 +231,8 @@ type StackDraft struct {
 	CreatedAt   int64
 	CheckResult string
 	BuildResult string
+	ForkedFrom  string
+	ForkedRev   string
 }
 
 type StackGeneration struct {

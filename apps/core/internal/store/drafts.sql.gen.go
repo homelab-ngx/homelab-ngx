@@ -19,7 +19,7 @@ func (q *Queries) DeleteDraft(ctx context.Context, name string) error {
 }
 
 const getDraft = `-- name: GetDraft :one
-SELECT name, created_at, check_result, build_result FROM stack_drafts WHERE name = ?
+SELECT name, created_at, check_result, build_result, forked_from, forked_rev FROM stack_drafts WHERE name = ?
 `
 
 func (q *Queries) GetDraft(ctx context.Context, name string) (StackDraft, error) {
@@ -30,6 +30,8 @@ func (q *Queries) GetDraft(ctx context.Context, name string) (StackDraft, error)
 		&i.CreatedAt,
 		&i.CheckResult,
 		&i.BuildResult,
+		&i.ForkedFrom,
+		&i.ForkedRev,
 	)
 	return i, err
 }
@@ -49,7 +51,7 @@ func (q *Queries) InsertDraft(ctx context.Context, arg InsertDraftParams) error 
 }
 
 const listDrafts = `-- name: ListDrafts :many
-SELECT name, created_at, check_result, build_result FROM stack_drafts ORDER BY name
+SELECT name, created_at, check_result, build_result, forked_from, forked_rev FROM stack_drafts ORDER BY name
 `
 
 func (q *Queries) ListDrafts(ctx context.Context) ([]StackDraft, error) {
@@ -66,6 +68,8 @@ func (q *Queries) ListDrafts(ctx context.Context) ([]StackDraft, error) {
 			&i.CreatedAt,
 			&i.CheckResult,
 			&i.BuildResult,
+			&i.ForkedFrom,
+			&i.ForkedRev,
 		); err != nil {
 			return nil, err
 		}
@@ -105,5 +109,20 @@ type SetDraftCheckParams struct {
 
 func (q *Queries) SetDraftCheck(ctx context.Context, arg SetDraftCheckParams) error {
 	_, err := q.db.ExecContext(ctx, setDraftCheck, arg.CheckResult, arg.Name)
+	return err
+}
+
+const setDraftFork = `-- name: SetDraftFork :exec
+UPDATE stack_drafts SET forked_from = ?, forked_rev = ? WHERE name = ?
+`
+
+type SetDraftForkParams struct {
+	ForkedFrom string
+	ForkedRev  string
+	Name       string
+}
+
+func (q *Queries) SetDraftFork(ctx context.Context, arg SetDraftForkParams) error {
+	_, err := q.db.ExecContext(ctx, setDraftFork, arg.ForkedFrom, arg.ForkedRev, arg.Name)
 	return err
 }

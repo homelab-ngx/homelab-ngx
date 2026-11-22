@@ -690,6 +690,20 @@ func (q *Queries) SetStackOpStep(ctx context.Context, arg SetStackOpStepParams) 
 	return err
 }
 
+const setStackSource = `-- name: SetStackSource :exec
+UPDATE stacks SET source = ?1 WHERE name = ?2
+`
+
+type SetStackSourceParams struct {
+	Source string
+	Name   string
+}
+
+func (q *Queries) SetStackSource(ctx context.Context, arg SetStackSourceParams) error {
+	_, err := q.db.ExecContext(ctx, setStackSource, arg.Source, arg.Name)
+	return err
+}
+
 const setStackSubnet = `-- name: SetStackSubnet :exec
 UPDATE stacks SET subnet = ?1 WHERE name = ?2
 `
