@@ -123,3 +123,46 @@ func TestCheckIconFiles(t *testing.T) {
 		}
 	}
 }
+
+func TestV9AddedFoldersHint(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifest([]byte(`{
+  "version": 9, "name": "samba", "nixpkgs": "nixos-unstable",
+  "added_folders": {"under": "/shares", "label": "Shares", "description": "Each is one share.", "read_only": false},
+  "health": {"units": ["samba-smbd.service"]}
+}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h := m.AddedFolders; h == nil || h.Under != "/shares" || h.Label != "Shares" || h.ReadOnly {
+		t.Errorf("hint: %+v", m.AddedFolders)
+	}
+	// A hint is no grant.
+	if len(m.Grants()) != 0 {
+		t.Errorf("grants: %+v", m.Grants())
+	}
+	r := revision("abc", "github:o/r/abc", m, 0)
+	if h := r.Manifest.AddedFolders; h == nil || h.Under != "/shares" || h.Description != "Each is one share." {
+		t.Errorf("API shape: %+v", r.Manifest.AddedFolders)
+	}
+}
+
+func TestV9AddedFoldersRefused(t *testing.T) {
+	t.Parallel()
+	path := `"variables": [{"name": "DATA", "kind": "path", "required": true, "mount": "/data/media"}], `
+	for in, want := range map[string]string{
+		`{"version": 8, "added_folders": {"under": "/shares", "label": "Shares"}, `:      "needs version 9",
+		`{"version": 9, "added_folders": {"under": "shares", "label": "Shares"}, `:       "added_folders.under",
+		`{"version": 9, "added_folders": {"under": "/", "label": "Shares"}, `:            "added_folders.under",
+		`{"version": 9, "added_folders": {"under": "/etc/x", "label": "Shares"}, `:       "the stack's own system",
+		`{"version": 9, ` + path + `"added_folders": {"under": "/data", "label": "S"}, `: "clashes with its path DATA",
+		`{"version": 9, "added_folders": {"under": "/shares", "label": " "}, `:           "needs a label",
+		`{"version": 9, "added_folders": {"under": "/shares", "label": "a\nb"}, `:        "one line",
+		`{"version": 9, "added_folders": {"under": "/shares", "label": "S", "x": 1}, `:   "unknown field",
+	} {
+		_, err := ParseManifest([]byte(in + `"name": "app", "nixpkgs": "nixos-unstable", "health": {"units": ["a.service"]}}`))
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %v, want %q", in, err, want)
+		}
+	}
+}

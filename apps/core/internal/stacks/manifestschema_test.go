@@ -35,6 +35,7 @@ func TestManifestSchemaMatchesTheTypes(t *testing.T) {
 		{Backup{}, props(root)["backup"], nil},
 		{BackupDir{}, backupFolder, nil},
 		{BackupIgnore{}, props(backupFolder)["exclude"].(map[string]any)["items"], nil},
+		{AddedFoldersHint{}, props(root)["added_folders"], nil},
 	}
 	for _, c := range cases {
 		rt := reflect.TypeOf(c.typ)

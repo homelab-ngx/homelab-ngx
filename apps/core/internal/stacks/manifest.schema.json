@@ -31,6 +31,18 @@
       "type": "array",
       "items": { "$ref": "#/definitions/service" }
     },
+    "added_folders": {
+      "description": "How the dashboard asks for the folders the operator adds to the stack: each has a name and is mounted at <under>/<name>. A hint, not a grant.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["under", "label"],
+      "properties": {
+        "under": { "description": "The directory in the stack the named folders are mounted in, such as /shares.", "type": "string", "pattern": "^/" },
+        "label": { "description": "What the stack calls the folders, as a heading: one line of at most 40 bytes, such as Shares.", "type": "string", "minLength": 1, "maxLength": 40 },
+        "description": { "description": "What the stack does with them, for the dashboard.", "type": "string", "maxLength": 300 },
+        "read_only": { "description": "Whether a new folder starts read-only. The operator may change it.", "type": "boolean" }
+      }
+    },
     "routes": {
       "description": "Hostnames the host's Caddy serves over HTTPS, each to a port in the stack.",
       "type": "array",

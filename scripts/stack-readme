@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Writes a stack's manifest into its README: the grants, the variables, the
-# recommended backup folders and the health check of homelab-stack.json, as
+# added folders hint, the recommended backup folders and the health check of
+# homelab-stack.json, as
 # Markdown between two marker lines of README.md. The rest of the README is
 # left as it is.
 #
@@ -120,6 +121,17 @@ jq -r --arg project "$project_url" '
           + " | \((.description // "") | cell) |"),
        ""
      end),
+  (if .added_folders == null then empty
+   else
+     "## \(.added_folders.label | cell)",
+     "",
+     (if .added_folders.description then (.added_folders.description | cell), "" else empty end),
+     "You add each on the stack\u0027s page, under Path mappings: a host folder and a name. "
+     + "It is mounted at \(.added_folders.under + "/<name>" | code), "
+     + (if .added_folders.read_only then "read-only" else "writable" end)
+     + " unless you change it, from the stack\u0027s next restart.",
+     ""
+   end),
   (if ((.backup.folders // []) | length) == 0 then empty
    else
      "## Backup",

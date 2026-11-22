@@ -22,6 +22,7 @@ Unknown fields are refused. Fields:
 - `"api": ["read"]` and/or `"control"`: the stack may call the homelab daemon's API.
 - `"health"` (required in practice): `{ "units": ["<unit>.service", …], "http": { "port": <n>, "path": "/…" } }`. Every listed unit must be active and the HTTP probe must answer 2xx on the stack's address, or an update is rolled back. List every service that must be up.
 - `"icon"` and `"services"` (optional): icons the dashboard shows for the stack and for each service, `"services": [{ "unit": "<unit>.service", "icon": "…" }]`. An icon is a name in the dashboard-icons set (`"jellyfin"`), a file in the repo (`"icons/app.svg"`: .svg, .png or .webp, at most 256 KiB) or an `https://` URL. Not a grant.
+- `"added_folders"` (optional): `{ "under": "/shares", "label": "Shares", "description": "…", "read_only": false }` for a stack that serves whatever folders the operator adds, such as a file server. The dashboard asks for a name and mounts each at `<under>/<name>`; the stack finds them there at boot. Not a grant.
 - `"backup"`: `{ "prepare": "<oneshot unit>" (optional), "folders": [{ "label", "path": "/var/lib/…" } or { "label", "variable": "<PATH VARIABLE>" }, with optional "exclude": [{ "pattern": "/cache/**", "reason": "…" }]] }`. Recommend data, not caches; patterns start with `/` or `**/`; `path` may not be `/`. For a database, dump it on a timer to a folder (`services.postgresqlBackup`) and name that unit as `prepare`.
 
 ## The NixOS module (flake.nix)

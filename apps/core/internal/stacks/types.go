@@ -242,6 +242,9 @@ type StackLockEntry struct {
 // in. The system built is its `nixosModules.default` on the daemon's base module; manifests older than version 7 still parse but are not built.
 // It mirrors Manifest's JSON.
 type StackManifest struct {
+	// AddedFolders How the dashboard asks for added folders (version 9): each is named and mounted under one directory.
+	AddedFolders *StackManifestAddedFolders `json:"added_folders,omitempty" doc:"How the dashboard asks for added folders (version 9): each is named and mounted under one directory. A hint, not a grant."`
+
 	// Api Scopes of the daemon API the stack may call (version 3).
 	Api []string `json:"api,omitempty" enum:"read,control" doc:"Scopes of the daemon API the stack may call on the stack listener (version 3)."`
 
@@ -275,6 +278,21 @@ type StackManifest struct {
 	Services []StackManifestService `json:"services,omitempty" doc:"What the manifest says about the stack's services, each by its unit inside the stack (version 9)."`
 	Storage  []StackManifestStorage `json:"storage"`
 	Version  int                    `json:"version"`
+}
+
+// StackManifestAddedFolders is a manifest's hint for added folders.
+type StackManifestAddedFolders struct {
+	// Under The directory in the stack each named folder is mounted in, as <under>/<name>.
+	Under string `json:"under" doc:"The directory in the stack each named folder is mounted in, as <under>/<name>."`
+
+	// Label What the stack calls the folders, such as Shares.
+	Label string `json:"label" doc:"What the stack calls the folders, such as Shares."`
+
+	// Description What the stack does with them.
+	Description string `json:"description,omitempty" doc:"What the stack does with them."`
+
+	// ReadOnly Whether a new folder starts read-only.
+	ReadOnly bool `json:"read_only" doc:"Whether a new folder starts read-only; the operator may change it."`
 }
 
 // StackManifestService is what a manifest says about one of its services.

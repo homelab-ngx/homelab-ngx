@@ -39,6 +39,17 @@
   /** Path mappings: host folders bound into the stack, the declared ones first, then the added folders. */
   const pathRows = $derived([...groups.path, ...groups.own.filter((v) => v.kind === "path")]);
   const folders = $derived(stack.folders ?? []);
+  /** The manifest's hint for added folders (version 9): each is named and mounted at <under>/<name>. */
+  const hint = $derived((stack.approved ?? stack.fetched)?.manifest.added_folders);
+  /** An added folder's name under the hint's directory, or "" for one mounted elsewhere. */
+  const folderName = (f: { mount: string }) => {
+    const rest = hint && f.mount.startsWith(`${hint.under}/`) ? f.mount.slice(hint.under.length + 1) : "";
+    return rest.includes("/") ? "" : rest;
+  };
+  const named = $derived(folders.filter((f) => folderName(f)));
+  const unnamed = $derived(folders.filter((f) => !folderName(f)));
+  /** How an added folder is called: its name, or its mount. */
+  const folderLabel = (f: { mount: string }) => folderName(f) || f.mount;
   /** From manifest version 7 an unset env variable keeps the value the stack's own config gives. */
   const ownDefaults = $derived((stack.fetched?.manifest.version ?? 0) >= 7);
   const stackValue = (v: StackVariable) => ownDefaults && v.declared && v.kind === "env" && v.source === "unset";
@@ -110,17 +121,19 @@
   let newPath = $state("");
   let newMount = $state("");
   let newReadOnly = $state(true);
-  /** The mount last filled in from the host folder; one the operator typed is kept. */
+  /** The mount (or, with the hint, the name) last filled in from the host folder; one the operator typed is kept. */
   let filledMount = "";
+  /** With the hint, the Path form asks for a name: one folder name, no '/', '\\' or ':'. */
+  const nameBad = $derived(!!hint && newType === "path" && /^\.{1,2}$|[\/\\:]/.test(newMount.trim()));
   const newProblem = $derived(nameProblem(newName) || (stack.variables.some((v) => v.name === newName) ? `${newName} already exists.` : ""));
-  const canAdd = $derived(newType === "env" ? !!newName && !newProblem && !!newValue : !!trimSlash(newPath.trim()) && !!newMount.trim());
+  const canAdd = $derived(newType === "env" ? !!newName && !newProblem && !!newValue : !!trimSlash(newPath.trim()) && !!newMount.trim() && !nameBad);
   /** The key the Add form's errors are filed under; no variable name has a space. */
   const NEW = "new mapping";
 
-  /** /mnt/<folder name> for a host folder, or "" for none. */
+  /** /mnt/<folder name> for a host folder (with the hint, the folder name alone), or "" for none. */
   const mountFor = (p: string) => {
     const name = trimSlash(p.trim()).split("/").pop();
-    return name ? `/mnt/${name}` : "";
+    return !name ? "" : hint ? name : `/mnt/${name}`;
   };
   /** Follow the host folder in the mount field until the operator types a mount of their own. */
   function fillMount(p: string) {
@@ -132,8 +145,13 @@
     adding = false;
     newName = newValue = newPath = newMount = filledMount = "";
     newSecret = false;
-    newReadOnly = true;
+    newReadOnly = hint?.read_only ?? true;
     delete errors[NEW];
+  }
+
+  function openAdd() {
+    adding = true;
+    newReadOnly = hint?.read_only ?? true;
   }
 
   const isChanged = (v: StackVariable) => {
@@ -217,17 +235,19 @@
       });
     } else {
       const path = trimSlash(newPath.trim());
-      const mount = newMount.trim();
+      const name = newMount.trim();
+      const mount = hint ? `${hint.under}/${name}` : name;
       void act(async () => {
         if (!(await saveFolders(NEW, [...folders.map(asIn), { path, mount, read_only: newReadOnly }]))) return "";
         closeAdd();
-        return `${path} added at ${mount}. It is bound from the next restart.`;
+        return `${path} added ${hint ? `as ${name}` : `at ${mount}`}. It is bound from the next restart.`;
       });
     }
   }
 
   function folderMenu(f: Folder): MenuItem[] {
     const key = `folder ${f.mount}`;
+    const label = folderLabel(f);
     return [
       {
         label: f.read_only ? "Allow writes" : "Make read-only",
@@ -237,7 +257,7 @@
               key,
               folders.map((o) => (o.mount === f.mount ? { ...asIn(o), read_only: !f.read_only } : asIn(o))),
             ))
-              ? `${f.mount} ${f.read_only ? "writable" : "read-only"} from the next restart.`
+              ? `${label} ${f.read_only ? "writable" : "read-only"} from the next restart.`
               : "",
           ),
       },
@@ -245,7 +265,7 @@
         label: "Remove",
         danger: true,
         onSelect: () =>
-          void act(async () => ((await saveFolders(key, folders.filter((o) => o.mount !== f.mount).map(asIn))) ? `${f.mount} removed. The folder stays.` : "")),
+          void act(async () => ((await saveFolders(key, folders.filter((o) => o.mount !== f.mount).map(asIn))) ? `${label} removed. The folder stays.` : "")),
       },
     ];
   }
@@ -392,8 +412,12 @@
 {#snippet folderRow(f: Schema<"StackFolder">)}
   {@const err = errors[`folder ${f.mount}`] ?? ""}
   <li class="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1.5 py-2 lg:grid-cols-[minmax(0,16rem)_6rem_minmax(0,1fr)_4rem]">
-    <Help label={f.mount} class="break-all">
-      <span class="block">An added folder: bound into the stack on this host, with no change to its repo.</span>
+    <Help label={folderLabel(f)} class="break-all">
+      {#if folderName(f)}
+        <span class="block">Mounted at {f.mount} in the stack.</span>
+      {:else}
+        <span class="block">An added folder: bound into the stack on this host, with no change to its repo.</span>
+      {/if}
       {#if f.shadowed_by}<span class="block">Not bound: {f.shadowed_by} in the manifest claims this mount.</span>{/if}
       {#if f.updated_at}<span class="block">Set {stamp(f.updated_at)}</span>{/if}
     </Help>
@@ -407,7 +431,7 @@
       <a class="btn btn-sm px-1.5" href={browseHref(f.path)} aria-label="Browse {f.path}" title="Browse files">
         <FolderOpen class="size-4" aria-hidden="true" />
       </a>
-      <RowMenu name={f.mount} items={folderMenu(f)} />
+      <RowMenu name={folderLabel(f)} items={folderMenu(f)} />
     </span>
     {#if err}<p role="alert" class="order-2 col-span-full text-bad">{err}</p>{/if}
   </li>
@@ -445,17 +469,34 @@
     {/if}
 
     <h3 class="label -mx-4 border-y border-line bg-sunken px-4 py-1.5">Path mappings</h3>
-    {#if pathRows.length || folders.length}
+    {#if pathRows.length || unnamed.length}
       <ul class="divide-y divide-line">
         {#each pathRows as v (v.name)}
           {@render row(v)}
         {/each}
-        {#each folders as f (f.mount)}
+        {#each unnamed as f (f.mount)}
           {@render folderRow(f)}
         {/each}
       </ul>
-    {:else}
+    {:else if !hint}
       <p class="py-2 text-muted">None.</p>
+    {/if}
+    {#if hint}
+      <h4 class="label border-t border-line pt-2">
+        <Help label={hint.label}>
+          {#if hint.description}<span class="block">{hint.description}</span>{/if}
+          <span class="block">Each is a host folder with a name, mounted at {hint.under}/name. Add one with Add mapping, as a path.</span>
+        </Help>
+      </h4>
+      {#if named.length}
+        <ul class="divide-y divide-line">
+          {#each named as f (f.mount)}
+            {@render folderRow(f)}
+          {/each}
+        </ul>
+      {:else}
+        <p class="py-2 text-muted">None.</p>
+      {/if}
     {/if}
 
     {#if adding}
@@ -503,10 +544,12 @@
           />
           <input
             class="input w-auto min-w-0 flex-1 basis-40"
-            aria-label="Mount in the stack"
-            placeholder="/mnt/library"
+            aria-label={hint ? "Name" : "Mount in the stack"}
+            aria-invalid={nameBad ? "true" : undefined}
+            placeholder={hint ? "Name" : "/mnt/library"}
             autocomplete="off"
             spellcheck="false"
+            maxlength={hint ? 64 : undefined}
             form="{id}-add"
             bind:value={newMount}
           />
@@ -518,12 +561,13 @@
         <button type="submit" form="{id}-add" class="btn btn-sm" disabled={pending || !canAdd}>Add</button>
       </div>
       {#if newType === "env" && newProblem}<p class="text-warn">{newProblem}</p>{/if}
+      {#if nameBad}<p class="text-warn">A name has no '/', '\' or ':'.</p>{/if}
       {#if errors[NEW]}<p role="alert" class="text-bad">{errors[NEW]}</p>{/if}
     {/if}
 
     <div class="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-3">
       <!-- It stays in place and folds the form away again, like a fold's label. -->
-      <button type="button" class="btn mr-auto" aria-expanded={adding} aria-controls="{id}-new" onclick={() => (adding ? closeAdd() : (adding = true))}>
+      <button type="button" class="btn mr-auto" aria-expanded={adding} aria-controls="{id}-new" onclick={() => (adding ? closeAdd() : openAdd())}>
         Add mapping
       </button>
       {#if note}<p role="status" class="text-muted">{note}</p>{/if}

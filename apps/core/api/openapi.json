@@ -5751,6 +5751,10 @@
         "additionalProperties": false,
         "description": "The validated homelab-stack.json of a commit, with defaults filled in. The system built is its nixosModules.default on the daemon's base module; manifests older than version 7 still parse but are not built.",
         "properties": {
+          "added_folders": {
+            "$ref": "#/components/schemas/StackManifestAddedFolders",
+            "description": "How the dashboard asks for added folders (version 9): each is named and mounted under one directory. A hint, not a grant."
+          },
           "api": {
             "description": "Scopes of the daemon API the stack may call on the stack listener (version 3).",
             "items": {
@@ -5848,6 +5852,33 @@
           "routes",
           "storage",
           "version"
+        ],
+        "type": "object"
+      },
+      "StackManifestAddedFolders": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "What the stack does with them.",
+            "type": "string"
+          },
+          "label": {
+            "description": "What the stack calls the folders, such as Shares.",
+            "type": "string"
+          },
+          "read_only": {
+            "description": "Whether a new folder starts read-only; the operator may change it.",
+            "type": "boolean"
+          },
+          "under": {
+            "description": "The directory in the stack each named folder is mounted in, as \u003cunder\u003e/\u003cname\u003e.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "under",
+          "label",
+          "read_only"
         ],
         "type": "object"
       },

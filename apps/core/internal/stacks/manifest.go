@@ -25,7 +25,8 @@ const ManifestFile = "homelab-stack.json"
 // a type and allowed values instead of a default; version 8 adds route
 // labels under the host's domain, address variables that egress and port
 // clients can name, the owner and group of a path, and the GPU and firewall
-// from the host; version 9 adds the icons of the stack and its services.
+// from the host; version 9 adds the icons of the stack and its services, and
+// a hint for the folders the operator adds.
 const ManifestVersion = 9
 
 // MinBuildVersion is the oldest manifest a stack is built from. Older
@@ -84,6 +85,23 @@ type Manifest struct {
 	// Services (version 9) describe the stack's services, each by its unit
 	// inside the stack. Not a grant. Absent when there are none.
 	Services []ServiceMeta `json:"services,omitempty"`
+	// AddedFolders (version 9) tells the dashboard what the folders the
+	// operator adds are to the stack, such as shares, and where they go.
+	// A hint, not a grant: the daemon checks added folders as before.
+	AddedFolders *AddedFoldersHint `json:"added_folders,omitempty"`
+}
+
+// AddedFoldersHint is a version 9 manifest's hint for added folders: each
+// one is named, and mounted at Under/<name>.
+type AddedFoldersHint struct {
+	// Under is the directory in the stack the named folders are mounted in.
+	Under string `json:"under"`
+	// Label is what the stack calls them, such as "Shares".
+	Label string `json:"label"`
+	// Description says what the stack does with them.
+	Description string `json:"description,omitempty"`
+	// ReadOnly is the default for a new folder; the operator may change it.
+	ReadOnly bool `json:"read_only"`
 }
 
 // ServiceMeta is what a version 9 manifest says about one of its services,
@@ -543,6 +561,9 @@ func (m Manifest) Validate() error {
 	if err := m.validateIcons(); err != nil {
 		return err
 	}
+	if err := m.validateAddedFolders(); err != nil {
+		return err
+	}
 	if !ValidName(m.Name) {
 		return fmt.Errorf("name: %q must be 1-12 characters of a-z, 0-9 and '-', starting with a letter", m.Name)
 	}
@@ -961,6 +982,37 @@ func validHostPath(p string) error {
 	}
 	return nil
 }
+
+// validateAddedFolders checks the version 9 added folders hint: a mount
+// directory no declared mount claims, and a one-line label.
+func (m Manifest) validateAddedFolders() error {
+	h := m.AddedFolders
+	if h == nil {
+		return nil
+	}
+	if m.Version < 9 {
+		return errors.New("version: added_folders needs version 9")
+	}
+	if err := validMount(h.Under); err != nil {
+		return fmt.Errorf("added_folders.under: %w", err)
+	}
+	if by := shadowedBy(m, h.Under); by != "" {
+		return fmt.Errorf("added_folders.under: %q clashes with %s", h.Under, by)
+	}
+	if strings.TrimSpace(h.Label) == "" {
+		return errors.New("added_folders.label: needs a label, such as \"Shares\"")
+	}
+	if len(h.Label) > maxAddedLabel || strings.ContainsAny(h.Label, "\n\x00") {
+		return fmt.Errorf("added_folders.label: must be one line of at most %d bytes", maxAddedLabel)
+	}
+	if len(h.Description) > maxSecretDescription {
+		return fmt.Errorf("added_folders.description: longer than %d bytes", maxSecretDescription)
+	}
+	return nil
+}
+
+// maxAddedLabel bounds the added folders hint's label, a heading.
+const maxAddedLabel = 40
 
 func validMount(p string) error {
 	if err := cleanAbs(p); err != nil {

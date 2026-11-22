@@ -4182,6 +4182,8 @@ export interface components {
         };
         /** @description The validated homelab-stack.json of a commit, with defaults filled in. The system built is its nixosModules.default on the daemon's base module; manifests older than version 7 still parse but are not built. */
         StackManifest: {
+            /** @description How the dashboard asks for added folders (version 9): each is named and mounted under one directory. A hint, not a grant. */
+            added_folders?: components["schemas"]["StackManifestAddedFolders"];
             /** @description Scopes of the daemon API the stack may call on the stack listener (version 3). */
             api?: ("read" | "control")[];
             /** @description What the stack recommends backing up, and the unit that prepares it (version 6). */
@@ -4208,6 +4210,16 @@ export interface components {
             variables?: components["schemas"]["StackManifestVariable"][];
             /** Format: int64 */
             version: number;
+        };
+        StackManifestAddedFolders: {
+            /** @description What the stack does with them. */
+            description?: string;
+            /** @description What the stack calls the folders, such as Shares. */
+            label: string;
+            /** @description Whether a new folder starts read-only; the operator may change it. */
+            read_only: boolean;
+            /** @description The directory in the stack each named folder is mounted in, as <under>/<name>. */
+            under: string;
         };
         StackManifestBackup: {
             /** @description Directories worth backing up. None is backed up until it is added to a backup. */

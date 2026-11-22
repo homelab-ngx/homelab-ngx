@@ -323,6 +323,33 @@ func stacksCmd() *cli.Command {
 
 // stackVarCmd is `homelab stacks var`: the values a stack gets at
 // /run/secrets. A value is read from stdin or a prompt, never argv.
+// addedFoldersHint is the hint for added folders in the stack's approved
+// manifest, or in the fetched one before any approval; nil when there is
+// none.
+func addedFoldersHint(s stacks.Stack) *stacks.StackManifestAddedFolders {
+	if s.Approved != nil {
+		return s.Approved.Manifest.AddedFolders
+	}
+	return s.Fetched.Manifest.AddedFolders
+}
+
+// folderMount is where an added folder given as arg goes: arg itself when it
+// is a path, else <under>/<arg> when the stack's manifest names its added
+// folders.
+func folderMount(s stacks.Stack, arg string) (string, error) {
+	if strings.HasPrefix(arg, "/") {
+		return arg, nil
+	}
+	h := addedFoldersHint(s)
+	if h == nil {
+		return "", fmt.Errorf("%q is not a mount: give the path in the stack, such as /data/%s", arg, arg)
+	}
+	if arg == "" || arg == "." || arg == ".." || strings.ContainsAny(arg, "/\\:") {
+		return "", fmt.Errorf("%q is not a name for %s: no '/', '\\' or ':'", arg, strings.ToLower(h.Label))
+	}
+	return h.Under + "/" + arg, nil
+}
+
 // stackFolderCmd makes and re-owns the folder of a stack's path variable.
 func stackFolderCmd() *cli.Command {
 	return &cli.Command{
@@ -350,34 +377,42 @@ func stackFolderCmd() *cli.Command {
 			},
 			{
 				Name:      "add",
-				Usage:     "Bind a host folder into a stack at a mount, read-only unless --read-write; the stack sees it at its next restart",
-				ArgsUsage: "<stack> <host-folder> <mount>",
+				Usage:     "Bind a host folder into a stack at a mount, read-only unless --read-write; the stack sees it at its next restart. A stack whose manifest names its added folders (such as shares) takes a name instead of a mount",
+				ArgsUsage: "<stack> <host-folder> <mount|name>",
 				Flags:     []cli.Flag{&cli.BoolFlag{Name: "read-write", Usage: "let the stack write to the folder"}},
 				Action: func(c *cli.Context) error {
 					args, flags := argsAndBools(c, "read-write")
 					if len(args) < 3 {
-						return fmt.Errorf("usage: homelab stacks folder add <stack> <host-folder> <mount> [--read-write]")
+						return fmt.Errorf("usage: homelab stacks folder add <stack> <host-folder> <mount|name> [--read-write]")
 					}
 					name := args[0]
 					cur, err := getStack(c, name)
 					if err != nil {
 						return err
 					}
+					mount, err := folderMount(cur, args[2])
+					if err != nil {
+						return err
+					}
 					in := foldersIn(cur, "")
-					in = append(in, stacks.StackFolderIn{Path: args[1], Mount: args[2], ReadOnly: !flags["read-write"]})
-					return setStackFolders(c, name, in, fmt.Sprintf("✔ %s is bound at %s in %s.", args[1], args[2], name))
+					in = append(in, stacks.StackFolderIn{Path: args[1], Mount: mount, ReadOnly: !flags["read-write"]})
+					return setStackFolders(c, name, in, fmt.Sprintf("✔ %s is bound at %s in %s.", args[1], mount, name))
 				},
 			},
 			{
 				Name:      "rm",
-				Usage:     "Stop binding the folder at a mount; the stack loses it at its next restart, and the folder stays",
-				ArgsUsage: "<stack> <mount>",
+				Usage:     "Stop binding the folder at a mount (or by its name); the stack loses it at its next restart, and the folder stays",
+				ArgsUsage: "<stack> <mount|name>",
 				Action: func(c *cli.Context) error {
-					if err := requireArgs(c, 2, "homelab stacks folder rm <stack> <mount>"); err != nil {
+					if err := requireArgs(c, 2, "homelab stacks folder rm <stack> <mount|name>"); err != nil {
 						return err
 					}
-					name, mount := c.Args().Get(0), c.Args().Get(1)
+					name := c.Args().Get(0)
 					cur, err := getStack(c, name)
+					if err != nil {
+						return err
+					}
+					mount, err := folderMount(cur, c.Args().Get(1))
 					if err != nil {
 						return err
 					}

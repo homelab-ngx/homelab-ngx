@@ -208,6 +208,44 @@ describe("StackMappings", () => {
     }
   });
 
+  const hinted = (folders: unknown[]): Stack =>
+    ({
+      ...stack([], folders),
+      approved: { manifest: { added_folders: { under: "/shares", label: "Shares", description: "Each is one share.", read_only: false } } },
+    }) as unknown as Stack;
+
+  it("lists named folders under the manifest's label, by name", () => {
+    render(Harness, {
+      props: { client: new QueryClient(), stack: hinted([music, { ...music, mount: "/shares/photos", path: "/var/mnt/pool/photos", read_only: false }]) },
+    });
+    expect(screen.getByRole("heading", { name: "Shares" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "photos" })).toBeTruthy();
+    // A folder mounted elsewhere keeps its mount.
+    expect(screen.getByRole("button", { name: "/music" })).toBeTruthy();
+  });
+
+  it("adds a named folder under the manifest's directory, writable by its default", async () => {
+    const put = vi.spyOn(api, "PUT").mockResolvedValue({ data: hinted([]), response: new Response(null, { status: 200 }) } as never);
+    try {
+      render(Harness, { props: { client: new QueryClient(), stack: hinted([]) } });
+      await fireEvent.click(screen.getByRole("button", { name: "Add mapping" }));
+      await fireEvent.change(screen.getByLabelText("Mapping type"), { target: { value: "path" } });
+      await fireEvent.input(screen.getByLabelText("Host folder"), { target: { value: "/var/mnt/pool/photos" } });
+      expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("photos");
+      expect((screen.getByLabelText("Read-only") as HTMLInputElement).checked).toBe(false);
+      await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "a/b" } });
+      expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+      await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Photos" } });
+      await fireEvent.click(screen.getByRole("button", { name: "Add" }));
+      expect(put).toHaveBeenCalledWith("/stacks/{name}/folders", {
+        params: { path: { name: "media" } },
+        body: { folders: [{ path: "/var/mnt/pool/photos", mount: "/shares/Photos", read_only: false }] },
+      });
+    } finally {
+      put.mockRestore();
+    }
+  });
+
   it("adds an env mapping as a secret", async () => {
     const put = vi.spyOn(api, "PUT").mockResolvedValue({ data: stack([]), response: new Response(null, { status: 200 }) } as never);
     try {

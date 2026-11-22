@@ -286,6 +286,51 @@ func TestStackFolderAddKeepsTheOthers(t *testing.T) {
 	}
 }
 
+func TestStackFolderAddByName(t *testing.T) {
+	var got stacks.StackFoldersSet
+	hinted := strings.Replace(stackJSON("null"), `"health":{"units":[]}}`,
+		`"health":{"units":[]},"added_folders":{"under":"/shares","label":"Shares","read_only":false}}`, -1)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/stacks/immich", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, hinted)
+	})
+	mux.HandleFunc("PUT /api/stacks/immich/folders", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Error(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, hinted)
+	})
+	serve(t, mux)
+	if _, err := captureStdout(t, func() error {
+		return runApp(t, "stacks", "folder", "add", "immich", "/pool/photos", "Photos", "--read-write")
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(got.Folders); n != 2 || got.Folders[1].Mount != "/shares/Photos" {
+		t.Errorf("folders = %+v", got.Folders)
+	}
+	if _, err := captureStdout(t, func() error {
+		return runApp(t, "stacks", "folder", "add", "immich", "/pool/photos", "a/b")
+	}); err == nil || !strings.Contains(err.Error(), "not a name for shares") {
+		t.Errorf("a name with '/': %v", err)
+	}
+}
+
+func TestStackFolderAddNameNeedsHint(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/stacks/immich", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, stackJSON("null"))
+	})
+	serve(t, mux)
+	_, err := captureStdout(t, func() error { return runApp(t, "stacks", "folder", "add", "immich", "/pool/photos", "Photos") })
+	if err == nil || !strings.Contains(err.Error(), "is not a mount") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 func TestStackVarSetReadOnlyKeepsTheFolder(t *testing.T) {
 	var got stacks.StackVariableSet
 	mux := http.NewServeMux()

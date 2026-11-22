@@ -85,7 +85,7 @@ Whether a stack starts after the host boots. At the daemon's first start in a bo
 _Avoid_: start on boot, enabled
 
 **Added folder**:
-A host folder the operator binds into an installed stack at a mount of their choosing, read-only unless writes are allowed, on top of what its manifest asks for. Not a grant: nothing in the repo changes and nothing is approved. Stored with the stack's variables; one whose mount the manifest comes to claim is not bound.
+A host folder the operator binds into an installed stack at a mount of their choosing, read-only unless writes are allowed, on top of what its manifest asks for. Not a grant: nothing in the repo changes and nothing is approved. Stored with the stack's variables; one whose mount the manifest comes to claim is not bound. A manifest may name them (`added_folders`, version 9): then each has a name and is mounted at `<under>/<name>`, such as a share in a Samba stack.
 _Avoid_: extra grant, custom path, volume
 
 **Stack listener**:
