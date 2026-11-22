@@ -8,20 +8,17 @@
   import AskButton from "./ask/AskButton.svelte";
   import Disclosure from "./Disclosure.svelte";
   import Help from "./Help.svelte";
-  import Modal from "./Modal.svelte";
   import Pill from "./Pill.svelte";
 
   interface Props {
     stack: Stack;
     /** The stack's install, update and rollback attempts, newest first. */
     attempts: StackUpdate[];
-    open: boolean;
-    onClose: () => void;
     /** A stack operation runs: rollbacks wait. */
     working: boolean;
     onRollback: (generation: number) => void;
   }
-  let { stack, attempts, open, onClose, working, onRollback }: Props = $props();
+  let { stack, attempts, working, onRollback }: Props = $props();
 
   /** The attempt whose log is open below its row. */
   let shown = $state<number | null>(null);
@@ -55,7 +52,9 @@
   const toggle = (id: number) => (shown = shown === id ? null : id);
 </script>
 
-<Modal {open} onOpenChange={(o) => !o && onClose()} title="{stackTitle(stack)} history" wide>
+<!-- A stack's versions and the attempts that built none (DESIGN.md, Stack
+     Page: the History tab). -->
+<div>
   <p class="mb-2">
     <Help label="Versions" class="label">
       Every install and update builds a version (a generation): a complete build of the stack at one commit. Rolling back switches
@@ -155,4 +154,4 @@
       </tbody>
     </table>
   </div>
-</Modal>
+</div>

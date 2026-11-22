@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ServiceInfo, Stack } from "./api/client.ts";
-import { describeSource, draftOf, folderSource, gitSource, grants, health, nixpkgsLabel, nixpkgsOnly, removedGrants, runningNixpkgs, sourceHref, stackTitle, stackTitles, stepOf, validStackName } from "./stacks.ts";
+import { describeSource, draftOf, hostUnitName, stackIcon, unitIcon, unitWord, folderSource, gitSource, grants, health, nixpkgsLabel, nixpkgsOnly, removedGrants, runningNixpkgs, sourceHref, stackTitle, stackTitles, stepOf, validStackName } from "./stacks.ts";
 
 const unit = (name: string, active_state: string): ServiceInfo =>
   ({ name, stack: "media", active_state, sub_state: "", type: "Native", description: "", unit_name: name, started_at: null }) as ServiceInfo;
@@ -172,5 +172,31 @@ describe("sourceHref", () => {
     expect(sourceHref("https://git.example.com/me/stack")).toEqual({ repo: "https://git.example.com/me/stack", branch: null });
     expect(sourceHref("git+ssh://git@git.example.com/me/stack?ref=main")).toEqual({ repo: null, branch: null });
     expect(sourceHref("git+file:///srv/stacks/paperless")).toEqual({ repo: null, branch: null });
+  });
+});
+
+describe("icons", () => {
+  const withIcons = (icon?: string) => {
+    const m = { version: 9, name: "players", routes: [], storage: [], egress: [], gpu: false, health: { units: [] }, icon, services: [{ unit: "plex.service", icon: "plex" }, { unit: "players-watch.service", icon: "icons/w.png" }] };
+    return stack({ name: "players", fetched: { rev: "b", url: "", at: "", manifest: m }, approved: { rev: "a", url: "", at: "", manifest: m } } as unknown as Partial<Stack>);
+  };
+  const svc = (unit_name: string) => ({ ...unit(unit_name.replace(/\.service$/, ""), "active"), unit_name }) as ServiceInfo;
+
+  it("names a manifest's unit as the host does", () => {
+    expect(hostUnitName("players", "plex.service")).toBe("players-plex.service");
+    expect(hostUnitName("players", "players-watch.service")).toBe("players-watch.service");
+  });
+
+  it("points at the daemon's icon for a stack and its services, and at nothing without one", () => {
+    expect(stackIcon(withIcons("plex"))).toBe("/api/stacks/players/icon");
+    expect(stackIcon(withIcons())).toBeUndefined();
+    expect(unitIcon(withIcons(), svc("players-plex.service"))).toBe("/api/stacks/players/icon?unit=plex.service");
+    expect(unitIcon(withIcons(), svc("players-watch.service"))).toBe("/api/stacks/players/icon?unit=players-watch.service");
+    expect(unitIcon(withIcons(), svc("players-jellyfin.service"))).toBeUndefined();
+  });
+
+  it("says a disabled service is disabled", () => {
+    expect(unitWord({ ...unit("media-plex", "inactive"), masked: true } as ServiceInfo)).toBe("disabled");
+    expect(unitWord(unit("media-plex", "failed"))).toBe("failed");
   });
 });

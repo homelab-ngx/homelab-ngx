@@ -4,6 +4,7 @@
  * types, what the daemon stores).
  */
 import type { ServiceInfo, Stack, StackManifest } from "./api/client";
+import type { Tone } from "./components/Pill.svelte";
 
 export interface Grant {
   kind: string;
@@ -180,6 +181,59 @@ export function logUnits(stack: string, services: ServiceInfo[]): { id: string; 
 
 /** What people see a stack called: its label, else its name. */
 export const stackTitle = (s: Pick<Stack, "name" | "label">) => s.label || s.name;
+
+/** The tone of a stack's state mark. */
+export const stateTone: Record<StackState, Tone> = {
+  running: "ok",
+  frozen: "info",
+  degraded: "warn",
+  stopped: "idle",
+  starting: "info",
+  "not-installed": "idle",
+};
+
+/** A stack's state in one word. */
+export const stateLabel: Record<StackState, string> = {
+  running: "Running",
+  frozen: "Frozen",
+  degraded: "Degraded",
+  stopped: "Stopped",
+  starting: "Starting",
+  "not-installed": "Not installed",
+};
+
+/** The tone of a service's state mark; a disabled service is idle. */
+export function unitTone(u: ServiceInfo): Tone {
+  if (u.masked) return "idle";
+  if (u.active_state === "active") return "ok";
+  if (u.active_state === "failed") return "bad";
+  if (u.active_state === "activating" || u.active_state === "reloading") return "info";
+  return "idle";
+}
+
+/** A service's state in one word: its systemd state, or disabled. */
+export const unitWord = (u: ServiceInfo) => (u.masked ? "disabled" : u.active_state);
+
+/** The manifest a stack is shown with: the approved one, else the fetched one. */
+const shownManifest = (s: Stack): StackManifest | undefined => s.approved?.manifest ?? s.fetched?.manifest;
+
+/**
+ * The host's name for a unit a manifest names inside a stack (the daemon's
+ * hostUnitName): plex.service in players → players-plex.service; a unit
+ * that already starts with the stack's name keeps it.
+ */
+export const hostUnitName = (stack: string, unit: string) => (unit.startsWith(stack + "-") ? unit : `${stack}-${unit}`);
+
+/** The address of a stack's icon, when its manifest names one. */
+export function stackIcon(s: Stack): string | undefined {
+  return shownManifest(s)?.icon ? `/api/stacks/${encodeURIComponent(s.name)}/icon` : undefined;
+}
+
+/** The address of a service's icon, when the stack's manifest names one for it. */
+export function unitIcon(s: Stack, u: ServiceInfo): string | undefined {
+  const e = shownManifest(s)?.services?.find((m) => hostUnitName(s.name, m.unit) === u.unit_name);
+  return e ? `/api/stacks/${encodeURIComponent(s.name)}/icon?unit=${encodeURIComponent(e.unit)}` : undefined;
+}
 
 /**
  * A stack's title by name, for places that only hold the name (metrics,

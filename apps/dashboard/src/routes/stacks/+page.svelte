@@ -1,12 +1,13 @@
 <script lang="ts">
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
+  import { LayoutGrid, Rows3, Search } from "@lucide/svelte";
   import { api, call, describe } from "#lib/api/client.ts";
   import { busy, busyPoll, fetchDrafts, fetchServices, fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
-  import Help from "#lib/components/Help.svelte";
-  import Pill from "#lib/components/Pill.svelte";
-  import StackTable from "#lib/components/StackTable.svelte";
+  import RowMenu from "#lib/components/RowMenu.svelte";
+  import StackGrid from "#lib/components/StackGrid.svelte";
   import { ago } from "#lib/format.ts";
-  import { health, servicesOf } from "#lib/stacks.ts";
+  import { health, servicesOf, shortName } from "#lib/stacks.ts";
+  import { setStacksView, stacksView } from "#lib/stacksView.svelte.ts";
 
   const client = useQueryClient();
   const stacks = createQuery(() => ({
@@ -28,20 +29,21 @@
     return [
       `${list.length} stack${list.length === 1 ? "" : "s"}`,
       `${svcs.length} service${svcs.length === 1 ? "" : "s"}`,
-      down > 0 ? `${down} service${down === 1 ? "" : "s"} down` : "",
+      down > 0 ? `${down} down` : "",
     ].filter(Boolean);
   });
 
-  /** The updates strip: what is waiting and what can go without approval. */
-  const updates = $derived.by(() => {
-    const installed = list.filter((s) => s.generation > 0);
-    const waiting = installed.filter((s) => s.update_state !== "up_to_date");
-    return {
-      waiting: waiting.length,
-      approval: waiting.filter((s) => s.update_state === "needs_approval").length,
-      ready: waiting.filter((s) => s.update_state === "commits_available" && s.variables_ready && !busy(s)).length,
-      checkedAt: installed.reduce<string | null>((max, s) => (!max || s.fetched.at > max ? s.fetched.at : max), null),
-    };
+  /** Stacks whose update needs no approval and can go now. */
+  const ready = $derived(list.filter((s) => s.generation > 0 && s.update_state === "commits_available" && s.variables_ready && !busy(s)).length);
+
+  let query = $state("");
+  /** A stack matches by its name, its label or one of its services. */
+  const shown = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((s) =>
+      [s.name, s.label ?? "", ...servicesOf(services.data, s.name).map((u) => shortName(s.name, u.name))].some((t) => t.toLowerCase().includes(q)),
+    );
   });
 
   let error = $state("");
@@ -58,6 +60,15 @@
     onError: (e: unknown) => (error = `Update: ${describe(e)}`),
     onSettled: refresh,
   }));
+
+  const menu = $derived([
+    {
+      label: ready > 0 ? `Update ${ready} stack${ready === 1 ? "" : "s"}` : "Update stacks",
+      disabled: ready === 0 || updateAll.isPending || anyBusy,
+      title: ready === 0 ? "No update can go without approval" : anyBusy ? "A stack is busy" : undefined,
+      onSelect: () => updateAll.mutate(),
+    },
+  ]);
 </script>
 
 <svelte:head><title>Stacks · Homelab-ngx</title></svelte:head>
@@ -70,34 +81,37 @@
   <a class="btn btn-primary" href="/stacks/add">Add stack</a>
 </div>
 
-{#if stacks.data && list.some((s) => s.generation > 0)}
-  <section aria-label="Updates" class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-line bg-surface px-3 py-2">
-    <h2 class="label">
-      <Help label="Updates">
-        Update installs the new version of each stack that asks for no new access, one at a time. A stack that does not come up
-        healthy returns to its previous version.
-      </Help>
-    </h2>
-    {#if updates.waiting > 0}
-      <Pill tone="info">{updates.waiting} waiting</Pill>
-    {:else}
-      <Pill tone="ok">current</Pill>
-    {/if}
-    <p class="min-w-40 flex-1 text-muted">
-      {#if updates.approval > 0}{updates.approval} need{updates.approval === 1 ? "s" : ""} approval ·{/if}
-      checked {ago(updates.checkedAt)}
-    </p>
-    <div class="flex flex-wrap items-center gap-2">
-      <button type="button" class="btn" disabled={check.isPending} onclick={() => check.mutate()}>
-        {check.isPending ? "Checking…" : "Check now"}
+{#if stacks.data && list.length > 0}
+  <div class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+    <label class="relative flex min-w-0 flex-[1_1_18rem] items-center">
+      <Search class="pointer-events-none absolute left-2.5 size-4 text-muted" aria-hidden="true" />
+      <input type="search" class="input pl-8" placeholder="Search {list.length} stacks" aria-label="Search stacks" bind:value={query} />
+    </label>
+    <div role="group" aria-label="Card detail" class="inline-flex overflow-hidden rounded-md border border-line">
+      <button
+        type="button"
+        aria-pressed={stacksView.view === "minimal"}
+        onclick={() => setStacksView("minimal")}
+        class="btn rounded-none border-0 focus-visible:-outline-offset-2 {stacksView.view === 'minimal' ? 'bg-accent-soft text-accent hover:bg-accent-soft' : ''}"
+      >
+        <LayoutGrid class="size-3.5" aria-hidden="true" /><span class="max-sm:sr-only">Minimal</span>
       </button>
-      {#if updates.ready > 0}
-        <button type="button" class="btn btn-primary" disabled={updateAll.isPending || anyBusy} onclick={() => updateAll.mutate()}>
-          Update {updates.ready} stack{updates.ready === 1 ? "" : "s"}
-        </button>
-      {/if}
+      <button
+        type="button"
+        aria-pressed={stacksView.view === "detailed"}
+        onclick={() => setStacksView("detailed")}
+        class="btn rounded-none border-y-0 border-r-0 focus-visible:-outline-offset-2 {stacksView.view === 'detailed' ? 'bg-accent-soft text-accent hover:bg-accent-soft' : ''}"
+      >
+        <Rows3 class="size-3.5" aria-hidden="true" /><span class="max-sm:sr-only">Detailed</span>
+      </button>
     </div>
-  </section>
+    <div class="flex items-center gap-2">
+      <button type="button" class="btn" disabled={check.isPending} onclick={() => check.mutate()}>
+        {check.isPending ? "Checking…" : "Check for updates"}
+      </button>
+      <RowMenu name="Stacks" items={menu} vertical />
+    </div>
+  </div>
 {/if}
 
 {#if error}
@@ -126,8 +140,10 @@
       <p>No stacks yet.</p>
       <a class="btn btn-primary mt-3" href="/stacks/add">Add stack</a>
     </div>
+  {:else if stacks.data && shown.length === 0}
+    <p class="rounded-lg border border-line bg-surface px-4 py-3 text-muted">No stack matches.</p>
   {:else if stacks.data}
-    <StackTable stacks={stacks.data} services={services.data ?? []} />
+    <StackGrid stacks={shown} services={services.data ?? []} view={stacksView.view} />
   {:else}
     <p class="text-muted">Loading…</p>
   {/if}

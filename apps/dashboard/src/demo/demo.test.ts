@@ -25,8 +25,10 @@ const fill: Record<string, string> = { name: "photos", id: "1", run: "100", unit
 describe("the demo's API", () => {
   it("answers every GET the daemon's document describes", async () => {
     const d = demo();
-    // Paths the demo answers 404 on purpose, and the event stream (metrics.ts).
-    const none = new Set(["/drafts/{name}", "/security/audits/{id}", "/metrics/stream"]);
+    // Paths the demo answers 404 on purpose, the event stream (metrics.ts),
+    // and icons: an <img> never goes through the demo's fetch, so the page
+    // draws its letter tiles.
+    const none = new Set(["/drafts/{name}", "/security/audits/{id}", "/metrics/stream", "/stacks/{name}/icon"]);
     for (const [path, ops] of Object.entries(openapi.paths)) {
       if (!("get" in ops) || none.has(path)) continue;
       const url = path.replace(/{(\w+)}/g, (_, n: string) => fill[n] ?? "1").replace("/stack-updates/1", "/stack-updates/1000");

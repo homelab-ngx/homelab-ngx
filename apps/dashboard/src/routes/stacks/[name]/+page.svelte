@@ -1,23 +1,40 @@
 <script lang="ts">
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
+  import { ExternalLink, Play, RotateCcw, Snowflake, Square } from "@lucide/svelte";
+  import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { api, call, describe, type Stack } from "#lib/api/client.ts";
-  import { busy, busyPoll, fetchDraft, fetchDrafts, fetchServices, fetchStack, fetchUpdates, idlePoll, keys } from "#lib/api/queries.ts";
+  import { busy, busyPoll, fetchServices, fetchStack, fetchUpdates, idlePoll, keys } from "#lib/api/queries.ts";
   import Disclosure from "#lib/components/Disclosure.svelte";
-  import HistoryDialog from "#lib/components/HistoryDialog.svelte";
-  import LogsDialog from "#lib/components/LogsDialog.svelte";
+  import ForkStack from "#lib/components/ForkStack.svelte";
   import Modal from "#lib/components/Modal.svelte";
   import OperationCard from "#lib/components/OperationCard.svelte";
   import Pill from "#lib/components/Pill.svelte";
-  import ForkStack from "#lib/components/ForkStack.svelte";
   import RenameStack from "#lib/components/RenameStack.svelte";
-  import StackTable from "#lib/components/StackTable.svelte";
   import ReviewDialog from "#lib/components/ReviewDialog.svelte";
-  import StackNixpkgs from "#lib/components/StackNixpkgs.svelte";
-  import StackMappings from "#lib/components/StackMappings.svelte";
-  import { shortRev, stamp } from "#lib/format.ts";
-  import { describeSource, draftOf, grants, logId, nixpkgsOnly, removedGrants, routeLinks, runningNixpkgs, servicesOf, sourceHref, stackTitle } from "#lib/stacks.ts";
+  import RowMenu from "#lib/components/RowMenu.svelte";
+  import ServicesTable from "#lib/components/ServicesTable.svelte";
+  import StackIcon from "#lib/components/StackIcon.svelte";
+  import Switch from "#lib/components/Switch.svelte";
+  import UpdateChip from "#lib/components/UpdateChip.svelte";
+  import { bytes, cpu, shortRev, stamp } from "#lib/format.ts";
+  import {
+    describeSource,
+    draftOf,
+    health,
+    nixpkgsLabel,
+    nixpkgsOnly,
+    removedGrants,
+    routeLinks,
+    runningNixpkgs,
+    servicesOf,
+    sourceHref,
+    stackIcon,
+    stackTitle,
+    stateLabel,
+    stateTone,
+  } from "#lib/stacks.ts";
   import { missingVariables } from "#lib/variables.ts";
 
   const name = $derived(page.params.name ?? "");
@@ -29,30 +46,24 @@
     refetchInterval: (q) => (q.state.data && busy(q.state.data) ? busyPoll : idlePoll),
   }));
   const services = createQuery(() => ({ queryKey: keys.services, queryFn: fetchServices, refetchInterval: idlePoll }));
-  /** The draft a stack runs from, for where a fork came from. */
-  const draftName = $derived(stack.data ? draftOf(stack.data.source) : null);
-  const draft = createQuery(() => ({
-    queryKey: keys.draft(draftName ?? ""),
-    queryFn: () => fetchDraft(draftName!),
-    enabled: draftName !== null,
-  }));
-  /** Drafts forked from this stack, for the Source box's Fork row. */
-  const drafts = createQuery(() => ({ queryKey: keys.drafts, queryFn: fetchDrafts, enabled: !!stack.data }));
-  const forks = $derived((drafts.data ?? []).filter((d) => stack.data && d.forked_from === stack.data.source));
+  /** The latest attempt, for the operation card's package changes; the History tab reads the same list. */
   const attempts = createQuery(() => ({
     queryKey: keys.updates(name),
     queryFn: () => fetchUpdates(name, 100),
     refetchInterval: stack.data && busy(stack.data) ? busyPoll : idlePoll,
   }));
 
+  // An old link to a service's logs (?logs=<unit>) goes to the Logs tab.
+  onMount(() => {
+    const unit = page.url.searchParams.get("logs");
+    if (unit) goto(`/stacks/${name}/logs?unit=${encodeURIComponent(unit)}`, { replaceState: true });
+  });
+
   let error = $state("");
   let removing = $state(false);
-  let historyOpen = $state(false);
   let renaming = $state(false);
   let forking = $state(false);
   let reviewing = $state<Stack | null>(null);
-  // A link to a service's logs (?logs=<unit>, from an old /logs link) opens them.
-  let logsUnit = $state<string | null>(page.url.searchParams.get("logs"));
 
   const own = $derived(servicesOf(services.data, name));
 
@@ -72,12 +83,6 @@
   const thaw = op(() => call(api.POST("/stacks/{name}/thaw", path())));
   const autostart = createMutation(() => ({
     mutationFn: (on: boolean) => call(api.PATCH("/stacks/{name}", { ...path(), body: { autostart: on } })),
-    onMutate: () => (error = ""),
-    onError: (e: unknown) => (error = describe(e)),
-    onSettled: refresh,
-  }));
-  const rollback = createMutation(() => ({
-    mutationFn: (generation: number) => call(api.POST("/stacks/{name}/rollback", { ...path(), body: { generation } })),
     onMutate: () => (error = ""),
     onError: (e: unknown) => (error = describe(e)),
     onSettled: refresh,
@@ -117,22 +122,19 @@
   }
 
   const working = $derived(
-    start.isPending ||
-      stop.isPending ||
-      update.isPending ||
-      rollback.isPending ||
-      freeze.isPending ||
-      thaw.isPending ||
-      (stack.data ? busy(stack.data) : false),
+    start.isPending || stop.isPending || update.isPending || freeze.isPending || thaw.isPending || (stack.data ? busy(stack.data) : false),
   );
 
-  /** A grant list in a few words: "4 routes, 1 folder". */
-  function accessSummary(list: { kind: string }[]): string {
-    const words: Record<string, [string, string]> = { route: ["route", "routes"], storage: ["folder", "folders"], port: ["port", "ports"], egress: ["egress rule", "egress rules"] };
-    const counts: Record<string, number> = {};
-    for (const g of list) counts[g.kind] = (counts[g.kind] ?? 0) + 1;
-    const parts = Object.entries(counts).map(([k, n]) => (words[k] ? `${n} ${words[k][n === 1 ? 0 : 1]}` : k));
-    return parts.join(", ") || "none";
+  /** The Controls card's menu: the rarer actions, Remove last. */
+  function menu(s: Stack) {
+    const draft = draftOf(s.source);
+    return [
+      { label: "Rename…", onSelect: () => (renaming = true) },
+      draft
+        ? { label: "Edit", onSelect: () => goto(`/stacks/drafts/${draft}`) }
+        : { label: "Fork…", disabled: !s.approved, onSelect: () => (forking = true) },
+      { label: "Remove…", danger: true, disabled: working, onSelect: () => (removing = true) },
+    ];
   }
 
   /** The host directories a removal leaves alone: fixed storage, the paths' values and the added folders. */
@@ -142,204 +144,174 @@
     const added = (s.folders ?? []).map((f) => f.path);
     return [...new Set([...fixed, ...chosen, ...added])];
   }
-
 </script>
-
-{#snippet maybeLink(href: string | null, text: string)}
-  {#if href}<a class="link" {href} target="_blank" rel="noreferrer">{text}</a>{:else}{text}{/if}
-{/snippet}
 
 <svelte:head><title>{stack.data ? stackTitle(stack.data) : name} · Stacks · Homelab-ngx</title></svelte:head>
 
-<p class="text-muted"><a class="link" href="/stacks">Stacks</a> /</p>
-
 {#if stack.error}
-  <p role="alert" class="mt-3 rounded-md bg-bad-soft px-3 py-2 text-bad">{describe(stack.error)}</p>
+  <p role="alert" class="rounded-md bg-bad-soft px-3 py-2 text-bad">{describe(stack.error)}</p>
 {:else if stack.data}
   {@const s = stack.data}
   {@const src = describeSource(s.source)}
   {@const href = sourceHref(s.source)}
   {@const title = stackTitle(s)}
-  {@const access = grants(s.approved?.manifest)}
-  <div class="mt-1 flex flex-wrap items-center justify-between gap-3">
-    <div>
-      <h1 class="flex items-center gap-3 text-xl font-semibold">
-        {title}
-        {#if s.frozen}<Pill tone="info">Frozen</Pill>{:else if s.running}<Pill tone="ok">Running</Pill>{:else}<Pill tone="idle">Stopped</Pill>{/if}
-      </h1>
-      {#if s.label}
-        <p class="text-muted">{s.name}</p>
-      {/if}
-      {#if routeLinks(s.approved?.manifest).length > 0}
-        <p class="mt-1 flex flex-wrap gap-x-3">
-          {#each routeLinks(s.approved?.manifest) as l (l)}
-            <a class="link" href={l} target="_blank" rel="noreferrer">{l.slice(8)}</a>
-          {/each}
-        </p>
-      {/if}
-      <label class="mt-1 flex items-center gap-2 text-muted">
-        <input type="checkbox" class="accent-accent" checked={s.autostart} disabled={autostart.isPending} onchange={(e) => autostart.mutate(e.currentTarget.checked)} />
-        Start at boot
-      </label>
-    </div>
-    <div class="flex flex-wrap gap-2">
-      <button type="button" class="btn" onclick={() => (renaming = true)}>Rename…</button>
-      <button type="button" class="btn" onclick={() => (historyOpen = true)}>History</button>
-      {#if draftOf(s.source)}
-        <a class="btn" href="/stacks/drafts/{draftOf(s.source)}">Edit</a>
-      {:else}
-        <button type="button" class="btn" disabled={!s.approved} onclick={() => (forking = true)}>Fork…</button>
-      {/if}
-      <button type="button" class="btn" disabled={own.length === 0} onclick={() => (logsUnit = logId(own[0]!.name))}>Logs</button>
+  {@const h = health(s, own)}
+  {@const gen = s.generations.find((g) => g.id === s.generation)}
+  <div class="flex flex-wrap items-start gap-4">
+    <div class="flex min-w-0 flex-[999_1_32rem] flex-col gap-4">
+      <section aria-labelledby="stack-h" class="overflow-hidden rounded-lg border border-line bg-surface">
+        <div class="flex flex-col gap-3.5 p-5">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <StackIcon src={stackIcon(s)} name={title} size="lg" />
+            <div class="flex flex-wrap items-center gap-3">
+              <UpdateChip stack={s} />
+              <Pill tone={stateTone[h.state]}>
+                {stateLabel[h.state]}{#if s.running && h.active < h.total}&nbsp;<span class="text-muted">{h.active}/{h.total}</span>{/if}
+              </Pill>
+            </div>
+          </div>
+          <div>
+            <h1 id="stack-h" class="text-xl font-semibold">{title}</h1>
+            <p class="mt-0.5 text-muted">
+              {#if s.label}{s.name} ·{/if}
+              {#if gen}version {shortRev(gen.rev)} · built {stamp(gen.built_at)} ·{/if}
+              {#if href.repo}<a class="link" href={href.repo} target="_blank" rel="noreferrer">{src.repo}</a>{:else}{src.repo}{/if}
+            </p>
+          </div>
+          {#if routeLinks(s.approved?.manifest).length > 0}
+            <ul class="flex flex-wrap gap-1.5" aria-label="Addresses">
+              {#each routeLinks(s.approved?.manifest) as l (l)}
+                <li>
+                  <a
+                    href={l}
+                    target="_blank"
+                    rel="noreferrer"
+                    class="inline-flex items-center gap-1.5 rounded-sm border border-line bg-sunken px-1.5 text-xs text-fg hover:border-accent hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    >{l.slice(8)}<ExternalLink class="size-3 text-muted" aria-hidden="true" /></a
+                  >
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+        {#if s.update_state !== "up_to_date" && s.generation > 0 && !busy(s)}
+          {@const dropped = removedGrants(s).length}
+          <div class="border-t border-accent/40 bg-accent-soft px-5 py-2.5">
+            <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+              <p class="min-w-48 flex-1">
+                <span class="font-semibold">Update ready</span>
+                {#if s.update_state === "commits_available" && nixpkgsOnly(s)}
+                  <span class="text-muted">{shortRev(runningNixpkgs(s))} → {shortRev(s.nixpkgs_rev)} · new NixOS packages</span>
+                {:else}
+                  <span class="text-muted">
+                    {shortRev(s.approved?.rev)} → {shortRev(s.fetched.rev)} · {s.commits.length || "new"} commit{s.commits.length === 1 ? "" : "s"} ·
+                    {s.update_state === "needs_approval" ? "asks for new access" : dropped > 0 ? "less access" : "no new access"}
+                  </span>
+                {/if}
+              </p>
+              {#if s.update_state === "needs_approval"}
+                <button type="button" class="btn btn-primary" onclick={() => (reviewing = s)}>Review…</button>
+              {:else}
+                <button type="button" class="btn btn-primary" disabled={working || !s.variables_ready} onclick={() => update.mutate()}>Update</button>
+              {/if}
+            </div>
+            {#if s.commits.length > 0 && s.update_state === "commits_available"}
+              <Disclosure label="What changed" class="mt-1.5">
+                <ul class="text-xs">
+                  {#each s.commits as c (c.rev)}
+                    <li class="truncate"><span class="text-muted">{shortRev(c.rev)}</span> {c.subject}</li>
+                  {/each}
+                </ul>
+              </Disclosure>
+            {/if}
+          </div>
+        {/if}
+      </section>
+
       {#if s.frozen}
-        <button type="button" class="btn btn-primary" disabled={working} onclick={() => thaw.mutate()}>Thaw</button>
-        <button type="button" class="btn" disabled={working} onclick={() => stop.mutate()}>Stop</button>
-      {:else if s.running}
-        <button type="button" class="btn" disabled={working} onclick={() => freeze.mutate()}>Freeze</button>
-        <button type="button" class="btn" disabled={working} onclick={restart}>Restart</button>
-        <button type="button" class="btn" disabled={working} onclick={() => stop.mutate()}>Stop</button>
-      {:else}
-        <button type="button" class="btn" disabled={working || !s.approved} onclick={() => start.mutate()}>Start</button>
+        <p role="status" class="rounded-md bg-accent-soft px-3 py-2 text-accent">Frozen. Its addresses don't answer, and a reboot loses its memory.</p>
       {/if}
-      <button type="button" class="btn btn-danger" disabled={working} onclick={() => (removing = true)}>Remove…</button>
-    </div>
-  </div>
-
-  {#if s.frozen}
-    <p role="status" class="mt-4 rounded-md bg-accent-soft px-3 py-2 text-accent">Frozen. Its addresses don't answer, and a reboot loses its memory.</p>
-  {/if}
-
-  {#if s.update_state !== "up_to_date" && s.generation > 0 && !busy(s)}
-    {@const fresh = s.new_grants.length}
-    {@const dropped = removedGrants(s).length}
-    <section aria-label="Update" class="mt-4 rounded-lg border border-accent/40 bg-accent-soft px-3 py-2.5">
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <p class="min-w-48 flex-1">
-          <span class="font-semibold">Update ready</span>
-          {#if s.update_state === "commits_available" && nixpkgsOnly(s)}
-            <span class="text-muted">{shortRev(runningNixpkgs(s))} → {shortRev(s.nixpkgs_rev)}</span>
-            <span class="text-muted">· new NixOS packages</span>
+      {#if error}
+        <p role="alert" class="rounded-md bg-bad-soft px-3 py-2 text-bad">{error}</p>
+      {/if}
+      {#if !s.variables_ready}
+        {@const missing = missingVariables(s)}
+        <p role="alert" class="rounded-md bg-warn-soft px-3 py-2 text-warn">
+          {#if missing.length}
+            Needs values before it can update: {missing.join(", ")}. <a class="underline" href="/stacks/{name}/configuration">Configuration</a>
           {:else}
-          <span class="text-muted">{shortRev(s.approved?.rev)} → {shortRev(s.fetched.rev)}</span>
-          <span class="text-muted">
-            · {s.commits.length || "new"} commit{s.commits.length === 1 ? "" : "s"} ·
-            {s.update_state === "needs_approval"
-              ? "asks for new access"
-              : dropped > 0
-                ? "less access"
-                : "no new access"}
-          </span>
+            The variables could not be read. See the daemon's log.
           {/if}
         </p>
-        {#if s.update_state === "needs_approval"}
-          <button type="button" class="btn btn-primary" onclick={() => (reviewing = s)}>Review…</button>
+      {/if}
+      {#if s.restart_needed}
+        <div role="status" class="flex flex-wrap items-center justify-between gap-2 rounded-md bg-warn-soft px-3 py-2 text-warn">
+          <p>Restart to apply changed values, folders or API access.</p>
+          <button type="button" class="btn btn-sm" disabled={working} onclick={restart}>Restart</button>
+        </div>
+      {/if}
+      {#if s.operation && (busy(s) || s.operation.error)}
+        <OperationCard stack={s} attempt={attempts.data?.[0]} />
+      {/if}
+
+      <section aria-labelledby="services-h" class="overflow-hidden rounded-lg border border-line bg-surface">
+        <div class="flex items-baseline gap-2 px-4 py-3">
+          <h2 id="services-h" class="font-semibold">Services</h2>
+          {#if h.total > 0}<span class="text-muted">{h.active} of {h.total} active</span>{/if}
+        </div>
+        <ServicesTable stack={s} services={own} />
+      </section>
+    </div>
+
+    <aside aria-labelledby="controls-h" class="card flex min-w-0 flex-[1_1_18rem] flex-col gap-4">
+      <div class="flex items-center justify-between gap-2">
+        <h2 id="controls-h" class="font-semibold">Controls</h2>
+        <RowMenu name={title} items={menu(s)} vertical />
+      </div>
+      <div class="flex flex-wrap gap-2">
+        {#if s.frozen}
+          <button type="button" class="btn btn-primary" disabled={working} onclick={() => thaw.mutate()}><Play class="size-3.5" aria-hidden="true" />Thaw</button>
+          <button type="button" class="btn" disabled={working} onclick={() => stop.mutate()}><Square class="size-3.5" aria-hidden="true" />Stop</button>
+        {:else if s.running}
+          <button type="button" class="btn" disabled={working} onclick={restart}><RotateCcw class="size-3.5" aria-hidden="true" />Restart</button>
+          <button type="button" class="btn" disabled={working} onclick={() => stop.mutate()}><Square class="size-3.5" aria-hidden="true" />Stop</button>
+          <button type="button" class="btn" disabled={working} onclick={() => freeze.mutate()}><Snowflake class="size-3.5" aria-hidden="true" />Freeze</button>
         {:else}
-          <button type="button" class="btn btn-primary" disabled={working || !s.variables_ready} onclick={() => update.mutate()}>Update</button>
+          <button type="button" class="btn btn-primary" disabled={working || !s.approved} onclick={() => start.mutate()}><Play class="size-3.5" aria-hidden="true" />Start</button>
         {/if}
       </div>
-      {#if s.commits.length > 0 && s.update_state === "commits_available"}
-        <Disclosure label="What changed" class="mt-1.5">
-          <ul class="text-xs">
-            {#each s.commits as c (c.rev)}
-              <li class="truncate"><span class="text-muted">{shortRev(c.rev)}</span> {c.subject}</li>
-            {/each}
-          </ul>
-        </Disclosure>
-      {/if}
-    </section>
-  {/if}
 
-  {#if error}
-    <p role="alert" class="mt-4 rounded-md bg-bad-soft px-3 py-2 text-bad">{error}</p>
-  {/if}
+      <div class="-mx-4 flex flex-col gap-3 border-y border-line px-4 py-4">
+        <div class="flex items-center justify-between gap-3">
+          <span>Start at boot</span>
+          <Switch checked={s.autostart} label="Start at boot" disabled={autostart.isPending} onChange={(on) => autostart.mutate(on)} />
+        </div>
+        <div class="flex items-center justify-between gap-3">
+          <span class="text-muted">Update automatically</span>
+          <Switch checked={false} label="Update automatically" disabled title="Not available yet" />
+        </div>
+      </div>
 
-  {#if !s.variables_ready}
-    {@const missing = missingVariables(s)}
-    <p role="alert" class="mt-4 rounded-md bg-warn-soft px-3 py-2 text-warn">
-      {#if missing.length}
-        Needs values before it can update: {missing.join(", ")}.
-      {:else}
-        The variables could not be read. See the daemon's log.
-      {/if}
-    </p>
-  {/if}
-
-  {#if s.restart_needed}
-    <div role="status" class="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-md bg-warn-soft px-3 py-2 text-warn">
-      <p>Restart to apply changed values, folders or API access.</p>
-      <button type="button" class="btn btn-sm" disabled={working} onclick={restart}>Restart</button>
-    </div>
-  {/if}
-
-  {#if s.operation && (busy(s) || s.operation.error)}
-    <div class="mt-4"><OperationCard stack={s} attempt={attempts.data?.[0]} /></div>
-  {/if}
-
-  <section class="mt-5" aria-labelledby="services-h">
-    <h2 id="services-h" class="mb-2 font-semibold">Services</h2>
-    <StackTable stacks={[s]} services={services.data ?? []} expandAll />
-  </section>
-
-  <div class="mt-5"><StackMappings stack={s} /></div>
-
-  <!-- Looked at rarely: closed until opened, and an opened one stays open on this device. -->
-  <section class="card mt-4" aria-label="Source">
-    <Disclosure section label="Source" summary={src.repo} remember="stack-source">
-      <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5">
-        <dt class="text-muted">{src.local ? "Folder" : "Repo"}</dt>
-        <dd class="break-all">{@render maybeLink(href.repo, src.repo)}</dd>
-        <dt class="text-muted">Branch</dt>
-        <dd class="break-all">{@render maybeLink(href.branch, src.branch)}</dd>
-        <dt class="text-muted">Pinned</dt>
-        <dd>{s.approved ? `${shortRev(s.approved.rev)} · ${stamp(s.approved.at)}` : "nothing approved"}</dd>
-        {#if draft.data?.forked_from}
-          <dt class="text-muted">Forked from</dt>
-          <dd class="break-all">
-            {@render maybeLink(sourceHref(draft.data.forked_from).repo, describeSource(draft.data.forked_from).repo)} · {shortRev(draft.data.forked_rev ?? "")}
-          </dd>
+      <dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 tabular-nums">
+        <dt class="text-muted">CPU</dt>
+        <dd>{s.running ? cpu(s.usage?.cpu_percent) : "–"}</dd>
+        <dt class="text-muted">Memory</dt>
+        <dd>{s.running ? bytes(s.usage?.memory_bytes) : "–"}</dd>
+        {#if s.address}
+          <dt class="text-muted">Address</dt>
+          <dd class="break-all">{s.address}</dd>
         {/if}
-        <dt class="text-muted">Fork</dt>
-        <dd>
-          {#if forks.length}
-            <ul>
-              {#each forks as f (f.name)}<li><a class="link" href="/stacks/drafts/{f.name}">{f.name}</a></li>{/each}
-            </ul>
-          {:else}
-            <button type="button" class="link" disabled={!s.approved} onclick={() => (forking = true)}>Fork…</button>
-          {/if}
-        </dd>
+        <dt class="text-muted">Branch</dt>
+        <dd class="break-words">{src.branch}{#if s.approved} · pinned {shortRev(s.approved.rev)}{/if}</dd>
+        {#if s.nixpkgs}
+          <dt class="text-muted">NixOS</dt>
+          <dd>{nixpkgsLabel(s.nixpkgs)}</dd>
+        {/if}
       </dl>
-      {#if s.source_dirty}
-        <p class="mt-3 text-warn">Uncommitted changes in the folder are not installed.</p>
-      {/if}
-    </Disclosure>
-  </section>
+    </aside>
+  </div>
 
-  <section class="card mt-4" aria-label="Approved grants">
-    <Disclosure section label="Approved grants" summary={accessSummary(access)} remember="stack-access">
-      {#snippet help()}
-        What this stack may reach outside its own container: host folders, web addresses, ports, the GPU. Each was approved here.
-        Anything not listed is blocked, including the LAN and Tailscale.
-      {/snippet}
-      <ul class="divide-y divide-line">
-        {#each access as g (g.kind + g.detail)}
-          <li class="flex gap-3 py-1.5">
-            <span class="label w-20 shrink-0 pt-0.5">{g.kind}</span>
-            <span class="break-all">{g.detail}</span>
-          </li>
-        {/each}
-      </ul>
-    </Disclosure>
-  </section>
-
-  <div class="mt-4"><StackNixpkgs stack={s} /></div>
-
-  <Modal
-    open={removing}
-    onOpenChange={(o) => (removing = o)}
-    title="Remove {title}?"
-    description="Data stays on this host."
-  >
+  <Modal open={removing} onOpenChange={(o) => (removing = o)} title="Remove {title}?" description="Data stays on this host.">
     <div class="space-y-3">
       <div>
         <p class="label">Deleted</p>
@@ -357,19 +329,9 @@
     {/snippet}
   </Modal>
 
-  <HistoryDialog
-    stack={s}
-    attempts={attempts.data ?? []}
-    open={historyOpen}
-    onClose={() => (historyOpen = false)}
-    {working}
-    onRollback={(g) => rollback.mutate(g)}
-  />
-  <LogsDialog stack={s.name} {title} services={own} unit={logsUnit} onClose={() => (logsUnit = null)} />
   <ReviewDialog stack={reviewing} onClose={() => (reviewing = null)} />
   {#if renaming}<RenameStack stack={s} onClose={() => (renaming = false)} />{/if}
   {#if forking}<ForkStack stack={s} onClose={() => (forking = false)} />{/if}
 {:else}
-  <p class="mt-3 text-muted">Loading…</p>
+  <p class="text-muted">Loading…</p>
 {/if}
-

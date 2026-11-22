@@ -5,7 +5,8 @@ import { chromium } from "playwright-core";
 import { DEMO_URL, serveDemo } from "./demo-server.mjs";
 
 const pages = [
-  "/", "/stacks", "/stacks/photos", "/stacks/home", "/stacks/add", "/storage", "/storage/browse", "/storage/browse?path=/media",
+  "/", "/stacks", "/stacks/photos", "/stacks/home", "/stacks/photos/configuration", "/stacks/photos/logs",
+  "/stacks/photos/history", "/stacks/photos/access", "/stacks/add", "/storage", "/storage/browse", "/storage/browse?path=/media",
   "/backups", "/backups/1", "/notifications", "/settings", "/settings/network", "/settings/updates", "/settings/security",
   "/settings/assistant", "/settings/logs", "/?installer",
 ];

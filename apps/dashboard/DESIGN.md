@@ -346,7 +346,7 @@ A card of values to fill in (a stack's variables) is built like a table. Groups 
 
 ### Cards / Containers
 - **Card:** 8px radius, 1px line, surface, 16px padding; used for Setup sections, operation progress and empty states.
-- **Strip / Banner:** same radius and border at 12px by 8-10px padding. The updates strip is surface; the update-ready banner is accent-soft with a 40% accent border. The Backups "Not backed up" strip is the calm form of a gap: a surface strip that opens with a warn pill, then one sentence with its help tip, then a select for where the folders go and a default "Review…" button; the folders are listed under it in 13px muted, the stack name in mono. The page itself stays untinted, and the strip is absent when nothing is missing.
+- **Strip / Banner:** same radius and border at 12px by 8-10px padding. The update-ready band at the foot of a stack's main card is accent-soft with a 40% accent line above it. The Backups "Not backed up" strip is the calm form of a gap: a surface strip that opens with a warn pill, then one sentence with its help tip, then a select for where the folders go and a default "Review…" button; the folders are listed under it in 13px muted, the stack name in mono. The page itself stays untinted, and the strip is absent when nothing is missing.
 - **Quiet empty line:** where a section has nothing to show, one muted sentence in the strip's box (8px radius, 1px line, surface, 16px by 12px).
 - **Alerts:** 6px radius, soft tint with strong text, 12px by 8px, role alert or status.
 
@@ -371,7 +371,7 @@ The one way to fold content: `Disclosure.svelte`, a native details element with 
 Unraid's model. The page carries no explanation; a label that has help is a button (`Help.svelte`), and clicking it unfolds the help under it: body text, muted, behind a 2px accent rule on the left. The header has a Help switch (also F1) that unfolds every help block on the page; it is remembered on the device. The label shows a dotted underline on hover and a help cursor, nothing at rest. Help text says what the thing does in up to about 30 words. Nothing a person must know to act safely lives only in help.
 
 ### Dialog
-bits-ui Dialog, centered, 8px radius, 20px padding, 16px internal gap, max 85vh with the body scrolling. 32rem by default, 56rem when wide (logs, history, review). Close is always first in a right-aligned action row; a primary or danger action follows. A locked dialog is the exception: it has no Close button, and Escape or a click outside does nothing, so it ends only through its own action. It is used once, for a restic password the server has just generated, which closes on "I have saved it"; asking to see a stored password opens the same dialog unlocked. A form in a dialog gets an id and its submit button sits in that action row with `form="<id>"`, so Enter and the button do the same thing.
+bits-ui Dialog, centered, 8px radius, 20px padding, 16px internal gap, max 85vh with the body scrolling. 32rem by default, 56rem when wide (a review, a backup's runs). Close is always first in a right-aligned action row; a primary or danger action follows. A locked dialog is the exception: it has no Close button, and Escape or a click outside does nothing, so it ends only through its own action. It is used once, for a restic password the server has just generated, which closes on "I have saved it"; asking to see a stored password opens the same dialog unlocked. A form in a dialog gets an id and its submit button sits in that action row with `form="<id>"`, so Enter and the button do the same thing.
 
 ### Dropdown Menu
 bits-ui DropdownMenu for a surface's rarer controls ("Manage pool"), opened from a default button with a 14px chevron-down, so the page header shows state, not a row of switches. Portaled, end-aligned, 6px offset; 6px radius, 1px line, surface, 4px padding, 13px, min 15rem, shadow-lg. Items are 10px by 6px at 4px radius and highlight to sunken. A setting is a checkbox item with a drawn toggle on the right (28 by 16px, fully round, accent when on, line when off, a 12px surface knob). The same toggle stands alone as a switch at the end of a ledger row (a backup turned on or off), with a spoken name and the 2px accent focus outline. A separator (1px line, 4px margin) sets the destructive item apart at the end: bad text, highlighting to bad-soft, an ellipsis, and a confirm dialog.
@@ -382,8 +382,20 @@ A space figure, then the bar, then its legend, inside a card. The figure is mono
 ### Chip Link
 A stack name that links to that stack, used where a row lists who uses it: 12px, 4px radius, 1px line, sunken, 6px side padding; hover turns border and text accent. Several wrap with a 4px gap.
 
-### Health Table (signature)
-The Stacks overview: one row per stack with a chevron toggle, a state pill with active/total count, version (mono), update cell (pill plus a small action), CPU and memory (right-aligned, tabular), links, and Open. Expanding reveals service sub-rows on sunken with their own pills and row actions. A stack with a failed service is forced open and its toggle disabled, so failure is visible without a click.
+### App Grid (signature)
+The Stacks overview: a grid of cards, 18rem at least, as many to a row as fit. Above it sit a search field (name, label and service names), a Minimal / Detailed switch remembered on the device, a default "Check for updates" button and a vertical ellipsis menu holding "Update N stacks". "Add stack" is the page's one primary button, in the header. The whole card is one link to the stack's page and holds no buttons: the icon (40px) and title, the name under it (with CPU and memory in Detailed), the services, and a footer with the stack's status mark and word, an active/total count while a service is down, then the Update Chip. Minimal shows the services as a strip of 20px icons: a failed service carries a cross badge, a starting one a diamond, and a stopped or disabled one is dimmed. Detailed lists one row per service (icon, name, mark and word), a failed row on bad-soft. A disabled service is left out of the count.
+
+An icon is the one the stack's manifest names, served by the daemon (`/api/stacks/{name}/icon`, `?unit=` for a service). Without one, or when it fails to load, a tile on sunken shows the first letter of the name.
+
+### Update Chip
+The one status mark set on a tint: a fully round chip, 12px text, a 14px icon. "update ready" is accent on accent-soft with a circled arrow; "needs approval" is warn on warn-soft with a shield. It sits at the end of a stack's card and beside the state on its page, and only on an installed stack.
+
+### Stack Page
+A stack's page is tabs, each its own address: Info, Configuration, Logs, History and Access. The tab bar holds a back arrow to Stacks, the small icon and title, then the tabs as links (an icon and a word, a 2px accent underline on the current one). Configuration carries a warn mark while a value is missing.
+
+Info is two columns from 1024px, one below. On the left, the main card: the 64px icon, the Update Chip and the state, the title as h1, one muted line (name, version, build date, the source as a link), the stack's addresses as chips, and, when an update waits, an accent-soft band across the card's foot with the change, "What changed" in a fold, and Update or Review…. The banners and the operation card follow, then the Services card. On the right, the Controls card: Restart, Stop and Freeze (Thaw or Start when those apply), a vertical ellipsis menu (Rename…, Fork… or Edit, Remove… last), the "Start at boot" and "Update automatically" switches, then a value list of CPU, memory, address, branch and NixOS. "Update automatically" is drawn disabled until the daemon can do it.
+
+Logs is the Log Pane inline, opened on `?unit=`. History is the versions table, its rollbacks and each attempt's log. Access holds the approved grants, the source and the NixOS version.
 
 ### Run Strip (signature)
 A backup's last 14 days as a row of marks, one per calendar day, oldest first; when a day had several runs the worst result sets the mark. Each mark is a small column (20 by 10px in a ledger row, 36 by 16px on the backup's page, a step narrower below 640px; 4px radius, 3-4px apart) in the soft tint of its state, with a strong fill rising from the bottom. The fill height is the state:
@@ -419,7 +431,7 @@ The Updates page (the core host) opens with one card, "Version". Its first line 
 The one full-width page (`Shell` `wide`): a light VS Code layout filling the viewport from 1280px. A sunken title bar holds the path and the toolbar (Save, Check, Build, Install, and a Row Menu with Delete); the file list (mono, folders first, a dot on a changed file, New file in its header, Rename and Delete in each file's Row Menu) sits left of a borderless editor on the page surface, under one tab naming the open file; one Output panel under it shows what Check and Build said; the assistant is a side bar opened from an activity bar on the right edge (remembered per browser); a sunken status bar ends it. Below 1280px the parts stack in that order, the activity bar first. The editors help as you type: the manifest tab completes fields and values and explains them on hover from the manifest's schema, and marks Check's problems on their field with a wavy underline in the fault colour; a Nix file does the same from nixd (NixOS options and packages), whose state the status bar names ("Nix: nixd", "starting…", "off" with the reason on hover).
 
 ### Log Pane
-Filter row (service select, search, level select, Follow checkbox, Refresh), then a sunken, bordered, 6px-radius pane in mono 12px with 20px line height: muted timestamp, a fixed-width level word in its status color, the message with ANSI colors mapped onto the token hues. 60vh tall inside a dialog. Older lines load on demand.
+Filter row (service select, search, level select, Follow checkbox, Refresh), then a sunken, bordered, 6px-radius pane in mono 12px with 20px line height: muted timestamp, a fixed-width level word in its status color, the message with ANSI colors mapped onto the token hues. 60vh tall in a dialog or a tab. Older lines load on demand.
 
 ## Do's and Don'ts
 
@@ -427,7 +439,7 @@ Filter row (service select, search, level select, Follow checkbox, Refresh), the
 - **Do** put state before controls: the table or pill first, the action at the row's end or in the page header.
 - **Do** show status as the mark and word, picking the tone by meaning (ok, warn, bad, info, idle); alerts keep the soft tint.
 - **Do** set names, paths and revisions in the body font and give numeric columns tabular figures.
-- **Do** open long or focused content (logs, history, review) in a wide Modal rather than lengthening the page.
+- **Do** open long or focused content (a review, a backup's runs) in a wide Modal, and give a stack's logs and history their own tab.
 - **Do** put the explanation in the label's Help.
 - **Do** hide detail columns below md (`max-md:hidden`) and keep the table's min-width to md and up; move a column a phone still needs under the primary cell instead of hiding it.
 - **Do** put a surface's rare or destructive controls in a header dropdown menu, the destructive item last behind a separator.
