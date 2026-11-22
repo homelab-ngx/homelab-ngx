@@ -129,6 +129,22 @@ sudo dd if=homelab-ngx_VERSION.img of=/dev/sdX bs=4M conv=fsync status=progress
 
 `homelab auth reset` on the host removes a forgotten password.
 
+## Coding agents on the host
+
+Claude Code, Codex and opencode can run on the host, as root over SSH.
+Install one with Nix; the image has no other package manager:
+
+```bash
+nix profile install nixpkgs#opencode      # or nixpkgs#codex
+NIXPKGS_ALLOW_UNFREE=1 nix profile install --impure nixpkgs#claude-code
+```
+
+The core ships them a guide to the host, its stacks and their logs, in
+`/usr/share/homelab/agent`. The daemon links it into each agent's system
+config under `/etc`, so an agent reads it with no setup, and it changes with
+each core update. It covers running stacks and reading logs, not changing
+the image.
+
 ## Verification
 
 `SHA256SUMS` lists each release's files and is signed with the release key,

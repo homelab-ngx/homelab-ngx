@@ -15,8 +15,9 @@
 #      version, so the same root partition UUIDs and labels), running from
 #      the stick alone; it erases a blank disk and installs onto it
 #   4. that disk boots alone with the core merged, the installer's host name
-#      and a machine ID of its own, asking for a login; a domain set through
-#      the host settings serves the dashboard over HTTPS
+#      and a machine ID of its own, asking for a login; the coding agents'
+#      guidance is linked into /etc; a domain set through the host settings
+#      serves the dashboard over HTTPS
 #   5. a bcachefs pool is formatted and mounted through the daemon, at
 #      /var/mnt/pool; unmounted, its directory takes no writes. A disk with
 #      another file system is offered as a partition and mounted by name
@@ -893,6 +894,8 @@ console_users | grep -q . && die "the installed host logs someone in on a consol
 [ "$(vssh cat /proc/sys/kernel/hostname)" = installed ] || die "the host name is $(vssh cat /proc/sys/kernel/hostname), not the installer's"
 [ "$(api http://x/api/host-settings | jq -r .host.hostname)" = installed ] || die "the installer's host name is not in the settings"
 vssh 'readlink /etc/localtime' | grep -q Europe/Stockholm || die "the installer's time zone is not set"
+vssh 'grep -q "^# This machine runs homelab-ngx" /etc/claude-code/CLAUDE.md && grep -q "^name: homelab" /etc/claude-code/.claude/skills/homelab/SKILL.md /etc/codex/skills/homelab/SKILL.md && grep -q /usr/share/homelab/agent/brief.md /etc/codex/config.toml /etc/opencode/opencode.json && test -s "$(jq -r ".instructions[0]" /etc/opencode/opencode.json)"' ||
+  die "the coding agents' guidance is not reachable from /etc"
 ssh -q -i "$vm/key2" -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -p "$sshport" root@127.0.0.1 true ||
   die "the SSH key given to the installer does not let root in"
 vssh 'systemctl --failed --no-legend' | grep . && die "failed units" || true

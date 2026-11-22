@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -275,6 +276,53 @@ func TestImageApplier(t *testing.T) {
 	}
 	if len(f.CallsMatching("systemctl", "disable", "--runtime", "--now", tunnelUnit)) != 1 {
 		t.Error("the tunnel was not stopped")
+	}
+}
+
+// The coding agents' system locations point at the core's guidance whatever
+// the settings, and a second apply keeps them.
+func TestAgentEtc(t *testing.T) {
+	files, links := EtcFiles(Snapshot{})
+	for p, want := range map[string]string{
+		"etc/claude-code/CLAUDE.md":              "/usr/share/homelab/agent/brief.md",
+		"etc/claude-code/.claude/skills/homelab": "/usr/share/homelab/agent/skills/homelab",
+		"etc/codex/skills/homelab":               "/usr/share/homelab/agent/skills/homelab",
+	} {
+		if links[p] != want {
+			t.Errorf("link %s = %q, want %q", p, links[p], want)
+		}
+	}
+	var oc struct{ Instructions, Skills []string }
+	if err := json.Unmarshal([]byte(files["etc/opencode/opencode.json"]), &oc); err != nil ||
+		!slices.Equal(oc.Instructions, []string{"/usr/share/homelab/agent/brief.md"}) ||
+		!slices.Equal(oc.Skills, []string{"/usr/share/homelab/agent/skills"}) {
+		t.Errorf("opencode.json = %q (%v)", files["etc/opencode/opencode.json"], err)
+	}
+	if c := files["etc/codex/config.toml"]; !strings.HasPrefix(strings.SplitN(c, "\n", 2)[1], `developer_instructions = """`) ||
+		!strings.Contains(c, "/usr/share/homelab/agent/brief.md") {
+		t.Errorf("codex config.toml = %q", c)
+	}
+
+	root := t.TempDir()
+	f := cmdrunnertest.NewFake()
+	for _, p := range [][]string{{"systemd-confext"}, {"networkctl"}, {"ip"}} {
+		f.On(p...).Reply("")
+	}
+	a := &ImageApplier{Runner: f, Root: root}
+	ext := filepath.Join(root, "/var/lib/confexts/homelab-host")
+	for range 2 {
+		if err := a.etc(context.Background(), Snapshot{}); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := os.Readlink(filepath.Join(ext, "etc/codex/skills/homelab")); err != nil || got != "/usr/share/homelab/agent/skills/homelab" {
+			t.Fatalf("codex skill link = %q (%v)", got, err)
+		}
+		if _, err := os.Stat(filepath.Join(ext, "etc/opencode/opencode.json")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(f.CallsMatching("systemd-confext", "refresh")); n != 1 {
+		t.Errorf("confext refreshed %d times, want once", n)
 	}
 }
 

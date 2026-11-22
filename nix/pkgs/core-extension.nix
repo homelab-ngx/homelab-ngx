@@ -157,6 +157,15 @@ pkgs.runCommand "homelab-core-extension"
     cp -r ${../../image/core}/. $root/
     install -m644 ${defaultConfig} $root/usr/share/homelab/config.json
     ${daemonStatic}/bin/homelab-daemon check-config $root/usr/share/homelab/config.json
+    # The coding agents' guidance, at the paths the host's /etc links to
+    # (apps/core/internal/hostcfg/agents.go). A skill needs both fields.
+    agent=$root/usr/share/homelab/agent
+    for f in brief.md skills/homelab/SKILL.md skills/homelab/logs.md; do
+      [ -s "$agent/$f" ] || { echo "agent guidance lacks $f" >&2; exit 1; }
+    done
+    for k in 'name: homelab' 'description: '; do
+      sed -n '2,/^---$/p' $agent/skills/homelab/SKILL.md | grep -q "^$k" || { echo "SKILL.md frontmatter lacks $k" >&2; exit 1; }
+    done
     cat > $root/usr/lib/extension-release.d/extension-release.homelab-core <<EOF
     ID=arch
     SYSEXT_LEVEL=${sysextLevel}

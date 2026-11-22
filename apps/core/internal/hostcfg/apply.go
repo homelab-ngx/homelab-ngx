@@ -235,6 +235,7 @@ func (a *ImageApplier) caddy(ctx context.Context, s Snapshot) error {
 func EtcFiles(s Snapshot) (files map[string]string, links map[string]string) {
 	files = map[string]string{"etc/extension-release.d/extension-release.homelab-host": "ID=arch\n"}
 	links = map[string]string{}
+	agentEtc(files, links)
 	if s.Host.Hostname != "" {
 		files["etc/hostname"] = s.Host.Hostname + "\n"
 	}
