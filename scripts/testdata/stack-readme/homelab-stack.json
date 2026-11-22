@@ -9,10 +9,12 @@
   "gpu": true,
   "egress": [
     { "to": "host", "port": 5432, "proto": "tcp" },
-    { "to": "$CAMERAS", "port": 554, "proto": "tcp" }
+    { "to": "$CAMERAS", "port": 554 }
   ],
   "ports": [
-    { "port": 32400, "to": 32400, "proto": "tcp", "from": ["lan", "$CLIENTS", "10.0.0.0/8"] }
+    { "port": 32400, "to": 32400, "proto": "tcp", "from": ["lan", "$CLIENTS", "10.0.0.0/8"] },
+    { "port": 8555, "proto": "udp", "from": ["lan"] },
+    { "port": 8554, "from": ["lan"] }
   ],
   "containers": true,
   "api": ["read", "control"],

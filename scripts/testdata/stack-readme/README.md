@@ -17,6 +17,8 @@ You approve each of these before the stack starts.
 - Network: out to the host on port 5432/tcp.
 - Network: out to the addresses you give in `CAMERAS` on port 554/tcp.
 - Port: 32400/tcp on the host to port 32400 in the stack, from the LAN of the host, the addresses you give in `CLIENTS`, `10.0.0.0/8`.
+- Port: 8555/udp on the host to port 8555 in the stack, from the LAN of the host.
+- Port: 8554/tcp on the host to port 8554 in the stack, from the LAN of the host.
 - Containers: Podman runs in the stack.
 - API: the stack reads the state of the host from the daemon.
 - API: the stack starts, stops and restarts stacks and their units.

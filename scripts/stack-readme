@@ -83,9 +83,9 @@ jq -r --arg project "$project_url" '
       | "Storage: the folder in \(.name | code), at \(.mount | code) in the stack, \((.read_only // false) | mode)." ]
     + (if .gpu then ["GPU: the render devices of the host, `/dev/dri`."] else [] end)
     + [ (.egress // [])[]
-      | "Network: out to \(.to | addr) on port \(.port)/\(.proto)." ]
+      | "Network: out to \(.to | addr) on port \(.port)/\(.proto // "tcp")." ]
     + [ (.ports // [])[]
-      | "Port: \(.port)/\(.proto) on the host to port \(.to) in the stack, from \([.from[] | addr] | join(", "))." ]
+      | "Port: \(.port)/\(.proto // "tcp") on the host to port \(.to // .port) in the stack, from \([.from[] | addr] | join(", "))." ]
     + (if .containers then ["Containers: Podman runs in the stack."] else [] end)
     + [ (.api // [])[]
       | if . == "read" then "API: the stack reads the state of the host from the daemon."
