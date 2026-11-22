@@ -20,7 +20,7 @@
     variableError,
     type StackVariable,
   } from "#lib/variables.ts";
-  import { FolderOpen } from "@lucide/svelte";
+  import { FolderOpen, Trash2 } from "@lucide/svelte";
   import Disclosure from "./Disclosure.svelte";
   import Modal from "./Modal.svelte";
   import PathInput from "./PathInput.svelte";
@@ -61,9 +61,9 @@
   let drafts = $state<Record<string, string>>({});
   /** An address row's other addresses as typed, so a separator being typed is kept; its draft holds the parsed value. */
   let otherText = $state<Record<string, string>>({});
-  /** A request is out: Apply, a row's menu action, or Add. */
+  /** A request is out: Apply or a row's menu action. */
   let pending = $state(false);
-  /** Refused requests, shown under the row (or the Add form) they came from. */
+  /** Refused requests, shown under the row (or the new mapping) they came from. */
   let errors = $state<Record<string, string>>({});
   let note = $state("");
   let removing = $state<StackVariable | null>(null);
@@ -117,7 +117,7 @@
     });
   }
 
-  // The Add mapping form: one row for either kind, shown on demand.
+  // The new mapping: one row for either kind, shown on demand and saved with Apply.
   let adding = $state(false);
   let newType = $state<"env" | "path">("env");
   let newName = $state("");
@@ -132,7 +132,7 @@
   const nameBad = $derived(!!hint && newType === "path" && /^\.{1,2}$|[\/\\:]/.test(newMount.trim()));
   const newProblem = $derived(nameProblem(newName) || (stack.variables.some((v) => v.name === newName) ? `${newName} already exists.` : ""));
   const canAdd = $derived(newType === "env" ? !!newName && !newProblem && !!newValue : !!trimSlash(newPath.trim()) && !!newMount.trim() && !nameBad);
-  /** The key the Add form's errors are filed under; no variable name has a space. */
+  /** The key the new mapping's errors are filed under; no variable name has a space. */
   const NEW = "new mapping";
 
   /** /mnt/<folder name> for a host folder (with the hint, the folder name alone), or "" for none. */
@@ -196,15 +196,17 @@
     }
   }
 
-  /** Apply saves every changed row; a refused one keeps its text and shows why. */
+  /** Apply saves every changed row and the new mapping; a refused one keeps its text and shows why. */
   function apply(e: SubmitEvent) {
     e.preventDefault();
     const rows = changed.map((v) => ({ v, value: drafts[v.name]! }));
-    if (!rows.length) return;
+    const added = adding && canAdd ? newMapping() : null;
+    if (!rows.length && !added) return;
     void act(async () => {
       let saved = 0;
       for (const { v, value } of rows) if (await put(v, value)) saved++;
-      return saved ? `${saved} saved.` : "";
+      const said = added ? await added() : "";
+      return [saved ? `${saved} saved.` : "", said].filter(Boolean).join(" ");
     });
   }
 
@@ -213,6 +215,7 @@
     otherText = {};
     errors = {};
     note = "";
+    closeAdd();
   }
 
   function remove(v: StackVariable) {
@@ -229,27 +232,25 @@
   const saveFolders = (key: string, list: Schema<"StackFolderIn">[]) =>
     send(key, { name: key, kind: "path" }, () => call<Stack>(api.PUT("/stacks/{name}/folders", { params: { path: { name: stack.name } }, body: { folders: list } })));
 
-  function add(e: SubmitEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    if (!canAdd) return;
+  /** The new mapping's request, with its fields as they are now; it says what it did, or "" when refused. */
+  function newMapping(): () => Promise<string> {
     if (newType === "env") {
-      const name = newName;
-      void act(async () => {
-        if (!(await put({ name, kind: newSecret ? "secret" : "env" }, newValue, newSecret || undefined, NEW))) return "";
+      const [name, value, secret] = [newName, newValue, newSecret];
+      return async () => {
+        if (!(await put({ name, kind: secret ? "secret" : "env" }, value, secret || undefined, NEW))) return "";
         closeAdd();
         return `${name} added.`;
-      });
-    } else {
-      const path = trimSlash(newPath.trim());
-      const name = newMount.trim();
-      const mount = hint ? `${hint.under}/${name}` : name;
-      void act(async () => {
-        if (!(await saveFolders(NEW, [...folders.map(asIn), { path, mount, read_only: newReadOnly }]))) return "";
-        closeAdd();
-        return `${path} added ${hint ? `as ${name}` : `at ${mount}`}. It is bound from the next restart.`;
-      });
+      };
     }
+    const path = trimSlash(newPath.trim());
+    const name = newMount.trim();
+    const mount = hint ? `${hint.under}/${name}` : name;
+    const read_only = newReadOnly;
+    return async () => {
+      if (!(await saveFolders(NEW, [...folders.map(asIn), { path, mount, read_only }]))) return "";
+      closeAdd();
+      return `${path} added ${hint ? `as ${name}` : `at ${mount}`}. It is bound from the next restart.`;
+    };
   }
 
   function folderMenu(f: Folder): MenuItem[] {
@@ -539,7 +540,7 @@
 
     {#if adding}
       <div id="{id}-new" class="flex flex-wrap items-center gap-2 border-t border-line py-3">
-        <select class="input w-auto" aria-label="Mapping type" form="{id}-add" bind:value={newType}>
+        <select class="input w-auto" aria-label="Mapping type" bind:value={newType}>
           <option value="env">Env</option>
           <option value="path">Path</option>
         </select>
@@ -552,7 +553,6 @@
             autocomplete="off"
             spellcheck="false"
             maxlength="64"
-            form="{id}-add"
             value={newName}
             oninput={(e) => (newName = e.currentTarget.value.toUpperCase())}
           />
@@ -563,11 +563,10 @@
             placeholder="Value"
             autocomplete={newSecret ? "new-password" : "off"}
             spellcheck="false"
-            form="{id}-add"
             bind:value={newValue}
           />
           <label class="flex w-24 items-center gap-1.5">
-            <input type="checkbox" form="{id}-add" bind:checked={newSecret} />
+            <input type="checkbox" bind:checked={newSecret} />
             Secret
           </label>
         {:else}
@@ -575,7 +574,6 @@
             class="flex-[2] basis-56"
             aria-label="Host folder"
             placeholder="/var/mnt/pool/…"
-            form="{id}-add"
             bind:value={newPath}
             oninput={(e) => fillMount(e.currentTarget.value)}
             onpick={fillMount}
@@ -588,15 +586,26 @@
             autocomplete="off"
             spellcheck="false"
             maxlength={hint ? 64 : undefined}
-            form="{id}-add"
             bind:value={newMount}
           />
-          <label class="flex w-24 items-center gap-1.5">
-            <input type="checkbox" form="{id}-add" bind:checked={newReadOnly} />
-            Read-only
-          </label>
+          <!-- RO on the left, RW on the right; the pressed one is how the folder is bound. -->
+          <span class="flex" role="group" aria-label="Access">
+            {#each [{ ro: true, word: "RO", title: "Read-only" }, { ro: false, word: "RW", title: "Read and write" }] as a, i (a.word)}
+              <button
+                type="button"
+                class="btn aria-pressed:z-10 aria-pressed:border-accent aria-pressed:bg-accent-soft aria-pressed:text-accent {i ? '-ml-px rounded-l-none' : 'rounded-r-none'}"
+                aria-pressed={newReadOnly === a.ro}
+                title={a.title}
+                onclick={() => (newReadOnly = a.ro)}
+              >
+                {a.word}
+              </button>
+            {/each}
+          </span>
         {/if}
-        <button type="submit" form="{id}-add" class="btn btn-sm" disabled={pending || !canAdd}>Add</button>
+        <button type="button" class="btn btn-sm ml-auto px-1.5" aria-label="Discard the new mapping" title="Discard" onclick={closeAdd}>
+          <Trash2 class="size-4" aria-hidden="true" />
+        </button>
       </div>
       {#if newType === "env" && newProblem}<p class="text-warn">{newProblem}</p>{/if}
       {#if nameBad}<p class="text-warn">A name has no '/', '\' or ':'.</p>{/if}
@@ -609,12 +618,10 @@
         Add mapping
       </button>
       {#if note}<p role="status" class="text-muted">{note}</p>{/if}
-      <button type="button" class="btn" disabled={pending || (changed.length === 0 && Object.keys(drafts).length === 0)} onclick={reset}>Reset</button>
-      <button type="submit" class="btn btn-primary" disabled={pending || changed.length === 0}>{pending ? "Applying…" : "Apply"}</button>
+      <button type="button" class="btn" disabled={pending || (changed.length === 0 && Object.keys(drafts).length === 0 && !adding)} onclick={reset}>Reset</button>
+      <button type="submit" class="btn btn-primary" disabled={pending || (changed.length === 0 && !(adding && canAdd))}>{pending ? "Applying…" : "Apply"}</button>
     </div>
   </form>
-  <!-- The Add form's own form: its fields sit inside the form above and point here. -->
-  <form id="{id}-add" onsubmit={add}></form>
 </section>
 
 <Modal

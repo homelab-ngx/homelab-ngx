@@ -56,19 +56,19 @@ describe("StackMappings", () => {
     expect((screen.getByLabelText("New value for KEY") as HTMLInputElement).value).toMatch(/^[0-9a-f]{64}$/);
   });
 
-  it("refuses a bad or taken name in the Add form", async () => {
+  it("refuses a bad or taken name for a new mapping", async () => {
     render(Harness, { props: { client: new QueryClient(), stack: stack([variable("TZ", { value: "UTC" })]) } });
     await fireEvent.click(screen.getByRole("button", { name: "Add mapping" }));
     const name = screen.getByLabelText("New variable name");
     await fireEvent.input(screen.getByLabelText("New variable value"), { target: { value: "x" } });
     await fireEvent.input(name, { target: { value: "9lives" } });
     expect(screen.getByText("Start with a capital letter.")).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
     await fireEvent.input(name, { target: { value: "tz" } });
     expect(screen.getByText("TZ already exists.")).toBeTruthy();
     await fireEvent.input(name, { target: { value: "api_url" } });
     expect((name as HTMLInputElement).value).toBe("API_URL");
-    expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(false);
+    expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("puts values under Env mappings and folders under Path mappings, with their defaults and mounts", async () => {
@@ -193,7 +193,8 @@ describe("StackMappings", () => {
       await fireEvent.input(screen.getByLabelText("Mount in the stack"), { target: { value: "/films" } });
       await fireEvent.input(screen.getByLabelText("Host folder"), { target: { value: "/var/mnt/pool/films" } });
       expect((screen.getByLabelText("Mount in the stack") as HTMLInputElement).value).toBe("/films");
-      await fireEvent.click(screen.getByRole("button", { name: "Add" }));
+      expect(screen.getByRole("button", { name: "RO" }).getAttribute("aria-pressed")).toBe("true");
+      await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
       expect(put).toHaveBeenCalledWith("/stacks/{name}/folders", {
         params: { path: { name: "media" } },
         body: {
@@ -232,14 +233,39 @@ describe("StackMappings", () => {
       await fireEvent.change(screen.getByLabelText("Mapping type"), { target: { value: "path" } });
       await fireEvent.input(screen.getByLabelText("Host folder"), { target: { value: "/var/mnt/pool/photos" } });
       expect((screen.getByLabelText("Name") as HTMLInputElement).value).toBe("photos");
-      expect((screen.getByLabelText("Read-only") as HTMLInputElement).checked).toBe(false);
+      expect(screen.getByRole("button", { name: "RO" }).getAttribute("aria-pressed")).toBe("false");
+      expect(screen.getByRole("button", { name: "RW" }).getAttribute("aria-pressed")).toBe("true");
       await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "a/b" } });
-      expect((screen.getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+      expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
       await fireEvent.input(screen.getByLabelText("Name"), { target: { value: "Photos" } });
-      await fireEvent.click(screen.getByRole("button", { name: "Add" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
       expect(put).toHaveBeenCalledWith("/stacks/{name}/folders", {
         params: { path: { name: "media" } },
         body: { folders: [{ path: "/var/mnt/pool/photos", mount: "/shares/Photos", read_only: false }] },
+      });
+    } finally {
+      put.mockRestore();
+    }
+  });
+
+  it("binds a new folder writable with RW, and the trash can discards the row", async () => {
+    const put = vi.spyOn(api, "PUT").mockResolvedValue({ data: stack([]), response: new Response(null, { status: 200 }) } as never);
+    try {
+      render(Harness, { props: { client: new QueryClient(), stack: stack([]) } });
+      await fireEvent.click(screen.getByRole("button", { name: "Add mapping" }));
+      await fireEvent.change(screen.getByLabelText("Mapping type"), { target: { value: "path" } });
+      await fireEvent.input(screen.getByLabelText("Host folder"), { target: { value: "/var/mnt/pool/films" } });
+      await fireEvent.click(screen.getByRole("button", { name: "Discard the new mapping" }));
+      expect(screen.queryByLabelText("Host folder")).toBeNull();
+      expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
+      await fireEvent.click(screen.getByRole("button", { name: "Add mapping" }));
+      await fireEvent.change(screen.getByLabelText("Mapping type"), { target: { value: "path" } });
+      await fireEvent.input(screen.getByLabelText("Host folder"), { target: { value: "/var/mnt/pool/films" } });
+      await fireEvent.click(screen.getByRole("button", { name: "RW" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+      expect(put).toHaveBeenCalledWith("/stacks/{name}/folders", {
+        params: { path: { name: "media" } },
+        body: { folders: [{ path: "/var/mnt/pool/films", mount: "/mnt/films", read_only: false }] },
       });
     } finally {
       put.mockRestore();
@@ -277,7 +303,7 @@ describe("StackMappings", () => {
       await fireEvent.input(screen.getByLabelText("New variable name"), { target: { value: "token" } });
       await fireEvent.input(screen.getByLabelText("New variable value"), { target: { value: "abc" } });
       await fireEvent.click(screen.getByLabelText("Secret"));
-      await fireEvent.click(screen.getByRole("button", { name: "Add" }));
+      await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
       expect(put).toHaveBeenCalledWith("/stacks/{name}/variables/{var}", { params: { path: { name: "media", var: "TOKEN" } }, body: { value: "abc", secret: true } });
     } finally {
       put.mockRestore();
