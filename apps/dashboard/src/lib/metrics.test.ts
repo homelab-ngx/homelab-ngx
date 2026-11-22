@@ -61,14 +61,11 @@ describe("appendFrames", () => {
 });
 
 describe("byScope", () => {
-  it("puts the parts of core first, then stacks by name, folding the ones past the palette", () => {
+  it("puts stacks by name first, folding the ones past the palette, then the parts of core", () => {
     const names = ["a", "b", "c", "d", "e", "f", "g", "h"];
     const f = frames([0], Object.fromEntries(names.map((n) => [n, [1]])));
     const lines = byScope(f, "cpu", stackHues(names));
     expect(lines.map((l) => l.label)).toEqual([
-      "Core (Services)",
-      "Sessions",
-      "Core (Kernel)",
       "a",
       "b",
       "c",
@@ -76,22 +73,25 @@ describe("byScope", () => {
       "e",
       "f",
       "Other",
+      "Core (System Services)",
+      "Core (User Sessions)",
+      "Core (Kernel)",
     ]);
-    expect(lines.slice(0, 3).map((l) => l.values)).toEqual([[1], [3], [4]]);
-    expect(lines[0]?.hue).toBe(CORE_HUE);
-    expect(lines.at(-1)?.hue).toBe(OTHER_HUE);
-    expect(lines.at(-1)?.values).toEqual([2]);
+    expect(lines.slice(-3).map((l) => l.values)).toEqual([[1], [3], [4]]);
+    expect(lines.at(-3)?.hue).toBe(CORE_HUE);
+    expect(lines[6]?.hue).toBe(OTHER_HUE);
+    expect(lines[6]?.values).toEqual([2]);
   });
 
   it("carries each line's series, so a stack named like a part is still itself", () => {
-    const lines = byScope(frames([0], { "Core (Services)": [9] }), "cpu", stackHues(["Core (Services)"]));
-    expect(lines[0]?.series?.cpu).toEqual([1]);
-    expect(lines[3]?.series?.cpu).toEqual([9]);
+    const lines = byScope(frames([0], { "Core (System Services)": [9] }), "cpu", stackHues(["Core (System Services)"]));
+    expect(lines[0]?.series?.cpu).toEqual([9]);
+    expect(lines[1]?.series?.cpu).toEqual([1]);
   });
 
   it("labels a stack with its title, and keeps its link and hue on the name", () => {
     const hues = stackHues(["media"]);
-    const line = byScope(frames([0], { media: [1] }), "cpu", hues, (n) => (n === "media" ? "Movies & TV" : n))[PARTS.length];
+    const line = byScope(frames([0], { media: [1] }), "cpu", hues, (n) => (n === "media" ? "Movies & TV" : n))[0];
     expect(line?.label).toBe("Movies & TV");
     expect(line?.href).toBe("/stacks/media");
     expect(line?.hue).toBe(hues.get("media"));
@@ -107,7 +107,7 @@ describe("byScope", () => {
   it("gives a stack the same hue whichever stacks are in the chart", () => {
     const hues = stackHues(["media", "immich", "email"]);
     expect(hues.get("email")).toBe(STACK_HUES[0]);
-    expect(byScope(frames([0], { media: [1] }), "cpu", hues)[PARTS.length]?.hue).toBe(STACK_HUES[2]);
+    expect(byScope(frames([0], { media: [1] }), "cpu", hues)[0]?.hue).toBe(STACK_HUES[2]);
   });
 });
 

@@ -155,6 +155,29 @@
   .chart :global(.u-legend .u-series) {
     padding: 2px 6px;
   }
+  /* The legend's entries line up in equal columns, the time on its own line above. */
+  .chart :global(.u-legend.u-inline tbody) {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  }
+  .chart :global(.u-legend.u-inline tr) {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-right: 0;
+  }
+  .chart :global(.u-legend.u-inline :is(th, td)) {
+    white-space: nowrap;
+  }
+  .chart :global(.u-legend.u-inline td) {
+    margin-left: auto;
+  }
+  .chart :global(.u-legend.u-inline tr:first-child) {
+    grid-column: 1 / -1;
+  }
+  .chart :global(.u-legend.u-inline tr:first-child td) {
+    margin-left: 0;
+  }
   .chart :global(.u-legend th) {
     font-weight: 400;
     color: var(--muted);

@@ -95,9 +95,9 @@
       return { ...l, cpu: latest(l.values), memory: latest(s?.memory), rx: latest(s?.net_rx), tx: latest(s?.net_tx) };
     }),
   );
-  /** Core's parts fold into one row; the stacks follow it. */
-  const parts = $derived(rows.slice(0, PARTS.length).map((r, i) => ({ ...r, label: PARTS[i]!.short })));
-  const stackRows = $derived(rows.slice(PARTS.length));
+  /** Core's parts (byScope's last lines) fold into one row above the stacks. */
+  const parts = $derived(rows.slice(-PARTS.length).map((r, i) => ({ ...r, label: PARTS[i]!.short })));
+  const stackRows = $derived(rows.slice(0, -PARTS.length));
   const total = (vs: (number | undefined)[]) =>
     vs.some((v) => v !== undefined) ? vs.reduce<number>((t, v) => t + (v ?? 0), 0) : undefined;
   const core = $derived({ cpu: total(parts.map((p) => p.cpu)), memory: total(parts.map((p) => p.memory)) });
@@ -180,8 +180,8 @@
     <section class="card min-w-0">
       <h2 class="font-semibold">
         <Help label="Processor">
-          Share of the whole processor ({cores || "all"} cores) each stack used. Core is the host itself: Services are system services
-          and this dashboard, Sessions are logins and what they start, Kernel is the system's own work.
+          Share of the whole processor ({cores || "all"} cores) each stack used. Core is the host itself: System Services are the
+          system's services and this dashboard, User Sessions are logins and what they start, Kernel is the system's own work.
         </Help>
       </h2>
       <Chart at={shown.at} lines={byScope(shown, "cpu", hues, title)} stacked format={pct} floor={5} ceiling={100} label="Processor use by stack" />

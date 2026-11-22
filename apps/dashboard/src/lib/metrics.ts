@@ -159,8 +159,8 @@ export function stackHues(names: string[]): Map<string, Hue> {
  * one, short how it reads under Core in the table.
  */
 export const PARTS: { key: "services" | "sessions" | "kernel"; label: string; short: string; hue: Hue }[] = [
-  { key: "services", label: "Core (Services)", short: "System services", hue: CORE_HUE },
-  { key: "sessions", label: "Sessions", short: "User sessions", hue: SESSIONS_HUE },
+  { key: "services", label: "Core (System Services)", short: "System Services", hue: CORE_HUE },
+  { key: "sessions", label: "Core (User Sessions)", short: "User Sessions", hue: SESSIONS_HUE },
   { key: "kernel", label: "Core (Kernel)", short: "Kernel", hue: KERNEL_HUE },
 ];
 
@@ -168,12 +168,12 @@ export const PARTS: { key: "services" | "sessions" | "kernel"; label: string; sh
 export type Line = { label: string; hue: Hue; values: Col; href?: string; series?: Series };
 
 /**
- * One line per scope for a figure that adds up (CPU, memory): the parts of
- * core first, then each stack by name, labelled with its title. Stacks past
- * the palette are summed into "Other".
+ * One line per scope for a figure that adds up (CPU, memory): each stack by
+ * name, labelled with its title, then the parts of core. Stacks past the
+ * palette are summed into "Other".
  */
 export function byScope(f: Frames, fig: "cpu" | "memory", hues: Map<string, Hue>, title: (stack: string) => string = (n) => n): Line[] {
-  const lines: Line[] = PARTS.map((p) => ({ label: p.label, hue: p.hue, values: f[p.key][fig], series: f[p.key] }));
+  const lines: Line[] = [];
   let other: Col | undefined;
   for (const name of Object.keys(f.stacks).sort()) {
     const hue = hues.get(name);
@@ -187,6 +187,7 @@ export function byScope(f: Frames, fig: "cpu" | "memory", hues: Map<string, Hue>
     }
   }
   if (other) lines.push({ label: "Other", hue: OTHER_HUE, values: other });
+  for (const p of PARTS) lines.push({ label: p.label, hue: p.hue, values: f[p.key][fig], series: f[p.key] });
   return lines;
 }
 
