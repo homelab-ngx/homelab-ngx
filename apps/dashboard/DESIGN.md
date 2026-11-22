@@ -304,7 +304,7 @@ The voice is terse and neutral. These rules apply to every page and dialog; the 
 
 ## Layout
 
-One centered column, max 72rem (`max-w-6xl`), 16px side padding, 24px top and bottom. A sticky header holds the wordmark, the nav (horizontally scrollable) and System Settings pushed right behind a divider; below 640px Settings collapses to a gear icon.
+One centered column, max 72rem (`max-w-6xl`), 16px side padding, 24px top and bottom. A sticky header holds the host's name (cut at 16 characters; it links to the Overview), the nav (horizontally scrollable) and System Settings pushed right behind a divider; below 640px Settings collapses to a gear icon. The product's name sits in a footer under every page: "homelab-ngx", 12px, muted, centered on the page background.
 
 Pages stack vertically: header row (title and summary left, actions right, wrapping), then an updates strip or banner, then alerts, then the main table, then setup cards in a two-column grid from 768px. Vertical rhythm is mostly 16px between blocks (mt-4), 20px before a major section, 32px before Setup; gaps of 8px between buttons and 12px between header groups.
 

@@ -7,6 +7,7 @@
   import { DEMO } from "#lib/api/client.ts";
   import { fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
   import { help, toggleHelp } from "#lib/help.svelte.ts";
+  import { fetchHostSettings, hostKeys } from "#lib/host.ts";
   import type { NavItem } from "#lib/nav.ts";
   import { fetchPower, powerHref, powerKey, underWay } from "#lib/power.ts";
 
@@ -19,6 +20,12 @@
     children: Snippet;
   }
   let { active, nav, settings, wide = false, children }: Props = $props();
+
+  // The host's own name heads every page; saving it on the Network page
+  // updates this query's data.
+  const host = createQuery(() => ({ queryKey: hostKeys.settings, queryFn: fetchHostSettings }));
+  const hostname = $derived(host.data?.host.hostname);
+  const shortName = $derived(hostname && hostname.length > 16 ? `${hostname.slice(0, 16)}…` : hostname);
 
   const stacks = createQuery(() => ({ queryKey: keys.stacks, queryFn: fetchStacks, refetchInterval: idlePoll }));
 
@@ -49,7 +56,9 @@
     <nav aria-label="Main" class="mx-auto flex max-w-6xl items-center gap-1 px-4 py-2">
       <!-- The page links scroll sideways on a phone; Help and Settings stay on screen. -->
       <div class="relative flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
-      <a href="/" class="mr-1 shrink-0 whitespace-nowrap font-semibold tracking-tight sm:mr-3">homelab-ngx</a>
+      {#if hostname}
+        <a href="/" class="mr-1 shrink-0 whitespace-nowrap font-semibold tracking-tight sm:mr-3" title={shortName === hostname ? undefined : hostname}>{shortName}</a>
+      {/if}
       {#each nav as item (item.href)}
         <a
           href={item.href}
@@ -87,4 +96,5 @@
   <main class="mx-auto w-full min-w-0 flex-1 {wide ? 'px-2 py-2 sm:px-3' : 'max-w-6xl px-4 py-6'}">
     {@render children()}
   </main>
+  <footer class="px-4 py-4 text-center text-xs text-muted">homelab-ngx</footer>
 </div>
