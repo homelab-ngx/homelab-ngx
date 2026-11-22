@@ -53,7 +53,8 @@
 #      restart loop; and a core extension that does not start is replaced at
 #      boot by the one before, once. Before all that: a downloaded core is in
 #      use after a restart, and one that names a newer image is refused
-#  12. with BUILD=1: the host builds an update from main itself
+#  12. with BUILD=1: the host builds an update from main itself, twice; the
+#      second downloads no packages, and neither copies mkosi's outputs
 #  13. the free-space install boots alone, next to the other system's files
 #  14. an erased disk whose boot loader goes on another disk's ESP boots
 #      with that ESP at /boot and Windows in its boot menu, the stick left in
@@ -1526,7 +1527,11 @@ fi
 
 if [ "${BUILD:-}" = 1 ]; then
   step "12. the host builds an update from main"
-  git -C "$root" bundle create "$vm/src.bundle" HEAD 2>/dev/null
+  # With the tags: build.sh versions the build above the newest release
+  # (<tag>.<commit time>). Without them it is 0.0.<commit time>, older than
+  # the installed version, and staging prunes it. The versions in image/out
+  # must be older than HEAD's commit time for the build to be newer.
+  git -C "$root" bundle create "$vm/src.bundle" HEAD --tags 2>/dev/null
   vscp "$vm/src.bundle" root@127.0.0.1:/var/lib/homelab/src.bundle
   vssh 'echo HOMELAB_CORE_SOURCE=git+file:///var/lib/homelab/src.bundle > /var/lib/homelab/daemon.env && systemctl restart homelab-daemon'
   daemon || die "the daemon does not answer with its source set"
@@ -1536,13 +1541,27 @@ if [ "${BUILD:-}" = 1 ]; then
 while :; do free -m | awk '/^Mem/ {print $3}' >> /var/tmp/mem.log; sleep 2; done
 EOS
   vssh 'systemd-run -q --unit=memwatch sh /var/tmp/memwatch.sh'
-  start=$SECONDS
-  d=$(OPWAIT=720 op system-updates/image/build)
-  [ "$(jq -r .result <<<"$d")" = healthy ] || die "build: $(jq -r '.result + ": " + .reason' <<<"$d")"
-  built=$(jq -r .version <<<"$d")
-  api http://x/api/system-updates/image | jq -e --arg v "$built" '.core.available + .available | index($v)' >/dev/null || die "$built is not staged"
+  # Twice: the second build reuses mkosi's packages and OS tree. Neither
+  # copies mkosi's outputs across mounts.
+  times=
+  for n in 1 2; do
+    since=$(vssh 'date +%s')
+    start=$SECONDS
+    d=$(OPWAIT=720 op system-updates/image/build)
+    [ "$(jq -r .result <<<"$d")" = healthy ] || die "build $n: $(jq -r '.result + ": " + .reason' <<<"$d")"
+    built=$(jq -r .version <<<"$d")
+    api http://x/api/system-updates/image | jq -e --arg v "$built" '.core.available + .available | index($v)' >/dev/null || die "$built is not staged"
+    # systemd logs the unit's memory peak when it stops.
+    vssh 'for _ in $(seq 1 30); do systemctl is-active -q homelab-core-deploy || break; sleep 1; done'
+    journal=$(vssh "journalctl -q -o cat -u homelab-core-deploy --since=@$since")
+    # Saving a new incremental cache copies once (/out to /cache); the
+    # outputs are renamed into /out.
+    ! grep 'falling back to copying' <<<"$journal" | grep -q ' to /out/' || die "build $n copied mkosi's outputs: $(grep -m1 'falling back to copying' <<<"$journal")"
+    [ "$n" = 1 ] || ! grep -q 'Retrieving packages' <<<"$journal" || die "the second build downloaded packages again"
+    times+="build $n: $((SECONDS - start)) s, $(grep -c 'Retrieving packages' <<<"$journal") package downloads, unit $(grep -o '[0-9.]*[KMG] memory peak' <<<"$journal" | tail -1 || echo 'peak unknown'); "
+  done
   vssh 'systemctl stop memwatch'
-  ok "built and staged $built in $(((SECONDS - start) / 60)) min; memory in use peaked at $(vssh 'sort -n /var/tmp/mem.log | tail -1') of $mem MiB"
+  ok "built and staged $built twice (${times%; }); memory in use peaked at $(vssh 'sort -n /var/tmp/mem.log | tail -1') of $mem MiB"
 fi
 
 step "13. the free-space install boots alone, beside the other system"

@@ -84,7 +84,7 @@ mkdir -p "$out/core"
 # which SHA256SUMS would list next to this build's.
 $sudo rm -f "$out"/homelab_"$version".* "$out/core/homelab-core_$version.raw"
 # Another snapshot's caches are of no further use.
-$sudo find "$cache" -mindepth 1 -maxdepth 1 -name 'mkosi*' ! -path "$mkcache" -exec rm -rf {} +
+$sudo find "$cache" -mindepth 1 -maxdepth 1 -name 'mkosi-*' ! -path "$mkcache" -exec rm -rf {} +
 $sudo mkdir -p "$mkcache/images" "$mkcache/packages"
 
 # The core extension first: the disk image is also the installer stick, and

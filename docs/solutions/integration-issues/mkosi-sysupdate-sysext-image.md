@@ -222,7 +222,9 @@ unit reported a 9.9 GB memory peak. These keep it smaller:
   `--incremental=yes`, which reuses the OS tree after its packages are
   installed, and the whole-disk `.raw` is removed. systemd-repart writes
   that file with the split files, and cannot skip it. Releases and
-  `make image` build without this setting.
+  `make image` build without this setting. When mkosi saves a new
+  incremental cache, it copies the tree from the workspace to the cache
+  folder, another mount, once each time the cache is made.
 - The ESP has `SplitName=-`. Nothing reads a split ESP: an update takes the
   UKI, and an install makes its own ESP.
 - The daemon moves the files into the update folder. Both are on `/var`, so
