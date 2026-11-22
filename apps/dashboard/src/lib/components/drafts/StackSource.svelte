@@ -122,8 +122,8 @@
     <p role="alert" class="border-b border-line bg-bad-soft px-3 py-1.5 text-bad">{error}</p>
   {/if}
 
-  <div class="flex min-h-0 flex-1 flex-col md:flex-row">
-    <div class="max-h-48 shrink-0 border-b border-line md:max-h-none md:w-56 md:border-r md:border-b-0">
+  <div class="flex min-h-0 flex-1 flex-col md:h-[65vh] md:min-h-80 md:flex-none md:flex-row xl:h-auto xl:flex-1">
+    <div class="flex max-h-48 min-h-0 shrink-0 flex-col border-b border-line md:max-h-none md:w-56 md:border-r md:border-b-0">
       <FileList {buffer} {open} {changed} readonly onOpen={(p) => (open = p)} />
     </div>
     <div class="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -132,7 +132,7 @@
           {open}{#if changed.includes(open)}<span class="ml-1 text-accent" aria-label="(changed)">•</span>{/if}
         </span>
       </div>
-      <div class="h-[60vh] min-h-72 xl:h-auto xl:min-h-0 xl:flex-1">
+      <div class="h-[60vh] min-h-72 md:h-auto md:min-h-0 md:flex-1">
         {#if buffer[open] === null}
           <p class="p-4 text-muted">A binary file, or larger than 256 KB: not shown here.</p>
         {:else}

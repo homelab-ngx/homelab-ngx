@@ -78,7 +78,7 @@
   </form>
 {/snippet}
 
-<nav aria-label="Files" class="flex min-h-0 flex-col">
+<nav aria-label="Files" class="flex min-h-0 flex-1 flex-col">
   <div class="flex items-center gap-2 border-b border-line bg-sunken px-3 py-1">
     <h2 class="label">Files</h2>
     {#if !readonly}
