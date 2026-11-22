@@ -4,6 +4,7 @@
   import Disclosure from "#lib/components/Disclosure.svelte";
   import Help from "#lib/components/Help.svelte";
   import Modal from "#lib/components/Modal.svelte";
+  import PathInput from "#lib/components/PathInput.svelte";
   import Pill from "#lib/components/Pill.svelte";
   import {
     draftOf,
@@ -206,7 +207,7 @@
         <div class="mt-1 grid gap-1.5">
           {#each custom as s, i (i)}
             <div class="flex items-center gap-1.5">
-              <input class="input min-w-0 flex-1" aria-label="Folder path" autocomplete="off" placeholder="/var/mnt/pool/documents" bind:value={s.path} />
+              <PathInput class="flex-1" aria-label="Folder path" placeholder="/var/mnt/pool/documents" bind:value={s.path} />
               <button type="button" class="btn btn-sm" aria-label="Remove {s.path || 'this folder'}" onclick={() => remove(s)}>Remove</button>
             </div>
           {/each}

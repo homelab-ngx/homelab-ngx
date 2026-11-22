@@ -94,8 +94,20 @@ const TREE: Record<string, [name: string, type: "dir" | "file", size: number][]>
   "/scratch": [["restore-test", "dir", 220 * GB]],
 };
 
+/** The demo pool's mount; the tree's keys are relative to it. */
+const POOL = "/var/mnt/tank";
+
+/** A folder's rows: in the pool from the tree, above it the one folder that leads there, as the daemon does. */
+function rowsAt(path: string): (typeof TREE)[string] {
+  const p = path.replace(/\/+$/, "") || "/";
+  if (p === POOL || p.startsWith(`${POOL}/`)) return TREE[p.slice(POOL.length) || "/"] ?? [];
+  const above = p === "/" ? "/" : `${p}/`;
+  if (POOL.startsWith(above)) return [[POOL.slice(above.length).split("/")[0]!, "dir", 0]];
+  return TREE[p] ?? [];
+}
+
 function listing(h: Host, path: string): Schema<"Listing"> {
-  const rows = TREE[path.replace(/\/+$/, "") || "/"] ?? [];
+  const rows = rowsAt(path);
   return {
     path: path || "/",
     root: "/var/mnt/tank",

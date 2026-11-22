@@ -290,3 +290,23 @@ export function removal(op: PoolOperation, size: (n: number) => string): Removal
   if (op.phase === "done") return { percent, text: `${disk} removed` };
   return { percent, text: `Removing ${disk} · ${op.phase}…` };
 }
+
+/** Where a typed path's suggestions come from: the folder it is in, and the start of the name being typed. */
+export function pathParts(value: string): { parent: string; fragment: string } {
+  const i = value.lastIndexOf("/");
+  if (i < 0) return { parent: "/", fragment: value };
+  return { parent: value.slice(0, i + 1), fragment: value.slice(i + 1) };
+}
+
+/** The folders in a listing whose names start with fragment, by name; a hidden one only when the fragment starts with ".". */
+export function folderSuggestions(entries: Entry[], fragment: string, limit = 50): string[] {
+  const f = fragment.toLowerCase();
+  return entries
+    .filter((e) => e.type === "dir" && e.name.toLowerCase().startsWith(f) && (f.startsWith(".") || !e.name.startsWith(".")))
+    .map((e) => e.name)
+    .sort((a, b) => a.localeCompare(b))
+    .slice(0, limit);
+}
+
+/** A path without its trailing slash, which the daemon refuses; "/" stays. */
+export const trimSlash = (p: string): string => (p.length > 1 ? p.replace(/\/+$/, "") || "/" : p);

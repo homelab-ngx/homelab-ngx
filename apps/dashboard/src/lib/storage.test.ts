@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Schema, Stack } from "./api/client.ts";
-import { browseDefault, browseHref, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, folderName, foldersOf, maxCopies, measuredAt, removal, removeBlocked, role, running, segments, systemDisk, tiering, usedBy, withContents } from "./storage.ts";
+import { browseDefault, browseHref, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, folderName, folderSuggestions, foldersOf, pathParts, trimSlash, maxCopies, measuredAt, removal, removeBlocked, role, running, segments, systemDisk, tiering, usedBy, withContents } from "./storage.ts";
 
 type Pool = Schema<"Pool">;
 type Disk = Schema<"Disk">;
@@ -238,5 +238,31 @@ describe("making and changing a pool", () => {
     expect(removal({ ...op, phase: "erasing", left_bytes: 0 }, size).text).toBe("Removing sdc · erasing…");
     expect(removal({ ...op, phase: "failed" }, size).text).toBe("Removing sdc failed");
     expect([running(op), running({ ...op, finished_at: "x" }), running(undefined)]).toEqual([true, false, false]);
+  });
+});
+
+describe("path completion", () => {
+  const entry = (name: string, type = "dir") => ({ name, type }) as Schema<"Entry">;
+
+  it("splits a typed path into the folder to list and the name being typed", () => {
+    expect(pathParts("")).toEqual({ parent: "/", fragment: "" });
+    expect(pathParts("/")).toEqual({ parent: "/", fragment: "" });
+    expect(pathParts("/var/mn")).toEqual({ parent: "/var/", fragment: "mn" });
+    expect(pathParts("/var/mnt/")).toEqual({ parent: "/var/mnt/", fragment: "" });
+  });
+
+  it("suggests folders only, by prefix and ignoring case, hiding dot-folders until a dot is typed", () => {
+    const list = [entry("Music"), entry("media"), entry("notes.txt", "file"), entry(".snapshots"), entry("films")];
+    expect(folderSuggestions(list, "m")).toEqual(["media", "Music"]);
+    expect(folderSuggestions(list, "")).toEqual(["films", "media", "Music"]);
+    expect(folderSuggestions(list, ".")).toEqual([".snapshots"]);
+    expect(folderSuggestions(list, "", 1)).toEqual(["films"]);
+  });
+
+  it("drops a trailing slash but keeps the root", () => {
+    expect(trimSlash("/var/mnt/pool/")).toBe("/var/mnt/pool");
+    expect(trimSlash("/var/mnt/pool")).toBe("/var/mnt/pool");
+    expect(trimSlash("/")).toBe("/");
+    expect(trimSlash("")).toBe("");
   });
 });

@@ -4,6 +4,7 @@
   import Disclosure from "#lib/components/Disclosure.svelte";
   import Help from "#lib/components/Help.svelte";
   import Modal from "#lib/components/Modal.svelte";
+  import PathInput from "#lib/components/PathInput.svelte";
   import {
     destinationDraft,
     destinationInput,
@@ -163,7 +164,7 @@
             Passwords go in the credentials below, not in the address.
           </Help>
         </label>
-        <input id="{id}-repo" class="input" autocomplete="off" placeholder="s3:https://s3.example.com/bucket/homelab" bind:value={draft.repository} />
+        <PathInput id="{id}-repo" listRoot={false} placeholder="s3:https://s3.example.com/bucket/homelab" bind:value={draft.repository} />
       </div>
 
       <fieldset class="grid gap-2">
