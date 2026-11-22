@@ -113,18 +113,27 @@ describe("byScope", () => {
 
 describe("mood", () => {
   const at = Array.from({ length: 30 }, (_, i) => i * 2);
-  const withPressure = (cpu: number, mem: number, io: number): Frames => ({
+  const withPressure = (cpu: number, mem: number, io: number, use = 5): Frames => ({
     ...frames(at),
-    host: series(at.map(() => 10), {
+    host: series(at.map(() => use), {
       pressure_cpu: at.map(() => cpu),
       pressure_memory: at.map(() => mem),
       pressure_io: at.map(() => io),
     }),
   });
-  it("reads pressure, not CPU use", () => {
-    expect(mood(withPressure(0, 0, 0))).toBe("calm");
-    expect(mood(withPressure(12, 0, 0))).toBe("busy");
-    expect(mood(withPressure(0, 15, 0))).toBe("struggling");
+  it("is idle or light load while nothing waits", () => {
+    expect(mood(withPressure(0, 0, 0))).toEqual({ mood: "idle" });
+    expect(mood(withPressure(0, 0, 0, 40))).toEqual({ mood: "light" });
     expect(mood(emptyFrames())).toBeUndefined();
+  });
+  it("names what work waits for", () => {
+    expect(mood(withPressure(12, 0, 0))).toEqual({ mood: "busy", waits: "processor" });
+    expect(mood(withPressure(0, 0, 12))).toEqual({ mood: "busy", waits: "disks" });
+    expect(mood(withPressure(0, 15, 0))).toEqual({ mood: "heavy", waits: "memory" });
+    // Disks are further over their line (3x) than the processor (1.2x).
+    expect(mood(withPressure(12, 0, 30))).toEqual({ mood: "heavy", waits: "disks" });
+  });
+  it("calls a full processor nobody waits for busy", () => {
+    expect(mood(withPressure(0, 0, 0, 90))).toEqual({ mood: "busy" });
   });
 });

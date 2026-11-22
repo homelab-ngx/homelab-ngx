@@ -191,21 +191,32 @@ export function byScope(f: Frames, fig: "cpu" | "memory", hues: Map<string, Hue>
   return lines;
 }
 
-export type Mood = "calm" | "busy" | "struggling";
+export type Mood = "idle" | "light" | "busy" | "heavy";
+/** What work waits for. */
+export type Resource = "processor" | "memory" | "disks";
 
 /**
  * How the host is doing, from pressure over about the last minute: the
- * share of time some task had to wait for CPU, memory or disk. CPU use alone
- * only makes it "busy": a full CPU nobody waits for is fine.
+ * share of time some task had to wait for CPU, memory or disk. Nothing
+ * waiting is idle under 10% CPU use and light load above it. A full CPU
+ * nobody waits for is only busy, and then `waits` is unset.
  */
-export function mood(f: Frames): Mood | undefined {
+export function mood(f: Frames): { mood: Mood; waits?: Resource } | undefined {
   const n = Math.max(1, Math.round(60 / (f.step || 2)));
   const cpu = recent(f.host.pressure_cpu, n);
   const mem = recent(f.host.pressure_memory, n);
   const io = recent(f.host.pressure_io, n);
-  const use = recent(f.host.cpu, n);
+  const use = recent(f.host.cpu, n) ?? 0;
   if (cpu === undefined || mem === undefined || io === undefined) return undefined;
-  if (mem >= 10 || io >= 25 || cpu >= 40) return "struggling";
-  if (mem >= 2 || io >= 10 || cpu >= 10 || (use ?? 0) >= 80) return "busy";
-  return "calm";
+  // Each resource against its busy line; the furthest over is named.
+  const over: [Resource, number][] = [
+    ["memory", mem / 2],
+    ["disks", io / 10],
+    ["processor", cpu / 10],
+  ];
+  const [worst, ratio] = over.reduce((a, b) => (b[1] > a[1] ? b : a));
+  if (mem >= 10 || io >= 25 || cpu >= 40) return { mood: "heavy", waits: worst };
+  if (ratio >= 1) return { mood: "busy", waits: worst };
+  if (use >= 80) return { mood: "busy" };
+  return { mood: use >= 10 ? "light" : "idle" };
 }

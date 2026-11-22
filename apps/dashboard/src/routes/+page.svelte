@@ -8,7 +8,7 @@
   import Pill, { type Tone } from "#lib/components/Pill.svelte";
   import { bytes } from "#lib/format.ts";
   import { LiveMetrics } from "#lib/live-metrics.svelte.ts";
-  import { byScope, CORE_HUE, latest, mood, PAIR_HUES, PARTS, stackHues, type Frames, type Line, type Mood } from "#lib/metrics.ts";
+  import { byScope, CORE_HUE, latest, mood, PAIR_HUES, PARTS, stackHues, type Frames, type Line, type Mood, type Resource } from "#lib/metrics.ts";
   import { stackTitles } from "#lib/stacks.ts";
   import { capacity } from "#lib/storage.ts";
 
@@ -73,11 +73,20 @@
   const poolCap = $derived(pool ? capacity(pool) : null);
 
   const health = $derived(mood(now));
-  const MOOD: Record<Mood, { tone: Tone; word: string; line: string }> = {
-    calm: { tone: "ok", word: "calm", line: "No work waiting" },
-    busy: { tone: "warn", word: "busy", line: "Work waits at times" },
-    struggling: { tone: "bad", word: "struggling", line: "Work keeps waiting, see the Waiting chart" },
+  const MOOD: Record<Mood, { tone: Tone; word: string }> = {
+    idle: { tone: "ok", word: "idle" },
+    light: { tone: "ok", word: "light load" },
+    busy: { tone: "warn", word: "busy" },
+    heavy: { tone: "bad", word: "heavy load" },
   };
+  const WAITS: Record<Resource, string> = { processor: "the processor", memory: "memory", disks: "the disks" };
+  const line = $derived.by(() => {
+    if (!health) return live.connected ? "Collecting readings…" : "Connecting…";
+    const on = health.waits && WAITS[health.waits];
+    if (health.mood === "heavy") return `Work keeps waiting for ${on}, see the Waiting chart`;
+    if (health.mood === "busy") return on ? `Some work waits for ${on}` : "The processor is above 80%";
+    return "";
+  });
 
   const pct = (v: number) => (v > 0 && v < 0.1 ? "<0.1%" : v < 10 ? `${v.toFixed(1)}%` : `${Math.round(v)}%`);
   const rate = (v: number) => `${bytes(v)}/s`;
@@ -111,17 +120,15 @@
     <div class="flex flex-wrap items-center gap-2">
       <h1 class="text-xl font-semibold">
         <Help label="Overview">
-          The state says how often work waited for the processor, memory or disks over the last minute. A busy processor that nothing
-          waits for is fine.
+          Over the last minute. Idle and light load: nothing waits, with the processor under or over 10%. Busy and heavy load: work
+          waits for the processor, memory or disks.
         </Help>
       </h1>
       {#if health}
-        <Pill tone={MOOD[health].tone}>{MOOD[health].word}</Pill>
+        <Pill tone={MOOD[health.mood].tone}>{MOOD[health.mood].word}</Pill>
       {/if}
     </div>
-    <p class="mt-0.5 text-muted">
-      {#if health}{MOOD[health].line}{:else if live.connected}Collecting readings…{:else}Connecting…{/if}
-    </p>
+    {#if line}<p class="mt-0.5 text-muted">{line}</p>{/if}
   </div>
 </div>
 
