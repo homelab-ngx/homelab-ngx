@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,27 +15,46 @@ import (
 	"homelab-ngx.com/core/internal/store"
 )
 
-// Check reads files, or the saved ones when files is nil, the way an install
-// would under the draft's name, and stores the result on the draft.
-func (s *Service) Check(ctx context.Context, name string, files *DraftFiles) (DraftCheck, error) {
+// Check reads the saved files with changes on top, or the saved files alone
+// when changes is nil, the way an install would under the draft's name, and
+// stores the result on the draft. It parses flake.nix and each changed Nix
+// file; a check of the saved files parses every Nix file.
+func (s *Service) Check(ctx context.Context, name string, changes *[]DraftChange) (DraftCheck, error) {
 	if _, err := s.row(ctx, name); err != nil {
 		return DraftCheck{}, err
 	}
 	c := DraftCheck{CheckedAt: s.now().UTC()}
-	if files == nil {
-		saved, err := s.read(name)
-		if err != nil {
-			return DraftCheck{}, err
-		}
+	saved, err := s.read(name)
+	if err != nil {
+		return DraftCheck{}, err
+	}
+	files := saved
+	var parse []string
+	if changes == nil {
 		rev, _, err := s.head(ctx, name)
 		if err != nil {
 			return DraftCheck{}, err
 		}
-		files, c.Saved, c.Rev = &saved, true, rev
+		c.Saved, c.Rev = true, rev
+		for p := range saved {
+			parse = append(parse, p)
+		}
+	} else {
+		if files, err = saved.apply(*changes); err != nil {
+			return DraftCheck{}, err
+		}
+		parse = append(saved.changed(files), stacks.FlakeFile)
 	}
-	c.Problems = CheckFiles(name, *files)
-	if p, ok := s.parseFlake(ctx, files.Flake); !ok {
-		c.Problems = append(c.Problems, p)
+	c.Problems = CheckFiles(name, files.text(stacks.ManifestFile), files.text(stacks.FlakeFile))
+	slices.Sort(parse)
+	for _, p := range slices.Compact(parse) {
+		f, ok := files[p]
+		if !ok || f.Binary || !strings.HasSuffix(p, ".nix") {
+			continue
+		}
+		if prob, ok := s.parseNix(ctx, p, f.Content); !ok {
+			c.Problems = append(c.Problems, prob)
+		}
 	}
 	c.OK = len(c.Problems) == 0
 	b, _ := json.Marshal(c)
@@ -44,31 +64,31 @@ func (s *Service) Check(ctx context.Context, name string, files *DraftFiles) (Dr
 	return c, nil
 }
 
-// parseFlake parses flake.nix the way nix reads it, without evaluating it:
-// a syntax error is a problem with nix's message and its line.
-func (s *Service) parseFlake(ctx context.Context, flake string) (DraftProblem, bool) {
-	if strings.TrimSpace(flake) == "" {
-		return DraftProblem{}, true // CheckFiles says it is empty
+// parseNix parses the Nix file at path the way nix reads it, without
+// evaluating it: a syntax error is a problem with nix's message and its line.
+func (s *Service) parseNix(ctx context.Context, path, text string) (DraftProblem, bool) {
+	if strings.TrimSpace(text) == "" {
+		return DraftProblem{}, true // empty flake.nix: CheckFiles says so; elsewhere, nix says nothing useful
 	}
 	res, err := s.r.Run(ctx, cmdrunner.Cmd{
 		Module: "drafts", Name: "nix-instantiate", Args: []string{"--parse", "-"},
-		Stdin: strings.NewReader(flake), ExpectExit: []int{1},
+		Stdin: strings.NewReader(text), ExpectExit: []int{1},
 	})
 	if err == nil && res.ExitCode == 0 {
 		return DraftProblem{}, true
 	}
 	if res.ExitCode != 1 {
-		s.log.Warn("flake.nix not parsed", "error", err)
+		s.log.Warn("Nix file not parsed", "file", path, "error", err)
 		return DraftProblem{}, true // the check cannot say; Build will
 	}
-	return DraftProblem{File: stacks.FlakeFile, Message: parseError(res.Stderr)}, false
+	return DraftProblem{File: path, Message: parseError(path, res.Stderr)}, false
 }
 
 var parseAt = regexp.MustCompile(`«stdin»:(\d+):(\d+)`)
 
 // parseError is nix's parse error as one line: "syntax error, unexpected
 // '{', expecting 'inherit' (line 1, column 2)".
-func parseError(stderr string) string {
+func parseError(path, stderr string) string {
 	msg := ""
 	for _, l := range strings.Split(ansiRE.ReplaceAllString(stderr, ""), "\n") {
 		if l = strings.TrimSpace(l); l != "" {
@@ -77,7 +97,7 @@ func parseError(stderr string) string {
 		}
 	}
 	if msg == "" {
-		msg = "flake.nix is not valid Nix."
+		msg = path + " is not valid Nix."
 	}
 	if m := parseAt.FindStringSubmatch(stderr); m != nil {
 		msg += fmt.Sprintf(" (line %s, column %s)", m[1], m[2])
@@ -85,20 +105,20 @@ func parseError(stderr string) string {
 	return msg
 }
 
-// CheckFiles is what a check finds in files installed as name: the
-// manifest's errors as an install would report them, and a flake.nix that
-// cannot be the stack's.
-func CheckFiles(name string, f DraftFiles) []DraftProblem {
+// CheckFiles is what a check finds in a manifest and flake.nix installed as
+// name: the manifest's errors as an install would report them, and a
+// flake.nix that cannot be the stack's.
+func CheckFiles(name, manifest, flake string) []DraftProblem {
 	out := []DraftProblem{}
-	if strings.TrimSpace(f.Manifest) == "" {
+	if strings.TrimSpace(manifest) == "" {
 		out = append(out, DraftProblem{File: stacks.ManifestFile, Message: "homelab-stack.json is empty."})
-	} else if _, err := stacks.CheckManifest([]byte(f.Manifest), name); err != nil {
+	} else if _, err := stacks.CheckManifest([]byte(manifest), name); err != nil {
 		out = append(out, DraftProblem{File: stacks.ManifestFile, Message: err.Error()})
 	}
 	switch {
-	case strings.TrimSpace(f.Flake) == "":
+	case strings.TrimSpace(flake) == "":
 		out = append(out, DraftProblem{File: stacks.FlakeFile, Message: "flake.nix is empty."})
-	case !strings.Contains(f.Flake, "nixosModules"):
+	case !strings.Contains(flake, "nixosModules"):
 		out = append(out, DraftProblem{File: stacks.FlakeFile,
 			Message: "flake.nix has to export the stack's module as nixosModules.default."})
 	}

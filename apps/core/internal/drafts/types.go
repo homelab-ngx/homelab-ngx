@@ -4,10 +4,20 @@ import "time"
 
 // The API's view of drafts. Huma names each schema after its Go type.
 
-// DraftFiles are a draft's two files.
-type DraftFiles struct {
-	Manifest string `json:"manifest" maxLength:"262144" doc:"homelab-stack.json: what the stack asks the host for."`
-	Flake    string `json:"flake" maxLength:"262144" doc:"flake.nix: the stack's NixOS module, exported as nixosModules.default."`
+// DraftFile is one file of a draft's repo.
+type DraftFile struct {
+	Path    string `json:"path" doc:"The file's path in the repo, with / between folders."`
+	Size    int64  `json:"size" doc:"Its size in bytes."`
+	Binary  bool   `json:"binary" doc:"Not UTF-8 text, or larger than 256 KiB: listed and kept, but not edited here, and content is empty."`
+	Content string `json:"content" doc:"The file's text; empty when binary is true."`
+}
+
+// DraftChange is one change to a draft's files: a file written whole, or a
+// file deleted.
+type DraftChange struct {
+	Path    string  `json:"path" maxLength:"256" doc:"The file's path in the repo, with / between folders; nothing under .git."`
+	Content *string `json:"content,omitempty" maxLength:"262144" doc:"The file's whole new text; a new path makes the file. Absent with delete."`
+	Delete  bool    `json:"delete,omitempty" doc:"Delete the file. homelab-stack.json and flake.nix cannot be deleted."`
 }
 
 // DraftSummary is a draft in the list.
@@ -26,7 +36,7 @@ type Draft struct {
 	Rev         string      `json:"rev" doc:"The commit of the last save."`
 	SavedAt     time.Time   `json:"saved_at" doc:"When it was last saved."`
 	CreatedAt   time.Time   `json:"created_at"`
-	Files       DraftFiles  `json:"files" doc:"The files at the last save."`
+	Files       []DraftFile `json:"files" doc:"Every file of the repo at the last save, by path."`
 	InstalledAs []string    `json:"installed_as" doc:"The installed stacks built from this draft; empty when none is. A save shows there as an update."`
 	Check       *DraftCheck `json:"check,omitempty" doc:"The last check, absent before the first."`
 	Build       *DraftBuild `json:"build,omitempty" doc:"The running or last build, absent before the first."`
@@ -37,25 +47,25 @@ type DraftCreate struct {
 	Name string `json:"name" doc:"1-12 characters of a-z, 0-9 and '-', starting with a letter. It is also the stack's name once installed."`
 }
 
-// DraftSave saves a draft's files as a commit.
+// DraftSave saves changes to a draft's files as a commit.
 type DraftSave struct {
-	Files   DraftFiles `json:"files"`
-	Message string     `json:"message,omitempty" maxLength:"500" doc:"The commit message; default \"Edit in dashboard\"."`
+	Changes []DraftChange `json:"changes" maxItems:"500" doc:"The changes, applied in order to the saved files."`
+	Message string        `json:"message,omitempty" maxLength:"500" doc:"The commit message; default \"Edit in dashboard\"."`
 }
 
 // DraftCheckIn is what to check.
 type DraftCheckIn struct {
-	Files *DraftFiles `json:"files,omitempty" doc:"Unsaved files to check; absent checks the saved ones."`
+	Changes *[]DraftChange `json:"changes,omitempty" maxItems:"500" doc:"Unsaved changes to check on top of the saved files; absent checks the saved ones."`
 }
 
 // DraftProblem is one thing a check found.
 type DraftProblem struct {
-	File    string `json:"file" enum:"homelab-stack.json,flake.nix" doc:"The file it is in."`
+	File    string `json:"file" doc:"The path of the file it is in."`
 	Message string `json:"message" doc:"What is wrong, with the field's path for a manifest error."`
 }
 
 // DraftCheck is a check's result: the manifest parsed and validated as an
-// install would, and flake.nix present.
+// install would, flake.nix present, and the Nix files parsed.
 type DraftCheck struct {
 	CheckedAt time.Time      `json:"checked_at"`
 	Saved     bool           `json:"saved" doc:"The saved files were checked, not an unsaved edit."`

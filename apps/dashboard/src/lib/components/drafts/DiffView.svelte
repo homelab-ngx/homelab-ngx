@@ -2,10 +2,11 @@
   import { EditorState } from "@codemirror/state";
   import { EditorView, lineNumbers } from "@codemirror/view";
   import { unifiedMergeView } from "@codemirror/merge";
-  import { highlight, language, theme, type FileKey } from "#lib/editor.ts";
+  import { highlight, language, theme } from "#lib/editor.ts";
 
   interface Props {
-    file: FileKey;
+    /** The file's path, which picks its language. */
+    file: string;
     /** The editor's text now. */
     original: string;
     /** The text the assistant proposes. */

@@ -439,7 +439,7 @@ export interface paths {
         };
         /** A draft's saved files with its last check and build. */
         get: operations["getDraft"];
-        /** Save a draft's files as a commit. A stack installed from it shows the commit as an update. */
+        /** Save changes to a draft's files as a commit. A stack installed from it shows the commit as an update. */
         put: operations["saveDraft"];
         post?: never;
         /** Delete a draft and its repo; refused while a stack is installed from it. */
@@ -492,7 +492,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Check a draft's files the way an install reads them: the manifest parsed and validated, flake.nix present. */
+        /** Check a draft's files the way an install reads them: the manifest parsed and validated, flake.nix present, the Nix files parsed. */
         post: operations["checkDraft"];
         delete?: never;
         options?: never;
@@ -2255,9 +2255,9 @@ export interface components {
         AssistError: {
             message: string;
         };
-        AssistFiles: {
-            flake?: string;
-            manifest?: string;
+        AssistFile: {
+            content: string;
+            path: string;
         };
         AssistText: {
             text: string;
@@ -2813,8 +2813,8 @@ export interface components {
             check?: components["schemas"]["DraftCheck"];
             /** Format: date-time */
             created_at: string;
-            /** @description The files at the last save. */
-            files: components["schemas"]["DraftFiles"];
+            /** @description Every file of the repo at the last save, by path. */
+            files: components["schemas"]["DraftFile"][];
             /** @description The installed stacks built from this draft; empty when none is. A save shows there as an update. */
             installed_as: string[];
             /** @description The draft's name; the name it is installed under. */
@@ -2833,8 +2833,8 @@ export interface components {
             /** @description One line per change it made. */
             changes: string[];
             dropped: string[];
-            /** @description Whole files it proposes. */
-            files: components["schemas"]["AssistFiles"];
+            /** @description Whole files it proposes, in the order it gave them; a file it gave twice, once. */
+            files: components["schemas"]["AssistFile"][];
             model: string;
             /** @description Anything it said outside those parts and the file blocks. */
             notes: string;
@@ -2846,13 +2846,15 @@ export interface components {
             usage: components["schemas"]["AnswerUsage"];
         };
         DraftAssist: {
-            /** @description The editor's files, saved or not. */
-            files: components["schemas"]["DraftFiles"];
+            /** @description The editor's unsaved changes, on top of the saved files. */
+            changes?: components["schemas"]["DraftChange"][];
             /**
              * @description draft: write the stack Text describes; review: look for mistakes; fix: fix what the last check or build reported; ask: Text is the question.
              * @enum {string}
              */
             kind: "draft" | "review" | "fix" | "ask";
+            /** @description The file the editor shows. The assistant reads it with the manifest, flake.nix and every changed file. */
+            open?: string;
             /** @description The description (draft), the question (ask), or extra words for review and fix. */
             text?: string;
         };
@@ -2875,6 +2877,14 @@ export interface components {
             /** @description The built system's store path. */
             system?: string;
         };
+        DraftChange: {
+            /** @description The file's whole new text; a new path makes the file. Absent with delete. */
+            content?: string;
+            /** @description Delete the file. homelab-stack.json and flake.nix cannot be deleted. */
+            delete?: boolean;
+            /** @description The file's path in the repo, with / between folders; nothing under .git. */
+            path: string;
+        };
         DraftCheck: {
             /** Format: date-time */
             checked_at: string;
@@ -2886,30 +2896,35 @@ export interface components {
             saved: boolean;
         };
         DraftCheckIn: {
-            /** @description Unsaved files to check; absent checks the saved ones. */
-            files?: components["schemas"]["DraftFiles"];
+            /** @description Unsaved changes to check on top of the saved files; absent checks the saved ones. */
+            changes?: components["schemas"]["DraftChange"][];
         };
         DraftCreate: {
             /** @description 1-12 characters of a-z, 0-9 and '-', starting with a letter. It is also the stack's name once installed. */
             name: string;
         };
-        DraftFiles: {
-            /** @description flake.nix: the stack's NixOS module, exported as nixosModules.default. */
-            flake: string;
-            /** @description homelab-stack.json: what the stack asks the host for. */
-            manifest: string;
+        DraftFile: {
+            /** @description Not UTF-8 text, or larger than 256 KiB: listed and kept, but not edited here, and content is empty. */
+            binary: boolean;
+            /** @description The file's text; empty when binary is true. */
+            content: string;
+            /** @description The file's path in the repo, with / between folders. */
+            path: string;
+            /**
+             * Format: int64
+             * @description Its size in bytes.
+             */
+            size: number;
         };
         DraftProblem: {
-            /**
-             * @description The file it is in.
-             * @enum {string}
-             */
-            file: "homelab-stack.json" | "flake.nix";
+            /** @description The path of the file it is in. */
+            file: string;
             /** @description What is wrong, with the field's path for a manifest error. */
             message: string;
         };
         DraftSave: {
-            files: components["schemas"]["DraftFiles"];
+            /** @description The changes, applied in order to the saved files. */
+            changes: components["schemas"]["DraftChange"][];
             /** @description The commit message; default "Edit in dashboard". */
             message?: string;
         };

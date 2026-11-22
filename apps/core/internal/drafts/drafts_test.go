@@ -3,8 +3,10 @@ package drafts
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -39,6 +41,26 @@ func newService(t *testing.T) (*Service, *fakeStacks) {
 	return s, fs
 }
 
+// file is the text of the draft's file at p; "" when it has none.
+func file(d Draft, p string) string {
+	for _, f := range d.Files {
+		if f.Path == p {
+			return f.Content
+		}
+	}
+	return ""
+}
+
+func paths(d Draft) []string {
+	var out []string
+	for _, f := range d.Files {
+		out = append(out, f.Path)
+	}
+	return out
+}
+
+func write(p, content string) DraftChange { return DraftChange{Path: p, Content: &content} }
+
 func code(err error) string {
 	var p *httpx.Problem
 	if errors.As(err, &p) {
@@ -54,11 +76,13 @@ func TestCreateStartsFromTheTemplate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.Files != Template("site") || len(d.Rev) != 40 || d.Source != "git+file://"+filepath.Join(s.Dir(), "site") {
+	tmpl := Template("site")
+	if strings.Join(paths(d), " ") != "flake.nix homelab-stack.json" || file(d, "flake.nix") != tmpl["flake.nix"] ||
+		len(d.Rev) != 40 || d.Source != "git+file://"+filepath.Join(s.Dir(), "site") {
 		t.Fatalf("draft = %+v", d)
 	}
-	if !strings.Contains(d.Files.Manifest, `"name": "site"`) {
-		t.Fatalf("the template keeps its placeholder: %s", d.Files.Manifest)
+	if !strings.Contains(file(d, "homelab-stack.json"), `"name": "site"`) {
+		t.Fatalf("the template keeps its placeholder: %s", file(d, "homelab-stack.json"))
 	}
 	if !stacks.ValidSource(d.Source) {
 		t.Fatalf("%s is not a source the stacks accept", d.Source)
@@ -95,14 +119,13 @@ func TestSaveCommitsOnlyAChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	same, err := s.Save(ctx, "site", DraftSave{Files: d.Files})
+	same, err := s.Save(ctx, "site", DraftSave{Changes: []DraftChange{write("flake.nix", file(d, "flake.nix"))}})
 	if err != nil || same.Rev != d.Rev {
 		t.Fatalf("an unchanged save made a commit: %v", err)
 	}
-	f := d.Files
-	f.Flake = strings.Replace(f.Flake, "autoindex on;", "autoindex off;", 1)
-	saved, err := s.Save(ctx, "site", DraftSave{Files: f, Message: "No index"})
-	if err != nil || saved.Rev == d.Rev || saved.Files != f {
+	flake := strings.Replace(file(d, "flake.nix"), "autoindex on;", "autoindex off;", 1)
+	saved, err := s.Save(ctx, "site", DraftSave{Changes: []DraftChange{write("flake.nix", flake)}, Message: "No index"})
+	if err != nil || saved.Rev == d.Rev || file(saved, "flake.nix") != flake {
 		t.Fatalf("save = %+v, %v", saved, err)
 	}
 	msg, err := s.git(ctx, s.repo("site"), "log", "-1", "--format=%s %an")
@@ -115,8 +138,7 @@ func TestSaveCommitsOnlyAChange(t *testing.T) {
 
 	// Installed, a save makes the stack read the new commit.
 	fs.list = []stacks.Stack{{Name: "site", Source: d.Source}}
-	f.Flake += "\n"
-	if _, err := s.Save(ctx, "site", DraftSave{Files: f}); err != nil {
+	if _, err := s.Save(ctx, "site", DraftSave{Changes: []DraftChange{write("flake.nix", flake+"\n")}}); err != nil {
 		t.Fatal(err)
 	}
 	if len(fs.fetched) != 1 || fs.fetched[0] != "site" {
@@ -131,10 +153,11 @@ func TestCheckReportsManifestErrorsWithTheirField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := d.Files
-	f.Manifest = strings.Replace(f.Manifest, `"port": 8080 }]`, `"port": 0 }]`, 1)
-	f.Flake = "{ outputs = _: { }; }"
-	c, err := s.Check(ctx, "site", &f)
+	changes := []DraftChange{
+		write("homelab-stack.json", strings.Replace(file(d, "homelab-stack.json"), `"port": 8080 }]`, `"port": 0 }]`, 1)),
+		write("flake.nix", "{ outputs = _: { }; }"),
+	}
+	c, err := s.Check(ctx, "site", &changes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +176,7 @@ func TestCheckReportsManifestErrorsWithTheirField(t *testing.T) {
 		t.Fatalf("draft check = %+v, %v", got.Check, err)
 	}
 	// Unknown fields are refused, as at install.
-	if p := CheckFiles("site", DraftFiles{Manifest: `{"version": 8, "nmae": "x"}`, Flake: "nixosModules"}); len(p) != 1 || !strings.Contains(p[0].Message, "nmae") {
+	if p := CheckFiles("site", `{"version": 8, "nmae": "x"}`, "nixosModules"); len(p) != 1 || !strings.Contains(p[0].Message, "nmae") {
 		t.Fatalf("unknown field: %+v", p)
 	}
 }
@@ -259,9 +282,8 @@ func TestCheckParsesFlakeNix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := d.Files
-	files.Flake = "{{{{\n  outputs !!= _: { nixosModules.default = { }; };\n}\n"
-	c, err := s.Check(ctx, "site", &files)
+	changes := []DraftChange{write("flake.nix", "{{{{\n  outputs !!= _: { nixosModules.default = { }; };\n}\n")}
+	c, err := s.Check(ctx, "site", &changes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +291,164 @@ func TestCheckParsesFlakeNix(t *testing.T) {
 		!strings.Contains(c.Problems[0].Message, "(line 1, column 2)") {
 		t.Fatalf("check = %+v", c)
 	}
-	if c, _ := s.Check(ctx, "site", &d.Files); !c.OK {
+	if c, _ := s.Check(ctx, "site", &[]DraftChange{}); !c.OK {
 		t.Fatalf("the template: %+v", c)
+	}
+	// Another Nix file is parsed when it changed, under its own path.
+	changes = []DraftChange{write("modules/web.nix", "{ x = ; }\n")}
+	c, err = s.Check(ctx, "site", &changes)
+	if err != nil || c.OK || len(c.Problems) != 1 || c.Problems[0].File != "modules/web.nix" {
+		t.Fatalf("check = %+v, %v", c, err)
+	}
+	if _, err := s.Save(ctx, "site", DraftSave{Changes: changes}); err != nil {
+		t.Fatal(err)
+	}
+	// A check of the saved files parses every Nix file.
+	if c, _ := s.Check(ctx, "site", nil); c.OK || len(c.Problems) != 1 || c.Problems[0].File != "modules/web.nix" {
+		t.Fatalf("saved check = %+v", c)
+	}
+	_ = d
+}
+
+func TestSaveAddsRenamesAndDeletesFiles(t *testing.T) {
+	s, _ := newService(t)
+	ctx := context.Background()
+	d, err := s.Create(ctx, "site")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A binary file in the repo is listed, kept and never sent.
+	png := []byte{0x89, 'P', 'N', 'G', 0, 1, 2}
+	if err := os.WriteFile(filepath.Join(s.repo("site"), "logo.png"), png, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.git(ctx, s.repo("site"), "add", "logo.png"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.commit(ctx, "site", "Logo"); err != nil {
+		t.Fatal(err)
+	}
+
+	d, err = s.Save(ctx, "site", DraftSave{Changes: []DraftChange{
+		write("modules/web/default.nix", "{ }\n"),
+		write("README", "hello\n"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(paths(d), " "); got != "README flake.nix homelab-stack.json logo.png modules/web/default.nix" {
+		t.Fatalf("files = %s", got)
+	}
+	for _, f := range d.Files {
+		if f.Path == "logo.png" && (!f.Binary || f.Content != "" || f.Size != int64(len(png))) {
+			t.Fatalf("logo = %+v", f)
+		}
+	}
+	// A rename is a delete and a write; the emptied folder goes.
+	d, err = s.Save(ctx, "site", DraftSave{Changes: []DraftChange{
+		{Path: "modules/web/default.nix", Delete: true},
+		write("web.nix", "{ }\n"),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(paths(d), " "); got != "README flake.nix homelab-stack.json logo.png web.nix" {
+		t.Fatalf("files = %s", got)
+	}
+	if _, err := os.Stat(filepath.Join(s.repo("site"), "modules")); !os.IsNotExist(err) {
+		t.Fatalf("modules/ is left: %v", err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(s.repo("site"), "logo.png")); string(b) != string(png) {
+		t.Fatal("the binary file changed")
+	}
+	status, err := s.git(ctx, s.repo("site"), "status", "--porcelain")
+	if err != nil || status != "" {
+		t.Fatalf("the working tree is not committed: %q, %v", status, err)
+	}
+
+	// Refused changes leave the draft as it was.
+	for _, tc := range []struct {
+		change DraftChange
+		code   string
+	}{
+		{DraftChange{Path: "flake.nix", Delete: true}, "required_file"},
+		{DraftChange{Path: "nothing.nix", Delete: true}, "unknown_file"},
+		{write("../escape", "x"), "invalid_path"},
+		{write("/etc/x", "x"), "invalid_path"},
+		{write("a//b", "x"), "invalid_path"},
+		{write(".git/config", "x"), "invalid_path"},
+		{write("sub/.git/hooks/x", "x"), "invalid_path"},
+		{write("README/x", "x"), "path_taken"},
+		{write("web.nix/x", "x"), "path_taken"},
+		{DraftChange{Path: "README"}, "invalid_change"},
+		{write(strings.Repeat("a", maxPath+1), "x"), "invalid_path"},
+		{write("big", strings.Repeat("a", maxFile+1)), "file_too_large"},
+	} {
+		if _, err := s.Save(ctx, "site", DraftSave{Changes: []DraftChange{write("ok.nix", "{ }\n"), tc.change}}); code(err) != tc.code {
+			t.Errorf("%s: err = %v, want %s", tc.change.Path, err, tc.code)
+		}
+	}
+	after, err := s.Get(ctx, "site")
+	if err != nil || after.Rev != d.Rev || len(after.Files) != len(d.Files) {
+		t.Fatalf("a refused save changed the draft: %+v, %v", paths(after), err)
+	}
+}
+
+func TestSaveRefusesTooManyFiles(t *testing.T) {
+	s, _ := newService(t)
+	ctx := context.Background()
+	if _, err := s.Create(ctx, "site"); err != nil {
+		t.Fatal(err)
+	}
+	var changes []DraftChange
+	for i := range maxFiles {
+		changes = append(changes, write(fmt.Sprintf("f/%d", i), "x"))
+	}
+	if _, err := s.Save(ctx, "site", DraftSave{Changes: changes}); code(err) != "too_many_files" {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestCreateFromCopiesATree(t *testing.T) {
+	s, _ := newService(t)
+	ctx := context.Background()
+	src := t.TempDir()
+	tmpl := Template("photos")
+	for p, content := range map[string]string{
+		"homelab-stack.json": tmpl["homelab-stack.json"], "flake.nix": tmpl["flake.nix"],
+		"modules/app.nix": "{ }\n", ".git/HEAD": "ref: refs/heads/main\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(src, p)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(src, p), []byte(content), 0o444); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(src, "run.sh"), []byte("#!/bin/sh\n"), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.createFrom(ctx, "photos", src, "Copy of github:o/photos at abc"); err != nil {
+		t.Fatal(err)
+	}
+	d, err := s.Get(ctx, "photos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(paths(d), " "); got != "flake.nix homelab-stack.json modules/app.nix run.sh" {
+		t.Fatalf("files = %s", got)
+	}
+	if fi, err := os.Stat(filepath.Join(s.repo("photos"), "run.sh")); err != nil || fi.Mode().Perm() != 0o750 {
+		t.Fatalf("run.sh = %v, %v", fi.Mode(), err)
+	}
+	if msg, _ := s.git(ctx, s.repo("photos"), "log", "-1", "--format=%s"); msg != "Copy of github:o/photos at abc" {
+		t.Fatalf("commit = %q", msg)
+	}
+	// A tree without the stack's files is not a stack.
+	if err := s.createFrom(ctx, "empty", t.TempDir(), "x"); code(err) != "not_a_stack" {
+		t.Fatalf("empty: %v", err)
+	}
+	if _, err := os.Stat(s.repo("empty")); !os.IsNotExist(err) {
+		t.Fatalf("a failed copy left its repo: %v", err)
 	}
 }

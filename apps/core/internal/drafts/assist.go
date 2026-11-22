@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 // draft's files, the latest check and build, and the authoring guide. The
 // answer is notes plus whole files, which the editor shows as a diff for the
 // operator to apply. The model sees no variable value and no secret: only
-// the two files and what Check and Build printed.
+// the repo's files and what Check and Build printed.
 
 //go:embed guide.md
 var guide string
@@ -26,7 +27,7 @@ var guide string
 // template. It is the same for every request, so a provider caches it.
 func Guide() string {
 	t := Template("example")
-	return guide + "\n" + fileBlock(stacks.ManifestFile, t.Manifest) + "\n" + fileBlock(stacks.FlakeFile, t.Flake)
+	return guide + "\n" + fileBlock(stacks.ManifestFile, t[stacks.ManifestFile]) + "\n" + fileBlock(stacks.FlakeFile, t[stacks.FlakeFile])
 }
 
 func fileBlock(path, content string) string {
@@ -56,18 +57,19 @@ const (
 
 // DraftAssist is a question to the assistant about the editor's files.
 type DraftAssist struct {
-	Kind  AssistKind `json:"kind" enum:"draft,review,fix,ask" doc:"draft: write the stack Text describes; review: look for mistakes; fix: fix what the last check or build reported; ask: Text is the question."`
-	Text  string     `json:"text,omitempty" maxLength:"4000" doc:"The description (draft), the question (ask), or extra words for review and fix."`
-	Files DraftFiles `json:"files" doc:"The editor's files, saved or not."`
+	Kind    AssistKind    `json:"kind" enum:"draft,review,fix,ask" doc:"draft: write the stack Text describes; review: look for mistakes; fix: fix what the last check or build reported; ask: Text is the question."`
+	Text    string        `json:"text,omitempty" maxLength:"4000" doc:"The description (draft), the question (ask), or extra words for review and fix."`
+	Changes []DraftChange `json:"changes,omitempty" maxItems:"500" doc:"The editor's unsaved changes, on top of the saved files."`
+	Open    string        `json:"open,omitempty" maxLength:"256" doc:"The file the editor shows. The assistant reads it with the manifest, flake.nix and every changed file."`
 }
 
 // AssistText is a piece of the answer as it arrives.
 type AssistText = llm.AssistText
 
-// AssistFiles are the files an answer proposes; absent is unchanged.
-type AssistFiles struct {
-	Manifest *string `json:"manifest,omitempty"`
-	Flake    *string `json:"flake,omitempty"`
+// AssistFile is a whole file an answer proposes.
+type AssistFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }
 
 // DraftAnswer is the whole answer, read.
@@ -78,9 +80,9 @@ type DraftAnswer struct {
 	Changes []string        `json:"changes" doc:"One line per change it made."`
 	Todo    []string        `json:"todo" doc:"What the operator must do themselves."`
 	Notes   string          `json:"notes" doc:"Anything it said outside those parts and the file blocks."`
-	Files   AssistFiles     `json:"files" doc:"Whole files it proposes."`
-	// Dropped says why a block was left out: an unknown path, or an answer
-	// that ended inside a block.
+	Files   []AssistFile    `json:"files" doc:"Whole files it proposes, in the order it gave them; a file it gave twice, once."`
+	// Dropped says why a block was left out: a path no file can have, or an
+	// answer that ended inside a block.
 	Dropped []string `json:"dropped"`
 }
 
@@ -143,11 +145,24 @@ func (s *Service) Assist(ctx context.Context, name string, in DraftAssist, send,
 	return a, nil
 }
 
+// maxPromptFiles bounds the text of the files a question carries; the
+// rest are named.
+const maxPromptFiles = 1 << 20
+
 // prompt is the user text of a question: what is asked, the files, and what
 // Check and Build said.
 func prompt(d Draft, in DraftAssist) (string, error) {
 	text := strings.TrimSpace(in.Text)
-	problems := CheckFiles(d.Name, in.Files)
+	saved := tree{}
+	for _, f := range d.Files {
+		saved[f.Path] = f
+	}
+	files, err := saved.apply(in.Changes)
+	if err != nil {
+		return "", err
+	}
+	edited := len(saved.changed(files)) > 0
+	problems := CheckFiles(d.Name, files.text(stacks.ManifestFile), files.text(stacks.FlakeFile))
 	failed := d.Build != nil && d.Build.Result == BuildFailed
 	var b strings.Builder
 	switch in.Kind {
@@ -181,14 +196,42 @@ func prompt(d Draft, in DraftAssist) (string, error) {
 	}
 
 	fmt.Fprintf(&b, "\nThe stack is installed under the name %q.\n", d.Name)
-	if in.Files != d.Files {
-		b.WriteString("\nThe files as they are in the editor now (with edits not saved yet):\n\n")
-	} else {
-		b.WriteString("\nThe files as they are now (saved):\n\n")
+	b.WriteString("\nThe repo's files:\n")
+	list := files.list()
+	for _, f := range list {
+		note := ""
+		if f.Binary {
+			note = ", not text"
+		}
+		fmt.Fprintf(&b, "- %s (%d bytes%s)\n", f.Path, f.Size, note)
 	}
-	b.WriteString(fileBlock(stacks.ManifestFile, in.Files.Manifest))
-	b.WriteString("\n")
-	b.WriteString(fileBlock(stacks.FlakeFile, in.Files.Flake))
+	if edited {
+		b.WriteString("\nThese files as they are in the editor now (with edits not saved yet):\n\n")
+	} else {
+		b.WriteString("\nThese files as they are now (saved):\n\n")
+	}
+	shown := []string{stacks.ManifestFile, stacks.FlakeFile}
+	if in.Open != "" {
+		shown = append(shown, in.Open)
+	}
+	shown = append(shown, saved.changed(files)...)
+	size, left := 0, []string{}
+	for _, p := range uniq(shown) {
+		f, ok := files[p]
+		if !ok || f.Binary {
+			continue
+		}
+		if size+len(f.Content) > maxPromptFiles && p != stacks.ManifestFile && p != stacks.FlakeFile {
+			left = append(left, p)
+			continue
+		}
+		size += len(f.Content)
+		b.WriteString(fileBlock(p, f.Content))
+		b.WriteString("\n")
+	}
+	if len(left) > 0 {
+		fmt.Fprintf(&b, "Left out for length: %s.\n", strings.Join(left, ", "))
+	}
 
 	b.WriteString("\nCheck of these files: ")
 	if len(problems) == 0 {
@@ -208,7 +251,7 @@ func prompt(d Draft, in DraftAssist) (string, error) {
 		b.WriteString("still running.\n")
 	default:
 		fmt.Fprintf(&b, "%s, of the files saved as commit %s", d.Build.Result, short(d.Build.Rev))
-		if d.Build.Rev != d.Rev || in.Files != d.Files {
+		if d.Build.Rev != d.Rev || edited {
 			b.WriteString(" (the files have changed since)")
 		}
 		b.WriteString(".\n")
@@ -223,6 +266,19 @@ func prompt(d Draft, in DraftAssist) (string, error) {
 	return b.String(), nil
 }
 
+// uniq is ps in order without repeats.
+func uniq(ps []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(ps))
+	for _, p := range ps {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // tail is the last n lines of s, without colours.
 func tail(s string, n int) string {
 	lines := strings.Split(strings.TrimRight(ansiRE.ReplaceAllString(s, ""), "\n"), "\n")
@@ -232,11 +288,11 @@ func tail(s string, n int) string {
 	return strings.Join(lines, "\n")
 }
 
-// ParseAnswer splits an answer into its notes and the file blocks for the
-// two known paths. Another path, or a block the answer ended inside, is
-// dropped with a note saying so.
+// ParseAnswer splits an answer into its notes and its file blocks. A path no
+// file can have, or a block the answer ended inside, is dropped with a note
+// saying so.
 func ParseAnswer(answer string) DraftAnswer {
-	a := DraftAnswer{Dropped: []string{}}
+	a := DraftAnswer{Files: []AssistFile{}, Dropped: []string{}}
 	var notes strings.Builder
 	rest := answer
 	for {
@@ -261,13 +317,14 @@ func ParseAnswer(answer string) DraftAnswer {
 		}
 		content := cleanFile(rest[:closing])
 		rest = rest[closing+len("</file>"):]
-		switch path {
-		case stacks.ManifestFile:
-			a.Files.Manifest = &content
-		case stacks.FlakeFile:
-			a.Files.Flake = &content
-		default:
-			a.Dropped = append(a.Dropped, fmt.Sprintf("It proposed a file %s; a stack has only homelab-stack.json and flake.nix, so it was left out.", path))
+		if err := validPath(path); err != nil {
+			a.Dropped = append(a.Dropped, fmt.Sprintf("It proposed a file at %q, which no file can have, so it was left out.", path))
+			continue
+		}
+		if i := slices.IndexFunc(a.Files, func(f AssistFile) bool { return f.Path == path }); i >= 0 {
+			a.Files[i].Content = content
+		} else {
+			a.Files = append(a.Files, AssistFile{Path: path, Content: content})
 		}
 	}
 	parts, rest := llm.Parts(notes.String(), "summary", "changes", "todo")

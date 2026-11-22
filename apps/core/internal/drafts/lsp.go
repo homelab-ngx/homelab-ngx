@@ -344,7 +344,7 @@ func (s *Service) nixdConfig(ctx context.Context, name string) map[string]any {
 		var m struct {
 			Nixpkgs string `json:"nixpkgs"`
 		}
-		if json.Unmarshal([]byte(files.Manifest), &m) == nil && stacks.ValidNixpkgs(m.Nixpkgs) {
+		if json.Unmarshal([]byte(files.text(stacks.ManifestFile)), &m) == nil && stacks.ValidNixpkgs(m.Nixpkgs) {
 			spec = m.Nixpkgs
 		}
 	}

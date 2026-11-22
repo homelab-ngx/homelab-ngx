@@ -1,9 +1,8 @@
 <script lang="ts">
-  import type { DraftFiles } from "#lib/api/client.ts";
+  import type { DraftChange } from "#lib/api/client.ts";
   import { AssistRun, type AssistKind } from "#lib/assist.svelte.ts";
   import { usageLabel } from "#lib/assistant.ts";
-  import { applyProposal, proposedChanges } from "#lib/drafts.ts";
-  import { FILES } from "#lib/editor.ts";
+  import { applyProposal, proposedChanges, type Buffer } from "#lib/drafts.ts";
   import AnswerParts from "#lib/components/ask/AnswerParts.svelte";
   import Help from "#lib/components/Help.svelte";
   import DiffView from "./DiffView.svelte";
@@ -11,15 +10,19 @@
   interface Props {
     name: string;
     /** The editor's files now. */
-    buffer: DraftFiles;
+    buffer: Buffer;
+    /** The editor's unsaved changes, which the assistant reads on top of the saved files. */
+    unsaved: DraftChange[];
+    /** The file the editor shows. */
+    open: string;
     /** What the check and the last build found to fix; "" for nothing. */
     fixText: string;
     /** The model in use, for the panel's line about it. */
     model: string;
     /** Put files into the editor (nothing is saved). */
-    onApply: (files: DraftFiles) => void;
+    onApply: (files: Buffer) => void;
   }
-  let { name, buffer, fixText, model, onApply }: Props = $props();
+  let { name, buffer, unsaved, open, fixText, model, onApply }: Props = $props();
 
   /** What a request asks for; Fix last error sends no words of its own. */
   const MODES: { kind: AssistKind; label: string; placeholder: string; needsText: boolean }[] = [
@@ -56,12 +59,12 @@
 
   function send(e: SubmitEvent) {
     e.preventDefault();
-    if (canSend) void run.ask(name, active, fixing ? "" : text, $state.snapshot(buffer) as DraftFiles);
+    if (canSend) void run.ask(name, active, fixing ? "" : text, $state.snapshot(unsaved), open);
   }
 
-  function apply(key?: (typeof FILES)[number]["key"]) {
-    onApply(applyProposal(buffer, run.proposal, key));
-    for (const k of key ? [key] : changes) run.settle(k);
+  function apply(path?: string) {
+    onApply(applyProposal(buffer, run.proposal, path));
+    for (const p of path ? [path] : changes) run.settle(p);
   }
 </script>
 
@@ -69,8 +72,8 @@
   <div class="flex items-baseline gap-2">
     <h2 id="assistant-h" class="min-w-0 font-semibold">
       <Help label="Assistant">
-        Reads the two files in the editor and what Check and the last Build said, then proposes changes to apply. Nothing is
-        saved before Save. It never sees the stack's variable values.
+        Reads the list of files, the manifest, flake.nix, the open file and every changed one, and what Check and the last
+        Build said, then proposes changes to apply. Nothing is saved before Save. It never sees the stack's variable values.
       </Help>
     </h2>
     <span class="ml-auto truncate text-xs text-muted">{model}</span>
@@ -150,14 +153,14 @@
           <button type="button" class="btn btn-sm btn-primary ml-auto" onclick={() => apply()}>Apply all</button>
         {/if}
       </div>
-      {#each FILES.filter((f) => changes.includes(f.key)) as f (f.key)}
+      {#each changes as path (path)}
         <div class="flex flex-col gap-1.5">
           <div class="flex items-center gap-2">
-            <span>{f.path}</span>
-            <button type="button" class="btn btn-sm btn-primary ml-auto" onclick={() => apply(f.key)}>Apply</button>
-            <button type="button" class="btn btn-sm" onclick={() => run.settle(f.key)}>Discard</button>
+            <span class="min-w-0 truncate">{path}{#if buffer[path] === undefined}<span class="text-muted"> · new</span>{/if}</span>
+            <button type="button" class="btn btn-sm btn-primary ml-auto" onclick={() => apply(path)}>Apply</button>
+            <button type="button" class="btn btn-sm" onclick={() => run.settle(path)}>Discard</button>
           </div>
-          <DiffView file={f.key} original={buffer[f.key]} proposed={run.proposal[f.key]!} label="Proposed {f.path}" />
+          <DiffView file={path} original={buffer[path] ?? ""} proposed={run.proposal[path] ?? ""} label="Proposed {path}" />
         </div>
       {/each}
     {:else if answered && !run.running}

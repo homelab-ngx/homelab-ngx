@@ -33,11 +33,11 @@ The daemon's NixOS module every version 7 stack is built on (`stack-base.nix`): 
 _Avoid_: base image, template, stack base config
 
 **Draft**:
-A stack written in the dashboard: a git repo the daemon keeps at `/var/lib/homelab-daemon/drafts/<name>`, holding the manifest and `flake.nix`, started from an embedded template. Save is a commit; Check reads the manifest as an install would; Build builds the saved commit as an install would, without installing it. Installed, it is an ordinary stack whose source is that repo (`git+file://`), and each save shows as an update. The drafts folder is in the Core backup.
+A stack written in the dashboard: a git repo the daemon keeps at `/var/lib/homelab-daemon/drafts/<name>`, holding the manifest, `flake.nix` and any other file the module reads, started from an embedded template. The editor changes text files of up to 256 KiB and keeps any other file as it is; a draft holds at most 500 files and 16 MiB. Save is a commit; Check reads the manifest as an install would and parses each Nix file; Build builds the saved commit as an install would, without installing it. Installed, it is an ordinary stack whose source is that repo (`git+file://`), and each save shows as an update. The drafts folder is in the Core backup.
 _Avoid_: scratch stack, local stack, template
 
 **Assistant**:
-The optional language model the stack editor asks for help (Claude, or an OpenAI-compatible endpoint), set up in System Settings. One request per question: the draft's two files, what Check and the last Build printed, and the authoring guide (`internal/drafts/guide.md`). No tools, no loop, no variable values; its answer is notes and whole files the operator applies or discards.
+The optional language model the stack editor asks for help (Claude, or an OpenAI-compatible endpoint), set up in System Settings. One request per question: the draft's list of files, its manifest, `flake.nix`, the open file and every changed one, what Check and the last Build printed, and the authoring guide (`internal/drafts/guide.md`). No tools, no loop, no variable values; its answer is notes and whole files the operator applies or discards.
 _Avoid_: agent, copilot, AI
 
 **Host module**:

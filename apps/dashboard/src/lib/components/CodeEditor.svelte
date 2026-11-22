@@ -4,12 +4,13 @@
   import { EditorState, type Extension } from "@codemirror/state";
   import { EditorView, keymap } from "@codemirror/view";
   import { indentWithTab } from "@codemirror/commands";
-  import { bareTheme, highlight, language, theme, type FileKey } from "#lib/editor.ts";
+  import { bareTheme, highlight, language, theme } from "#lib/editor.ts";
 
   interface Props {
     /** The text to show. A change from outside (load, apply) replaces the document. */
     value: string;
-    file: FileKey;
+    /** The file's path, which picks its language. */
+    file: string;
     /** The file's name, for the editor's accessible name. */
     label: string;
     onChange: (value: string) => void;

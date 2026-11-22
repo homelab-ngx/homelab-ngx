@@ -20,7 +20,7 @@ func TestParseAnswerTakesNotesAndBothFiles(t *testing.T) {
 	if a.Notes != "The port was wrong.\n\nBuild it again." {
 		t.Fatalf("notes = %q", a.Notes)
 	}
-	if a.Files.Manifest == nil || *a.Files.Manifest != "{\"version\": 8}\n" || a.Files.Flake == nil || *a.Files.Flake != "{ outputs = _: { }; }\n" {
+	if len(a.Files) != 2 || a.Files[0] != (AssistFile{"homelab-stack.json", "{\"version\": 8}\n"}) || a.Files[1] != (AssistFile{"flake.nix", "{ outputs = _: { }; }\n"}) {
 		t.Fatalf("files = %+v", a.Files)
 	}
 	if len(a.Dropped) != 0 {
@@ -30,24 +30,25 @@ func TestParseAnswerTakesNotesAndBothFiles(t *testing.T) {
 
 func TestParseAnswerReadsTheParts(t *testing.T) {
 	a := ParseAnswer("<summary>Moved the port.</summary>\n<changes>\n- Port 8080 to 3000: the app listens there\n</changes>\n<todo>\n- Fill in API_KEY\n</todo>\n<file path=\"flake.nix\">\n{ }\n</file>")
-	if a.Summary != "Moved the port." || len(a.Changes) != 1 || a.Changes[0] != "Port 8080 to 3000: the app listens there" || len(a.Todo) != 1 || a.Notes != "" || a.Files.Flake == nil {
+	if a.Summary != "Moved the port." || len(a.Changes) != 1 || a.Changes[0] != "Port 8080 to 3000: the app listens there" || len(a.Todo) != 1 || a.Notes != "" || len(a.Files) != 1 {
 		t.Fatalf("answer = %+v", a)
 	}
 }
 
-func TestParseAnswerDropsAnUnknownPath(t *testing.T) {
-	a := ParseAnswer("Notes.\n<file path=\"stack.nix\">\n{ }\n</file>\n<file path=\"flake.nix\">x</file>")
-	if a.Files.Flake == nil || *a.Files.Flake != "x\n" || a.Files.Manifest != nil {
+func TestParseAnswerTakesAnyPathAFileCanHave(t *testing.T) {
+	a := ParseAnswer("Notes.\n<file path=\"modules/web.nix\">\n{ }\n</file>\n<file path=\"../etc/passwd\">\nx\n</file>\n" +
+		"<file path=\".git/config\">x</file>\n<file path=\"flake.nix\">x</file>\n<file path=\"flake.nix\">y</file>")
+	if len(a.Files) != 2 || a.Files[0] != (AssistFile{"modules/web.nix", "{ }\n"}) || a.Files[1] != (AssistFile{"flake.nix", "y\n"}) {
 		t.Fatalf("files = %+v", a.Files)
 	}
-	if len(a.Dropped) != 1 || !strings.Contains(a.Dropped[0], "stack.nix") {
+	if len(a.Dropped) != 2 || !strings.Contains(a.Dropped[0], "../etc/passwd") || !strings.Contains(a.Dropped[1], ".git/config") {
 		t.Fatalf("dropped = %v", a.Dropped)
 	}
 }
 
 func TestParseAnswerDropsATruncatedBlock(t *testing.T) {
 	a := ParseAnswer("Here it is.\n<file path=\"homelab-stack.json\">\n{}\n</file>\n<file path=\"flake.nix\">\n{ outputs = _: {")
-	if a.Files.Manifest == nil || a.Files.Flake != nil {
+	if len(a.Files) != 1 || a.Files[0].Path != "homelab-stack.json" {
 		t.Fatalf("files = %+v", a.Files)
 	}
 	if len(a.Dropped) != 1 || !strings.Contains(a.Dropped[0], "ended inside flake.nix") {
@@ -60,32 +61,42 @@ func TestParseAnswerDropsATruncatedBlock(t *testing.T) {
 
 func TestParseAnswerStripsAFenceInsideABlock(t *testing.T) {
 	a := ParseAnswer("<file path='flake.nix'>\n```nix\n{ }\n```\n</file>")
-	if a.Files.Flake == nil || *a.Files.Flake != "{ }\n" {
-		t.Fatalf("flake = %q", *a.Files.Flake)
+	if len(a.Files) != 1 || a.Files[0].Content != "{ }\n" {
+		t.Fatalf("files = %+v", a.Files)
 	}
 }
 
 func TestPromptCarriesFilesCheckAndBuild(t *testing.T) {
-	d := Draft{Name: "site", Rev: "abc", Files: Template("site"),
+	tmpl := Template("site")
+	d := Draft{Name: "site", Rev: "abc",
+		Files: []DraftFile{
+			textFile("flake.nix", []byte(tmpl["flake.nix"])), textFile("homelab-stack.json", []byte(tmpl["homelab-stack.json"])),
+			textFile("modules/web.nix", []byte("{ }\n")), textFile("modules/other.nix", []byte("{ other }\n")),
+			{Path: "logo.png", Size: 3, Binary: true},
+		},
 		Build: &DraftBuild{Rev: "abc", Result: BuildFailed, Error: "error: The option `services.nginxx' does not exist."}}
-	edited := d.Files
-	edited.Manifest = strings.Replace(edited.Manifest, `"port": 8080 }]`, `"port": 0 }]`, 1)
-	p, err := prompt(d, DraftAssist{Kind: AssistFix, Files: edited})
+	manifest := strings.Replace(tmpl["homelab-stack.json"], `"port": 8080 }]`, `"port": 0 }]`, 1)
+	p, err := prompt(d, DraftAssist{Kind: AssistFix, Open: "modules/web.nix", Changes: []DraftChange{{Path: "homelab-stack.json", Content: &manifest}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"Fix the problems", `installed under the name "site"`, "edits not saved yet",
-		`<file path="flake.nix">`, "routes[0]", "services.nginxx", "(the files have changed since)"} {
+		`<file path="flake.nix">`, `<file path="modules/web.nix">`, "- logo.png (3 bytes, not text)", "- modules/other.nix (",
+		"routes[0]", "services.nginxx", "(the files have changed since)"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("the prompt lacks %q:\n%s", want, p)
 		}
 	}
+	if strings.Contains(p, "{ other }") {
+		t.Errorf("the prompt carries a file neither open nor changed:\n%s", p)
+	}
 	// Nothing to fix: refused before a request is made.
 	d.Build = nil
-	if _, err := prompt(d, DraftAssist{Kind: AssistFix, Files: d.Files}); code(err) != "nothing_to_fix" {
+	d.Files = d.Files[:2]
+	if _, err := prompt(d, DraftAssist{Kind: AssistFix}); code(err) != "nothing_to_fix" {
 		t.Fatalf("fix without errors: %v", err)
 	}
-	if _, err := prompt(d, DraftAssist{Kind: AssistDraft, Files: d.Files}); code(err) != "text_required" {
+	if _, err := prompt(d, DraftAssist{Kind: AssistDraft}); code(err) != "text_required" {
 		t.Fatalf("draft without a description: %v", err)
 	}
 }
@@ -124,11 +135,10 @@ func (a fakeAssistant) Provider(context.Context) (llm.Provider, string, error) {
 func TestAssistStreamsAndReadsTheAnswer(t *testing.T) {
 	s, _ := newService(t)
 	ctx := context.Background()
-	d, err := s.Create(ctx, "site")
-	if err != nil {
+	if _, err := s.Create(ctx, "site"); err != nil {
 		t.Fatal(err)
 	}
-	in := DraftAssist{Kind: AssistReview, Files: d.Files}
+	in := DraftAssist{Kind: AssistReview}
 	if _, err := s.Assist(ctx, "site", in, func(string) {}, nil); code(err) != "assistant_off" {
 		t.Fatalf("without an assistant: %v", err)
 	}
@@ -143,7 +153,7 @@ func TestAssistStreamsAndReadsTheAnswer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if a.Model != "test-model" || a.Notes != "Looks fine, one fix." || a.Files.Flake == nil || *a.Files.Flake != "{ }\n" {
+	if a.Model != "test-model" || a.Notes != "Looks fine, one fix." || len(a.Files) != 1 || a.Files[0] != (AssistFile{"flake.nix", "{ }\n"}) {
 		t.Fatalf("answer = %+v", a)
 	}
 	if streamed.String() != strings.Join(f.answer, "") {
@@ -157,8 +167,7 @@ func TestAssistStreamsAndReadsTheAnswer(t *testing.T) {
 func TestAssistStreamsOverHTTP(t *testing.T) {
 	s, _ := newService(t)
 	ctx := context.Background()
-	d, err := s.Create(ctx, "site")
-	if err != nil {
+	if _, err := s.Create(ctx, "site"); err != nil {
 		t.Fatal(err)
 	}
 	s.SetAssistant(fakeAssistant{p: &fakeProvider{answer: []string{"Fine.", "\n<file path=\"flake.nix\">\n{ }\n</file>"}}})
@@ -167,7 +176,7 @@ func TestAssistStreamsOverHTTP(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	body, _ := json.Marshal(DraftAssist{Kind: AssistReview, Files: d.Files})
+	body, _ := json.Marshal(DraftAssist{Kind: AssistReview})
 	res, err := http.Post(srv.URL+"/api/drafts/site/assist", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -177,14 +186,14 @@ func TestAssistStreamsOverHTTP(t *testing.T) {
 	if res.StatusCode != http.StatusOK || !strings.HasPrefix(res.Header.Get("Content-Type"), "text/event-stream") {
 		t.Fatalf("%d %s: %s", res.StatusCode, res.Header.Get("Content-Type"), out)
 	}
-	for _, want := range []string{"event: text\ndata: {\"text\":\"Fine.\"}", "event: answer\ndata: {", `"flake":"{ }\n"`} {
+	for _, want := range []string{"event: text\ndata: {\"text\":\"Fine.\"}", "event: answer\ndata: {", `{"path":"flake.nix","content":"{ }\n"}`} {
 		if !strings.Contains(string(out), want) {
 			t.Errorf("stream lacks %q:\n%s", want, out)
 		}
 	}
 
 	// A failure is an error event.
-	res, err = http.Post(srv.URL+"/api/drafts/site/assist", "application/json", strings.NewReader(`{"kind":"draft","files":{"manifest":"","flake":""}}`))
+	res, err = http.Post(srv.URL+"/api/drafts/site/assist", "application/json", strings.NewReader(`{"kind":"draft"}`))
 	if err != nil {
 		t.Fatal(err)
 	}

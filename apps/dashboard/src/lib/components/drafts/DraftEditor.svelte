@@ -3,17 +3,18 @@
   import { Sparkles } from "@lucide/svelte";
   import { onDestroy, untrack } from "svelte";
   import { beforeNavigate, goto } from "$app/navigation";
-  import { api, call, describe, ProblemError, type Draft, type DraftCheck, type DraftFiles, type Stack } from "#lib/api/client.ts";
+  import { api, call, describe, ProblemError, type Draft, type DraftCheck, type Stack } from "#lib/api/client.ts";
   import { fetchAssistant, keys } from "#lib/api/queries.ts";
   import CodeEditor from "#lib/components/CodeEditor.svelte";
   import RowMenu from "#lib/components/RowMenu.svelte";
-  import { changedFiles, fileOf } from "#lib/drafts.ts";
+  import { bufferOf, changesOf, MANIFEST, type Buffer } from "#lib/drafts.ts";
   import { manifestAssist, type SchemaNode } from "#lib/manifest-assist.ts";
   import { NixLanguageServer } from "#lib/lsp.svelte.ts";
-  import { FILES, type FileKey } from "#lib/editor.ts";
+  import { isNix } from "#lib/editor.ts";
   import { ago, shortRev } from "#lib/format.ts";
   import AssistantPanel from "./AssistantPanel.svelte";
   import DraftOutput from "./DraftOutput.svelte";
+  import FileList from "./FileList.svelte";
 
   interface Props {
     /** The draft as saved; it changes on a save and while a build runs. */
@@ -31,9 +32,10 @@
   }));
   const path = $derived({ params: { path: { name: draft.name } } });
 
-  /** The unsaved copy of the files the editor works on. */
-  let buffer = $state<DraftFiles>({ ...untrack(() => draft.files) });
-  let tab = $state<FileKey>("manifest");
+  /** The unsaved copy of the files the editor works on, by path. */
+  let buffer = $state<Buffer>(bufferOf(untrack(() => draft.files)));
+  /** The file the editor shows. */
+  let open = $state(MANIFEST);
   let message = $state("");
   let error = $state("");
   let working = $state<"" | "save" | "check" | "build" | "install" | "delete">("");
@@ -60,11 +62,13 @@
 
   /** The last check, with the files it read (as JSON) to tell when it is stale. */
   let checked = $state<{ result: DraftCheck; files: string } | null>(
-    untrack(() => (draft.check?.saved && draft.check.rev === draft.rev ? { result: draft.check, files: JSON.stringify(draft.files) } : null)),
+    untrack(() => (draft.check?.saved && draft.check.rev === draft.rev ? { result: draft.check, files: JSON.stringify(bufferOf(draft.files)) } : null)),
   );
 
-  const changed = $derived(changedFiles(draft.files, buffer));
-  const dirty = $derived(changed.length > 0);
+  /** What Save would send: the buffer against the saved files. */
+  const changes = $derived(changesOf(draft.files, buffer));
+  const changed = $derived(changes.map((c) => c.path));
+  const dirty = $derived(changes.length > 0);
   const checkStale = $derived(!!checked && checked.files !== JSON.stringify(buffer));
   /** The build the operator cleared from the output; a newer one shows again. */
   let clearedBuild = $state<string | null>(null);
@@ -99,7 +103,7 @@
   async function save() {
     if (!dirty || working) return;
     const d = await act("save", () =>
-      call<Draft>(api.PUT("/drafts/{name}", { ...path, body: { files: buffer, message: message.trim() || undefined } })),
+      call<Draft>(api.PUT("/drafts/{name}", { ...path, body: { changes, message: message.trim() || undefined } })),
     );
     if (!d) return;
     message = "";
@@ -111,7 +115,7 @@
   async function check() {
     const files = JSON.stringify(buffer);
     const c = await act("check", () =>
-      call<DraftCheck>(api.POST("/drafts/{name}/check", { ...path, body: dirty ? { files: buffer } : {} })),
+      call<DraftCheck>(api.POST("/drafts/{name}/check", { ...path, body: dirty ? { changes } : {} })),
     );
     if (c) checked = { result: c, files };
   }
@@ -125,7 +129,7 @@
   async function install() {
     await act("install", async () => {
       const c = await call<DraftCheck>(api.POST("/drafts/{name}/check", { ...path, body: {} }));
-      checked = { result: c, files: JSON.stringify(draft.files) };
+      checked = { result: c, files: JSON.stringify(bufferOf(draft.files)) };
       if (!c.ok) {
         error = "Fix what the check found, save, then install.";
         return;
@@ -150,37 +154,49 @@
       return true;
     });
     if (!ok) return;
-    buffer = { ...draft.files }; // nothing left to lose
+    buffer = bufferOf(draft.files); // nothing left to lose
     client.removeQueries({ queryKey: keys.draft(draft.name) });
     await client.invalidateQueries({ queryKey: keys.drafts });
     await goto("/stacks");
   }
 
-  /** nixd for flake.nix, started the first time the file is shown. */
+  /** nixd for the Nix files, started the first time one is shown. */
   let nixLsp = $state<NixLanguageServer | null>(null);
   onDestroy(() => nixLsp?.close());
   const nixReady = $derived(nixLsp?.status === "ready");
 
-  function show(key: FileKey) {
-    tab = key;
-    if (key === "flake" && !nixLsp) nixLsp = new NixLanguageServer(draft.name);
+  function show(p: string) {
+    if (!(p in buffer)) return;
+    open = p;
+    if (isNix(p) && !nixLsp) nixLsp = new NixLanguageServer(draft.name);
   }
 
-  /** Language help per file: the manifest's schema and a Check of the text being typed; nixd for flake.nix. */
-  const extensionsFor = (key: FileKey) =>
-    key === "flake"
+  function rename(from: string, to: string) {
+    buffer[to] = buffer[from] ?? null;
+    delete buffer[from];
+    if (open === from) show(to);
+  }
+
+  function deleteFile(p: string) {
+    delete buffer[p];
+    if (open === p) open = MANIFEST;
+  }
+
+  /** Language help per file: the manifest's schema and a Check of the text being typed; nixd for Nix files. */
+  const extensionsFor = (p: string) =>
+    isNix(p)
       ? nixLsp && nixReady
-        ? [nixLsp.extension()]
+        ? [nixLsp.extension(p)]
         : []
-      : key === "manifest"
+      : p === MANIFEST
       ? [
           manifestAssist(
             () => schema.data,
             async (manifest) => {
-              const files = { ...$state.snapshot(buffer), manifest } as DraftFiles;
-              const c = await call<DraftCheck>(api.POST("/drafts/{name}/check", { ...path, body: { files } }));
+              const files: Buffer = { ...$state.snapshot(buffer), [MANIFEST]: manifest };
+              const c = await call<DraftCheck>(api.POST("/drafts/{name}/check", { ...path, body: { changes: changesOf(draft.files, files) } }));
               checked = { result: c, files: JSON.stringify(files) };
-              return c.problems.filter((p) => p.file === "homelab-stack.json").map((p) => p.message);
+              return c.problems.filter((p) => p.file === MANIFEST).map((p) => p.message);
             },
           ),
         ]
@@ -205,8 +221,8 @@
   }}
 />
 
-<!-- A light VS Code workbench: title bar and toolbar, file tabs over the
-     editor, one output panel under it, the assistant in a side bar opened from
+<!-- A light VS Code workbench: title bar and toolbar, the file list beside
+     the editor, one output panel under it, the assistant in a side bar opened from
      the activity bar on the right, and a status bar. -->
 <div class="flex flex-col overflow-hidden rounded-md border border-line bg-surface xl:h-[calc(100dvh-4.25rem)] xl:min-h-[36rem]">
   <div class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-sunken px-3 py-1.5">
@@ -249,25 +265,39 @@
   {/if}
 
   <div class="flex min-h-0 flex-1 flex-col xl:flex-row">
-    <section aria-label="Files" class="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div role="tablist" aria-label="Files" class="flex shrink-0 border-b border-line bg-sunken">
-        {#each FILES as f (f.key)}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === f.key}
-            class="-mb-px border-t-2 border-r border-t-transparent border-r-line px-3 py-1.5 text-muted hover:text-fg aria-selected:border-t-accent aria-selected:bg-surface aria-selected:text-fg"
-            onclick={() => show(f.key)}
-          >
-            {f.path}{#if changed.includes(f.key)}<span class="ml-1 text-accent" aria-label="(changed)">•</span>{/if}
-          </button>
-        {/each}
-      </div>
-      <div class="h-[60vh] min-h-72 xl:h-auto xl:min-h-0 xl:flex-1" role="tabpanel">
-        <!-- Made again once nixd is ready, so the editor takes its extension. -->
-        {#key `${tab}:${tab === "flake" && nixReady}`}
-          <CodeEditor bare extensions={extensionsFor(tab)} value={buffer[tab]} file={tab} label={FILES.find((f) => f.key === tab)!.path} onChange={(v) => (buffer[tab] = v)} />
-        {/key}
+    <section aria-label="Editor" class="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div class="flex min-h-0 flex-1 flex-col md:flex-row">
+        <div class="max-h-48 shrink-0 border-b border-line md:max-h-none md:w-56 md:border-r md:border-b-0">
+          <FileList
+            {buffer}
+            {open}
+            {changed}
+            onOpen={show}
+            onNew={(p) => {
+              buffer[p] = "";
+              show(p);
+            }}
+            onRename={rename}
+            onDelete={deleteFile}
+          />
+        </div>
+        <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div class="flex shrink-0 border-b border-line bg-sunken">
+            <span class="-mb-px truncate border-t-2 border-r border-t-accent border-r-line bg-surface px-3 py-1.5">
+              {open}{#if changed.includes(open)}<span class="ml-1 text-accent" aria-label="(changed)">•</span>{/if}
+            </span>
+          </div>
+          <div class="h-[60vh] min-h-72 xl:h-auto xl:min-h-0 xl:flex-1">
+            {#if buffer[open] === null}
+              <p class="p-4 text-muted">A binary file, or larger than 256 KB: kept as it is, not edited here.</p>
+            {:else}
+              <!-- Made again once nixd is ready, so the editor takes its extension. -->
+              {#key `${open}:${isNix(open) && nixReady}`}
+                <CodeEditor bare extensions={extensionsFor(open)} value={buffer[open] ?? ""} file={open} label={open} onChange={(v) => (buffer[open] = v)} />
+              {/key}
+            {/if}
+          </div>
+        </div>
       </div>
       <div class="h-64 shrink-0 border-t border-line xl:h-[30%]">
         <DraftOutput
@@ -279,14 +309,14 @@
             clearedBuild = draft.build?.started_at ?? null;
           }}
           buildStale={!!draft.build && (draft.build.rev !== draft.rev || dirty)}
-          onShow={(path) => show(fileOf(path))}
+          onShow={show}
         />
       </div>
     </section>
 
     {#if assistantOn && assistantOpen}
       <aside class="min-h-0 border-t border-line xl:w-[30rem] xl:shrink-0 xl:overflow-auto xl:border-t-0 xl:border-l">
-        <AssistantPanel name={draft.name} {buffer} {fixText} model={assistant.data!.model} onApply={(f) => (buffer = f)} />
+        <AssistantPanel name={draft.name} {buffer} unsaved={changes} {open} {fixText} model={assistant.data!.model} onApply={(f) => (buffer = f)} />
       </aside>
     {/if}
     {#if assistantOn}

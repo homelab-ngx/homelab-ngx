@@ -1,6 +1,7 @@
 // Package drafts keeps the stacks written in the dashboard. Each draft is a
-// git repo the daemon owns under its state directory, holding the two files
-// of a stack repo. A save is a commit; check and build read the files the way
+// git repo the daemon owns under its state directory, holding the files of a
+// stack repo: the manifest, flake.nix and whatever else the module reads. A
+// save is a commit; check and build read the files the way
 // an install does; and an install is an ordinary stack whose source is the
 // repo (git+file://), so updates, rollback and the lock work unchanged.
 package drafts
@@ -45,11 +46,11 @@ var templateManifest string
 //go:embed template/flake.nix
 var templateFlake string
 
-// Template is the files a new draft named name starts from.
-func Template(name string) DraftFiles {
-	return DraftFiles{
-		Manifest: strings.ReplaceAll(templateManifest, "NAME", name),
-		Flake:    strings.ReplaceAll(templateFlake, "NAME", name),
+// Template is the files a new draft named name starts from, by path.
+func Template(name string) map[string]string {
+	return map[string]string{
+		stacks.ManifestFile: strings.ReplaceAll(templateManifest, "NAME", name),
+		stacks.FlakeFile:    strings.ReplaceAll(templateFlake, "NAME", name),
 	}
 }
 
@@ -137,7 +138,7 @@ func (s *Service) List(ctx context.Context) ([]DraftSummary, error) {
 	return out, nil
 }
 
-// Get returns one draft with its saved files.
+// Get returns one draft with every saved file.
 func (s *Service) Get(ctx context.Context, name string) (Draft, error) {
 	r, err := s.row(ctx, name)
 	if err != nil {
@@ -157,7 +158,7 @@ func (s *Service) view(ctx context.Context, r store.StackDraft) (Draft, error) {
 	}
 	d := Draft{
 		Name: r.Name, Source: s.source(r.Name), Rev: rev, SavedAt: at,
-		CreatedAt: time.UnixMilli(r.CreatedAt), Files: files,
+		CreatedAt: time.UnixMilli(r.CreatedAt), Files: files.list(),
 		InstalledAs: orEmpty(s.installed(ctx)[r.Name]),
 	}
 	if r.CheckResult != "" {
@@ -227,14 +228,42 @@ func (s *Service) Create(ctx context.Context, name string) (Draft, error) {
 		return Draft{}, httpx.BadRequest("invalid_name",
 			"%q is not a stack name: use 1-12 characters of a-z, 0-9 and '-', starting with a letter", name)
 	}
-	if err := s.create(ctx, name); err != nil {
+	fill := func(dir string) error {
+		for p, content := range Template(name) {
+			if err := os.WriteFile(filepath.Join(dir, p), []byte(content), 0o640); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := s.create(ctx, name, fill, "Start from the template"); err != nil {
 		return Draft{}, err
 	}
 	s.log.Info("draft created", "draft", name)
 	return s.Get(ctx, name)
 }
 
-func (s *Service) create(ctx context.Context, name string) error {
+// createFrom starts the draft name from a copy of the files under src
+// (a stack's commit in the store, say), as its first commit with msg. The
+// copy must hold the manifest and flake.nix.
+func (s *Service) createFrom(ctx context.Context, name, src, msg string) error {
+	fill := func(dir string) error {
+		if err := copyTree(src, dir); err != nil {
+			return err
+		}
+		for _, p := range required {
+			if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
+				return httpx.BadRequest("not_a_stack", "%s has no %s", src, p)
+			}
+		}
+		return nil
+	}
+	return s.create(ctx, name, fill, msg)
+}
+
+// create makes the draft's repo, has fill put its files in, and commits them
+// as msg. A failure leaves no repo and no draft.
+func (s *Service) create(ctx context.Context, name string, fill func(dir string) error, msg string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := s.st.Queries().GetDraft(ctx, name); err == nil {
@@ -262,10 +291,10 @@ func (s *Service) create(ctx context.Context, name string) error {
 		if _, err := s.git(ctx, dir, "init", "--quiet", "--initial-branch="+branch); err != nil {
 			return err
 		}
-		if err := s.write(name, Template(name)); err != nil {
+		if err := fill(dir); err != nil {
 			return err
 		}
-		_, err := s.commit(ctx, name, "Start from the template")
+		_, err := s.commit(ctx, name, msg)
 		return err
 	}()
 	if err == nil {
@@ -277,8 +306,8 @@ func (s *Service) create(ctx context.Context, name string) error {
 	return err
 }
 
-// Save writes the files and commits them. Files that did not change make
-// no commit. A stack installed from the draft reads the new commit at once,
+// Save applies the changes to the saved files and commits them. Changes that
+// leave every file as it was make no commit. A stack installed from the draft reads the new commit at once,
 // so it shows as an update (approved by itself when it asks for nothing new).
 func (s *Service) Save(ctx context.Context, name string, in DraftSave) (Draft, error) {
 	if _, err := s.row(ctx, name); err != nil {
@@ -289,11 +318,7 @@ func (s *Service) Save(ctx context.Context, name string, in DraftSave) (Draft, e
 		msg = defaultMessage
 	}
 	s.mu.Lock()
-	if err := s.write(name, in.Files); err != nil {
-		s.mu.Unlock()
-		return Draft{}, err
-	}
-	changed, err := s.commit(ctx, name, msg)
+	changed, err := s.save(ctx, name, in.Changes, msg)
 	s.mu.Unlock()
 	if err != nil {
 		return Draft{}, err
@@ -334,27 +359,47 @@ func (s *Service) Delete(ctx context.Context, name string) error {
 	return nil
 }
 
-// write puts the files in the draft's working tree.
-func (s *Service) write(name string, f DraftFiles) error {
-	for file, content := range map[string]string{stacks.ManifestFile: f.Manifest, stacks.FlakeFile: f.Flake} {
-		if err := os.WriteFile(filepath.Join(s.repo(name), file), []byte(content), 0o640); err != nil {
-			return err
-		}
+// save checks the changes against the saved files, writes them and commits
+// them; false when nothing changed. A write that fails half way puts the
+// working tree back to the last commit. The caller holds s.mu.
+func (s *Service) save(ctx context.Context, name string, changes []DraftChange, msg string) (bool, error) {
+	saved, err := s.read(name)
+	if err != nil {
+		return false, err
 	}
-	return nil
+	if _, err := saved.apply(changes); err != nil {
+		return false, err
+	}
+	if err := writeChanges(s.repo(name), changes); err != nil {
+		s.reset(ctx, name)
+		return false, fmt.Errorf("writing the draft %s: %w", name, err)
+	}
+	changed, err := s.commit(ctx, name, msg)
+	if err != nil {
+		s.reset(ctx, name)
+	}
+	return changed, err
 }
 
-// read returns the draft's files as saved.
-func (s *Service) read(name string) (DraftFiles, error) {
-	m, err := os.ReadFile(filepath.Join(s.repo(name), stacks.ManifestFile))
-	if err != nil {
-		return DraftFiles{}, fmt.Errorf("reading the draft %s: %w", name, err)
+// reset puts the working tree back to the last commit.
+func (s *Service) reset(ctx context.Context, name string) {
+	dir := s.repo(name)
+	if _, err := s.git(ctx, dir, "reset", "--hard", "--quiet"); err != nil {
+		s.log.Warn("draft not reset", "draft", name, "error", err)
 	}
-	f, err := os.ReadFile(filepath.Join(s.repo(name), stacks.FlakeFile))
-	if err != nil {
-		return DraftFiles{}, fmt.Errorf("reading the draft %s: %w", name, err)
+	if _, err := s.git(ctx, dir, "clean", "-d", "--force", "--quiet"); err != nil {
+		s.log.Warn("draft not cleaned", "draft", name, "error", err)
 	}
-	return DraftFiles{Manifest: string(m), Flake: string(f)}, nil
+}
+
+// read returns the draft's files as saved: the working tree, which is the
+// last commit between saves.
+func (s *Service) read(name string) (tree, error) {
+	t, err := readTree(s.repo(name))
+	if err != nil {
+		return nil, fmt.Errorf("reading the draft %s: %w", name, err)
+	}
+	return t, nil
 }
 
 // commit commits the working tree; false when nothing changed.

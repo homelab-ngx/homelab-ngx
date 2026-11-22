@@ -86,7 +86,7 @@ func (h *HTTP) Register(a httpx.APIs) {
 		return h.svc.Get(ctx, n)
 	}))
 	httpx.Register(a, httpx.ScopeOperator, op("saveDraft", http.MethodPut, "/drafts/{name}",
-		"Save a draft's files as a commit. A stack installed from it shows the commit as an update.", 0),
+		"Save changes to a draft's files as a commit. A stack installed from it shows the commit as an update.", 0),
 		func(ctx context.Context, in *saveIn) (*draftBody, error) {
 			d, err := h.svc.Save(ctx, in.Name, in.Body)
 			if err != nil {
@@ -100,13 +100,13 @@ func (h *HTTP) Register(a httpx.APIs) {
 			return nil, h.svc.Delete(ctx, in.Name)
 		})
 	httpx.Register(a, httpx.ScopeOperator, op("checkDraft", http.MethodPost, "/drafts/{name}/check",
-		"Check a draft's files the way an install reads them: the manifest parsed and validated, flake.nix present.", 0),
+		"Check a draft's files the way an install reads them: the manifest parsed and validated, flake.nix present, the Nix files parsed.", 0),
 		func(ctx context.Context, in *checkIn) (*checkBody, error) {
-			var files *DraftFiles
+			var changes *[]DraftChange
 			if in.Body != nil {
-				files = in.Body.Files
+				changes = in.Body.Changes
 			}
-			c, err := h.svc.Check(ctx, in.Name, files)
+			c, err := h.svc.Check(ctx, in.Name, changes)
 			if err != nil {
 				return nil, err
 			}

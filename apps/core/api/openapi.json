@@ -172,16 +172,20 @@
         ],
         "type": "object"
       },
-      "AssistFiles": {
+      "AssistFile": {
         "additionalProperties": false,
         "properties": {
-          "flake": {
+          "content": {
             "type": "string"
           },
-          "manifest": {
+          "path": {
             "type": "string"
           }
         },
+        "required": [
+          "path",
+          "content"
+        ],
         "type": "object"
       },
       "AssistText": {
@@ -1904,8 +1908,11 @@
             "type": "string"
           },
           "files": {
-            "$ref": "#/components/schemas/DraftFiles",
-            "description": "The files at the last save."
+            "description": "Every file of the repo at the last save, by path.",
+            "items": {
+              "$ref": "#/components/schemas/DraftFile"
+            },
+            "type": "array"
           },
           "installed_as": {
             "description": "The installed stacks built from this draft; empty when none is. A save shows there as an update.",
@@ -1960,8 +1967,11 @@
             "type": "array"
           },
           "files": {
-            "$ref": "#/components/schemas/AssistFiles",
-            "description": "Whole files it proposes."
+            "description": "Whole files it proposes, in the order it gave them; a file it gave twice, once.",
+            "items": {
+              "$ref": "#/components/schemas/AssistFile"
+            },
+            "type": "array"
           },
           "model": {
             "type": "string"
@@ -2001,9 +2011,13 @@
       "DraftAssist": {
         "additionalProperties": false,
         "properties": {
-          "files": {
-            "$ref": "#/components/schemas/DraftFiles",
-            "description": "The editor's files, saved or not."
+          "changes": {
+            "description": "The editor's unsaved changes, on top of the saved files.",
+            "items": {
+              "$ref": "#/components/schemas/DraftChange"
+            },
+            "maxItems": 500,
+            "type": "array"
           },
           "kind": {
             "description": "draft: write the stack Text describes; review: look for mistakes; fix: fix what the last check or build reported; ask: Text is the question.",
@@ -2015,6 +2029,11 @@
             ],
             "type": "string"
           },
+          "open": {
+            "description": "The file the editor shows. The assistant reads it with the manifest, flake.nix and every changed file.",
+            "maxLength": 256,
+            "type": "string"
+          },
           "text": {
             "description": "The description (draft), the question (ask), or extra words for review and fix.",
             "maxLength": 4000,
@@ -2022,8 +2041,7 @@
           }
         },
         "required": [
-          "kind",
-          "files"
+          "kind"
         ],
         "type": "object"
       },
@@ -2073,6 +2091,29 @@
         ],
         "type": "object"
       },
+      "DraftChange": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "description": "The file's whole new text; a new path makes the file. Absent with delete.",
+            "maxLength": 262144,
+            "type": "string"
+          },
+          "delete": {
+            "description": "Delete the file. homelab-stack.json and flake.nix cannot be deleted.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "The file's path in the repo, with / between folders; nothing under .git.",
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "type": "object"
+      },
       "DraftCheck": {
         "additionalProperties": false,
         "properties": {
@@ -2109,9 +2150,13 @@
       "DraftCheckIn": {
         "additionalProperties": false,
         "properties": {
-          "files": {
-            "$ref": "#/components/schemas/DraftFiles",
-            "description": "Unsaved files to check; absent checks the saved ones."
+          "changes": {
+            "description": "Unsaved changes to check on top of the saved files; absent checks the saved ones.",
+            "items": {
+              "$ref": "#/components/schemas/DraftChange"
+            },
+            "maxItems": 500,
+            "type": "array"
           }
         },
         "type": "object"
@@ -2129,23 +2174,32 @@
         ],
         "type": "object"
       },
-      "DraftFiles": {
+      "DraftFile": {
         "additionalProperties": false,
         "properties": {
-          "flake": {
-            "description": "flake.nix: the stack's NixOS module, exported as nixosModules.default.",
-            "maxLength": 262144,
+          "binary": {
+            "description": "Not UTF-8 text, or larger than 256 KiB: listed and kept, but not edited here, and content is empty.",
+            "type": "boolean"
+          },
+          "content": {
+            "description": "The file's text; empty when binary is true.",
             "type": "string"
           },
-          "manifest": {
-            "description": "homelab-stack.json: what the stack asks the host for.",
-            "maxLength": 262144,
+          "path": {
+            "description": "The file's path in the repo, with / between folders.",
             "type": "string"
+          },
+          "size": {
+            "description": "Its size in bytes.",
+            "format": "int64",
+            "type": "integer"
           }
         },
         "required": [
-          "manifest",
-          "flake"
+          "path",
+          "size",
+          "binary",
+          "content"
         ],
         "type": "object"
       },
@@ -2153,11 +2207,7 @@
         "additionalProperties": false,
         "properties": {
           "file": {
-            "description": "The file it is in.",
-            "enum": [
-              "homelab-stack.json",
-              "flake.nix"
-            ],
+            "description": "The path of the file it is in.",
             "type": "string"
           },
           "message": {
@@ -2174,8 +2224,13 @@
       "DraftSave": {
         "additionalProperties": false,
         "properties": {
-          "files": {
-            "$ref": "#/components/schemas/DraftFiles"
+          "changes": {
+            "description": "The changes, applied in order to the saved files.",
+            "items": {
+              "$ref": "#/components/schemas/DraftChange"
+            },
+            "maxItems": 500,
+            "type": "array"
           },
           "message": {
             "description": "The commit message; default \"Edit in dashboard\".",
@@ -2184,7 +2239,7 @@
           }
         },
         "required": [
-          "files"
+          "changes"
         ],
         "type": "object"
       },
@@ -11265,7 +11320,7 @@
             "description": "Error"
           }
         },
-        "summary": "Save a draft's files as a commit. A stack installed from it shows the commit as an update.",
+        "summary": "Save changes to a draft's files as a commit. A stack installed from it shows the commit as an update.",
         "tags": [
           "drafts"
         ]
@@ -11635,7 +11690,7 @@
             "description": "Error"
           }
         },
-        "summary": "Check a draft's files the way an install reads them: the manifest parsed and validated, flake.nix present.",
+        "summary": "Check a draft's files the way an install reads them: the manifest parsed and validated, flake.nix present, the Nix files parsed.",
         "tags": [
           "drafts"
         ]

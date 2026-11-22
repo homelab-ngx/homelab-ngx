@@ -25,13 +25,13 @@ export class NixLanguageServer {
   status = $state<LspStatus>("starting");
   /** Why it is off. */
   reason = $state("");
-  readonly uri: string;
+  readonly #draft: string;
   #client = new LSPClient({ extensions: languageServerExtensions(), timeout: 30_000, sanitizeHTML: sanitize });
   #ws: WebSocket | undefined;
   #closed = false;
 
   constructor(draft: string) {
-    this.uri = `file:///drafts/${encodeURIComponent(draft)}/flake.nix`;
+    this.#draft = draft;
     const scheme = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${scheme}://${location.host}/api/drafts/${encodeURIComponent(draft)}/lsp`);
     this.#ws = ws;
@@ -63,9 +63,10 @@ export class NixLanguageServer {
     if (this.#client.connected) this.#client.disconnect();
   }
 
-  /** The editor extension for flake.nix; only once the server is ready. */
-  extension(): Extension {
-    return this.#client.plugin(this.uri, "nix");
+  /** The editor extension for the Nix file at path in the draft; only once the server is ready. */
+  extension(path: string): Extension {
+    const uri = `file:///drafts/${encodeURIComponent(this.#draft)}/${path.split("/").map(encodeURIComponent).join("/")}`;
+    return this.#client.plugin(uri, "nix");
   }
 
   close() {

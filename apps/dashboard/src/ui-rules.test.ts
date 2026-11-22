@@ -22,7 +22,7 @@ const PAGE_BUDGET = 120;
 /** The most words in phrases and sentences one dialog or form holds. */
 const DIALOG_BUDGET = 90;
 /** Mono is for logs and the stack editor: a pre element, or one of these files. */
-const MONO_FILES = /(LogViewer|CodeEditor|DiffView)\.svelte$/;
+const MONO_FILES = /(LogViewer|CodeEditor|DiffView|FileList)\.svelte$/;
 const SRC = resolve(import.meta.dirname);
 
 interface Run {

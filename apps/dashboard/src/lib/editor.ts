@@ -9,15 +9,11 @@ import { EditorView } from "@codemirror/view";
 import { tags as t } from "@lezer/highlight";
 import { nix } from "@replit/codemirror-lang-nix";
 
-export type FileKey = "manifest" | "flake";
+/** Whether the file at path is Nix, which nixd helps with. */
+export const isNix = (path: string) => path.endsWith(".nix");
 
-/** The two files of a stack, as they are named in its repo. */
-export const FILES: { key: FileKey; path: string }[] = [
-  { key: "manifest", path: "homelab-stack.json" },
-  { key: "flake", path: "flake.nix" },
-];
-
-export const language = (key: FileKey): Extension => (key === "manifest" ? json() : nix());
+/** The language of the file at path, by its extension; none for a file it does not know. */
+export const language = (path: string): Extension => (path.endsWith(".json") || path.endsWith(".lock") ? json() : isNix(path) ? nix() : []);
 
 /** The editor in the stack editor's workbench: white like the page, no focus ring of its own. */
 export const bareTheme = EditorView.theme({
