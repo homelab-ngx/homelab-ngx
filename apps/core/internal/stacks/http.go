@@ -103,6 +103,39 @@ type restoreIn struct{ Body StackLock }
 
 type restoreBody struct{ Body StackRestoreResult }
 
+type iconIn struct {
+	Name string `path:"name" doc:"The stack's name, as it was installed."`
+	Unit string `query:"unit" doc:"A service's unit as the manifest's services list names it, such as plex.service. Without it, the stack's own icon."`
+}
+
+// iconOut is an icon: the image (200), or a redirect to its https URL (302).
+type iconOut struct {
+	Status       int
+	ContentType  string `header:"Content-Type"`
+	NoSniff      string `header:"X-Content-Type-Options"`
+	CacheControl string `header:"Cache-Control"`
+	CSP          string `header:"Content-Security-Policy" doc:"Set on an SVG: it is shown as an image, never run as a page."`
+	Location     string `header:"Location"`
+	Body         []byte
+}
+
+// svgCSP keeps an SVG opened on its own from loading or running anything.
+const svgCSP = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+
+func iconAnswer(ic Icon) *iconOut {
+	if ic.URL != "" {
+		return &iconOut{Status: http.StatusFound, Location: ic.URL}
+	}
+	out := &iconOut{
+		Status: http.StatusOK, ContentType: ic.Type, NoSniff: "nosniff",
+		CacheControl: "private, max-age=86400", Body: ic.Data,
+	}
+	if ic.Type == "image/svg+xml" {
+		out.CSP = svgCSP
+	}
+	return out
+}
+
 // Register adds the stacks operations. Reading stacks and their history is
 // `read`; starting and stopping a stack is `control` (a stack may run
 // others); everything that changes what is installed or approved is the
@@ -142,6 +175,22 @@ func (h *HTTP) Register(a httpx.APIs) {
 		})
 	httpx.Register(a, httpx.ScopeRead, op("getStack", http.MethodGet, "/stacks/{name}",
 		"One stack.", 0), stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Get(ctx, n) }))
+	iconOp := op("getStackIcon", http.MethodGet, "/stacks/{name}/icon",
+		"The icon of a stack, or of one of its services: the image, or a redirect to it when the manifest names an https URL. Answers no_icon when there is none.", 0)
+	image := &huma.MediaType{Schema: &huma.Schema{Type: huma.TypeString, Format: "binary"}}
+	iconOp.Responses = map[string]*huma.Response{
+		"200": {Description: "The image.", Content: map[string]*huma.MediaType{"image/svg+xml": image, "image/png": image, "image/webp": image}},
+		"302": {Description: "The icon is an https URL, which Location names.",
+			Headers: map[string]*huma.Param{"Location": {Schema: &huma.Schema{Type: huma.TypeString}}}},
+	}
+	httpx.Register(a, httpx.ScopeRead, iconOp,
+		func(ctx context.Context, in *iconIn) (*iconOut, error) {
+			ic, err := h.svc.Icon(ctx, in.Name, in.Unit)
+			if err != nil {
+				return nil, err
+			}
+			return iconAnswer(ic), nil
+		})
 	httpx.Register(a, httpx.ScopeOperator, op("patchStack", http.MethodPatch, "/stacks/{name}",
 		"Change what the operator sets on a stack: its label, whether it starts after the host boots, the nixpkgs a version 7 stack is built with, and the source it is fetched from.", 0),
 		func(ctx context.Context, in *patchIn) (*stackBody, error) {

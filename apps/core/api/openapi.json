@@ -20538,6 +20538,103 @@
         ]
       }
     },
+    "/stacks/{name}/icon": {
+      "get": {
+        "operationId": "getStackIcon",
+        "parameters": [
+          {
+            "description": "The stack's name, as it was installed.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "The stack's name, as it was installed.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "A service's unit as the manifest's services list names it, such as plex.service. Without it, the stack's own icon.",
+            "explode": false,
+            "in": "query",
+            "name": "unit",
+            "schema": {
+              "description": "A service's unit as the manifest's services list names it, such as plex.service. Without it, the stack's own icon.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "image/png": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/svg+xml": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              },
+              "image/webp": {
+                "schema": {
+                  "contentMediaType": "application/octet-stream",
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The image.",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Content-Security-Policy": {
+                "schema": {
+                  "description": "Set on an SVG: it is shown as an image, never run as a page.",
+                  "type": "string"
+                }
+              },
+              "Content-Type": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Content-Type-Options": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "302": {
+            "description": "The icon is an https URL, which Location names.",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "summary": "The icon of a stack, or of one of its services: the image, or a redirect to it when the manifest names an https URL. Answers no_icon when there is none.",
+        "tags": [
+          "stacks"
+        ]
+      }
+    },
     "/stacks/{name}/rollback": {
       "post": {
         "operationId": "rollbackStack",

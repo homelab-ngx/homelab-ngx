@@ -102,6 +102,8 @@ type Service struct {
 	// backupAdded hears of recommended backup folders a healthy install or
 	// update brought (OnBackupFoldersAdded); guarded by mu.
 	backupAdded func(ctx context.Context, stack string, keys []string)
+
+	icons *iconCache // the stacks' and services' icons (iconserve.go)
 }
 
 // New wires the service. notifier may be nil.
@@ -116,6 +118,16 @@ func New(st *store.Store, src Source, host Host, notifier Notifier, log *slog.Lo
 		statDir: isDir, timeZone: HostTimeZone, statOwner: statOwner, statfs: diskRoom, bootID: readBootID,
 	}
 	s.chown = chownPath(host.Runner)
+	s.icons = newIconCache(host.IconsDir, func(ctx context.Context, url string) (string, error) {
+		f, err := prefetch(ctx, s.r, url)
+		if err != nil {
+			return "", err
+		}
+		if !strings.HasPrefix(f.StorePath, "/nix/store/") {
+			return "", errors.New("nix flake prefetch: no store path for the commit")
+		}
+		return f.StorePath, nil
+	}, log)
 	s.resolveNixpkgs = func(ctx context.Context, spec string) (string, error) { return ResolveNixpkgs(ctx, s.r, spec) }
 	s.listChannels = func(ctx context.Context) ([]string, error) { return ListChannels(ctx, s.r) }
 	s.nixpkgsRelease = func(ctx context.Context, rev string) (NixpkgsRelease, error) {

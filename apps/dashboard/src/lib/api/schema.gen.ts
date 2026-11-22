@@ -1638,6 +1638,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks/{name}/icon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The icon of a stack, or of one of its services: the image, or a redirect to it when the manifest names an https URL. Answers no_icon when there is none. */
+        get: operations["getStackIcon"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks/{name}/rollback": {
         parameters: {
             query?: never;
@@ -12166,6 +12183,47 @@ export interface operations {
                         [key: string]: unknown;
                     };
                 };
+            };
+        };
+    };
+    getStackIcon: {
+        parameters: {
+            query?: {
+                /** @description A service's unit as the manifest's services list names it, such as plex.service. Without it, the stack's own icon. */
+                unit?: string;
+            };
+            header?: never;
+            path: {
+                /** @description The stack's name, as it was installed. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image. */
+            200: {
+                headers: {
+                    "Cache-Control"?: string;
+                    "Content-Security-Policy"?: string;
+                    "Content-Type"?: string;
+                    Location?: string;
+                    "X-Content-Type-Options"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                    "image/svg+xml": string;
+                    "image/webp": string;
+                };
+            };
+            /** @description The icon is an https URL, which Location names. */
+            302: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

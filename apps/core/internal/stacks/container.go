@@ -75,6 +75,9 @@ type Host struct {
 	// disabled services (masks.go). On tmpfs, like VarsDir. Empty: no
 	// service can be disabled.
 	UnitsDir string
+	// IconsDir keeps the icons fetched from the dashboard-icons set, one
+	// file per name. Empty: they are fetched each time they are asked for.
+	IconsDir string
 }
 
 // GPU is the host's graphics stack as a version 8 stack gets it with the GPU

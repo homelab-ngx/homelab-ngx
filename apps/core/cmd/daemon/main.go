@@ -158,6 +158,7 @@ func run(configPath string) error {
 	} else {
 		log.Error("host settings unreadable", "error", err)
 	}
+	stackHost.IconsDir = filepath.Join(nix.Paths.StateDir, "icons")
 	stackHost.GPU = stacks.GPU{Packages: nix.Stacks.GPU.Packages, LibvaDriver: nix.Stacks.GPU.LibvaDriver}
 	stacksSvc := stacks.New(st, stacks.NewNixSource(r), stackHost, notify, logging.Logger("stacks"))
 	hostSvc.OnChange(func(v hostcfg.Values) {

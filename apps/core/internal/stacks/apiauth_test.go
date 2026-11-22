@@ -150,8 +150,8 @@ func TestStackAPIAuth(t *testing.T) {
 			}
 		}
 	}
-	if ops != 29 {
-		t.Errorf("tried %d operations, want the 29 of the stacks package", ops)
+	if ops != 30 {
+		t.Errorf("tried %d operations, want the 30 of the stacks package", ops)
 	}
 
 	tests := []struct {
