@@ -159,8 +159,8 @@ export function stackHues(names: string[]): Map<string, Hue> {
  * one, short how it reads under Core in the table.
  */
 export const PARTS: { key: "services" | "sessions" | "kernel"; label: string; short: string; hue: Hue }[] = [
-  { key: "services", label: "Core (Services)", short: "Services", hue: CORE_HUE },
-  { key: "sessions", label: "Sessions", short: "Sessions", hue: SESSIONS_HUE },
+  { key: "services", label: "Core (Services)", short: "System services", hue: CORE_HUE },
+  { key: "sessions", label: "Sessions", short: "User sessions", hue: SESSIONS_HUE },
   { key: "kernel", label: "Core (Kernel)", short: "Kernel", hue: KERNEL_HUE },
 ];
 
