@@ -127,13 +127,13 @@ describe("mood", () => {
     expect(mood(emptyFrames())).toBeUndefined();
   });
   it("names what work waits for", () => {
-    expect(mood(withPressure(12, 0, 0))).toEqual({ mood: "busy", waits: "processor" });
-    expect(mood(withPressure(0, 0, 12))).toEqual({ mood: "busy", waits: "disks" });
+    expect(mood(withPressure(12, 0, 0))).toEqual({ mood: "medium", waits: "processor" });
+    expect(mood(withPressure(0, 0, 12))).toEqual({ mood: "medium", waits: "disks" });
     expect(mood(withPressure(0, 15, 0))).toEqual({ mood: "heavy", waits: "memory" });
     // Disks are further over their line (3x) than the processor (1.2x).
     expect(mood(withPressure(12, 0, 30))).toEqual({ mood: "heavy", waits: "disks" });
   });
-  it("calls a full processor nobody waits for busy", () => {
-    expect(mood(withPressure(0, 0, 0, 90))).toEqual({ mood: "busy" });
+  it("calls a full processor nobody waits for medium load", () => {
+    expect(mood(withPressure(0, 0, 0, 90))).toEqual({ mood: "medium" });
   });
 });

@@ -76,7 +76,7 @@
   const MOOD: Record<Mood, { tone: Tone; word: string }> = {
     idle: { tone: "ok", word: "idle" },
     light: { tone: "ok", word: "light load" },
-    busy: { tone: "warn", word: "busy" },
+    medium: { tone: "warn", word: "medium load" },
     heavy: { tone: "bad", word: "heavy load" },
   };
   const WAITS: Record<Resource, string> = { processor: "the processor", memory: "memory", disks: "the disks" };
@@ -84,7 +84,7 @@
     if (!health) return live.connected ? "Collecting readings…" : "Connecting…";
     const on = health.waits && WAITS[health.waits];
     if (health.mood === "heavy") return `Work keeps waiting for ${on}, see the Waiting chart`;
-    if (health.mood === "busy") return on ? `Some work waits for ${on}` : "The processor is above 80%";
+    if (health.mood === "medium") return on ? `Some work waits for ${on}` : "The processor is above 80%";
     return "";
   });
 
@@ -120,7 +120,7 @@
     <div class="flex flex-wrap items-center gap-2">
       <h1 class="text-xl font-semibold">
         <Help label="Overview">
-          Over the last minute. Idle and light load: nothing waits, with the processor under or over 10%. Busy and heavy load: work
+          Over the last minute. Idle and light load: nothing waits, with the processor under or over 10%. Medium and heavy load: work
           waits for the processor, memory or disks.
         </Help>
       </h1>
