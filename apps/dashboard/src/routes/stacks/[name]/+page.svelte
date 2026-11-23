@@ -243,6 +243,19 @@
           <button type="button" class="btn btn-sm" disabled={working} onclick={restart}>Restart</button>
         </div>
       {/if}
+      {#if s.idle_grants.length}
+        <div role="status" class="grid gap-1 rounded-md bg-warn-soft px-3 py-2 text-warn">
+          <p>Open nothing now:</p>
+          <ul class="grid gap-1">
+            {#each s.idle_grants as g (g.detail)}
+              <li>{g.detail}. {g.reason}.</li>
+            {/each}
+          </ul>
+          {#if s.idle_grants.some((g) => g.reason.includes("LAN subnet"))}
+            <p><a class="underline" href="/settings/network">Network settings</a></p>
+          {/if}
+        </div>
+      {/if}
       {#if s.operation && (busy(s) || s.operation.error)}
         <OperationCard stack={s} attempt={attempts.data?.[0]} />
       {/if}

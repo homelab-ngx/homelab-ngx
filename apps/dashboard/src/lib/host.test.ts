@@ -18,7 +18,7 @@ describe("host settings", () => {
     expect(c).toContain("AllowedIPs = 10.10.0.0/24");
   });
   it("finds the host's LAN address for the router's port forward", () => {
-    const wired = [{ name: "enp5s0", mac: "m", addresses: ["192.168.1.20"] }];
+    const wired = [{ name: "enp5s0", mac: "m", addresses: ["192.168.1.20"], subnets: ["192.168.1.0/24"] }];
     expect(lanAddress({ network: { lan: [], ipv4: { mode: "static", address: "192.168.1.30/24" } }, wired })).toBe("192.168.1.30");
     expect(lanAddress({ network: { lan: [], ipv4: { mode: "dhcp" } }, wired })).toBe("192.168.1.20");
     expect(lanAddress({ network: { lan: [] }, wired: [] })).toBe("");

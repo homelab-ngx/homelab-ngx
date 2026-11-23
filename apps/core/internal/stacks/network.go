@@ -196,6 +196,14 @@ func nftRuleset(name, subnet string, egress []Egress, ports []Port, api bool) (s
 // stack listener is open only while both m and the approved manifest grant
 // an API scope.
 func (s *Service) applyRules(ctx context.Context, name, subnet string, m Manifest) error {
+	s.netMu.Lock()
+	defer s.netMu.Unlock()
+	return s.applyRulesLocked(ctx, name, subnet, m)
+}
+
+// applyRulesLocked is applyRules; the caller holds s.netMu, so the host's
+// networks it reads are not older than the last rules loaded.
+func (s *Service) applyRulesLocked(ctx context.Context, name, subnet string, m Manifest) error {
 	api := len(m.API) > 0
 	if api {
 		r, err := s.row(ctx, name)
@@ -233,31 +241,13 @@ func (s *Service) applyRules(ctx context.Context, name, subnet string, m Manifes
 // variable has no valid value opens nothing, and a port grant left with no
 // clients is dropped.
 func concreteNet(m Manifest, vars []storedVar, nets Nets) ([]Egress, []Port) {
-	addrs := func(ref string) []string {
-		if ref == FromLAN {
-			return slices.Clone(nets.LAN)
-		}
-		n, ok := varRef(ref)
-		if !ok {
-			return []string{ref}
-		}
-		d, ok := m.Variable(n)
-		if !ok || d.Kind != VarAddress {
-			return nil
-		}
-		value, src := resolve(d, vars)
-		if src == SourceUnset {
-			return nil
-		}
-		return nets.Resolve(value)
-	}
 	egress := []Egress{}
 	for _, e := range m.Egress {
 		if e.To == EgressHost {
 			egress = append(egress, e)
 			continue
 		}
-		for _, a := range addrs(e.To) {
+		for _, a := range netRef(m, vars, nets, e.To) {
 			c := Egress{To: a, Port: e.Port, Proto: e.Proto}
 			if !slices.Contains(egress, c) {
 				egress = append(egress, c)
@@ -268,7 +258,7 @@ func concreteNet(m Manifest, vars []storedVar, nets Nets) ([]Egress, []Port) {
 	for _, p := range m.Ports {
 		var from []string
 		for _, c := range p.From {
-			for _, a := range addrs(c) {
+			for _, a := range netRef(m, vars, nets, c) {
 				if !slices.Contains(from, a) {
 					from = append(from, a)
 				}
@@ -280,6 +270,150 @@ func concreteNet(m Manifest, vars []storedVar, nets Nets) ([]Egress, []Port) {
 		}
 	}
 	return egress, ports
+}
+
+// netRef is the CIDRs a grant's address stands for on this host: "lan",
+// an address variable's value, or a CIDR as written.
+func netRef(m Manifest, vars []storedVar, nets Nets, ref string) []string {
+	if ref == FromLAN {
+		return slices.Clone(nets.LAN)
+	}
+	n, ok := varRef(ref)
+	if !ok {
+		return []string{ref}
+	}
+	d, ok := m.Variable(n)
+	if !ok || d.Kind != VarAddress {
+		return nil
+	}
+	value, src := resolve(d, vars)
+	if src == SourceUnset {
+		return nil
+	}
+	return nets.Resolve(value)
+}
+
+// whyNothing says why ref, a grant's address that stands for no network
+// on this host, opens nothing: the setting or the value it waits for.
+func whyNothing(m Manifest, vars []storedVar, nets Nets, ref string) []string {
+	if ref == FromLAN {
+		return []string{nets.why(WordLAN)}
+	}
+	n, ok := varRef(ref)
+	if !ok {
+		return nil
+	}
+	d, ok := m.Variable(n)
+	if !ok || d.Kind != VarAddress {
+		return []string{n + " is not an address variable"}
+	}
+	value, src := resolve(d, vars)
+	if src == SourceUnset {
+		return []string{n + " has no value"}
+	}
+	entries, _, err := ParseAddresses(value)
+	if err != nil {
+		return []string{n + " has no valid value"}
+	}
+	var out []string
+	for _, e := range entries {
+		if cidrs, word := nets.Word(e); word && len(cidrs) == 0 {
+			out = append(out, fmt.Sprintf("%s is %s, and %s", n, e, nets.why(e)))
+		}
+	}
+	return out
+}
+
+// IdleGrant is a port or egress grant that opens nothing on this host now,
+// and why.
+type IdleGrant struct {
+	Grant
+	Reason string
+}
+
+// idleGrants are m's port and egress grants whose addresses all stand for
+// no network on this host now, such as a port grant from lan while the
+// host has no LAN subnet. The firewall leaves them out (concreteNet).
+// Before version 8 a grant names CIDRs only, which always open something.
+func idleGrants(m Manifest, vars []storedVar, nets Nets) []IdleGrant {
+	if m.Version < 8 {
+		return nil
+	}
+	idle := func(refs []string) (string, bool) {
+		var why []string
+		for _, r := range refs {
+			if len(netRef(m, vars, nets, r)) > 0 {
+				return "", false
+			}
+			for _, w := range whyNothing(m, vars, nets, r) {
+				if !slices.Contains(why, w) {
+					why = append(why, w)
+				}
+			}
+		}
+		return strings.Join(why, "; "), true
+	}
+	out := []IdleGrant{}
+	for _, e := range m.Egress {
+		if e.To == EgressHost {
+			continue
+		}
+		if why, ok := idle([]string{e.To}); ok {
+			out = append(out, IdleGrant{Grant{GrantEgress, e.detail()}, why})
+		}
+	}
+	for _, p := range m.Ports {
+		if why, ok := idle(p.From); ok {
+			out = append(out, IdleGrant{Grant{GrantPort, p.detail()}, why})
+		}
+	}
+	return out
+}
+
+// refreshNet loads a running stack's firewall again, and delivers its
+// variables again, under what the host's networks and its address
+// variables stand for now. The firewall takes effect at once; a service
+// that reads an address variable sees the new value at the stack's next
+// restart, which the stack reports as needed. A stack that is not running
+// is left alone: its start does the same.
+func (s *Service) refreshNet(ctx context.Context, name string) error {
+	s.netMu.Lock()
+	defer s.netMu.Unlock()
+	if !s.isRunning(ctx, name) {
+		return nil
+	}
+	r, err := s.row(ctx, name)
+	if err != nil {
+		return err
+	}
+	if r.Subnet == "" {
+		return nil
+	}
+	m, err := s.runningManifest(ctx, r)
+	if err != nil {
+		return err
+	}
+	if m.Version >= 4 {
+		if err := s.renderVars(ctx, name, m); err != nil {
+			return fmt.Errorf("delivering the stack's variables: %w", err)
+		}
+	}
+	return s.applyRulesLocked(ctx, name, r.Subnet, m)
+}
+
+// refreshNets is refreshNet for every stack, after the host's networks
+// changed.
+func (s *Service) refreshNets(ctx context.Context) {
+	rows, err := s.st.Queries().ListStacks(ctx)
+	if err != nil {
+		s.log.Error("host networks changed; stacks not refreshed", "error", err)
+		return
+	}
+	for _, r := range rows {
+		if err := s.refreshNet(ctx, r.Name); err != nil {
+			s.log.Error("host networks changed; stack firewall not refreshed", "stack", r.Name, "error", err)
+		}
+	}
 }
 
 // The daemon alone configures the host end of a stack's veth. systemd-networkd
@@ -359,6 +493,8 @@ func (s *Service) linkUp(ctx context.Context, name, subnet string, expect ...int
 // removeRules deletes the stack's firewall; `destroy` accepts a table that
 // is not loaded.
 func (s *Service) removeRules(ctx context.Context, name string) error {
+	s.netMu.Lock()
+	defer s.netMu.Unlock()
 	if _, err := s.r.Run(ctx, cmdrunner.Cmd{
 		Module: "stacks", Name: "nft", Args: []string{"destroy", "table", "inet", nftTable(name)},
 	}); err != nil {

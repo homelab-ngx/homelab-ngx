@@ -664,6 +664,7 @@ func (s *Service) SetVariable(ctx context.Context, name, varName string, in Stac
 		return Stack{}, err
 	}
 	s.refreshHostIDs(ctx, name)
+	s.refreshAddress(ctx, name, running, varName)
 	return s.Get(ctx, name)
 }
 
@@ -735,7 +736,21 @@ func (s *Service) DeleteVariable(ctx context.Context, name, varName string) (Sta
 		return Stack{}, err
 	}
 	s.refreshHostIDs(ctx, name)
+	s.refreshAddress(ctx, name, running, varName)
 	return s.Get(ctx, name)
+}
+
+// refreshAddress loads a running stack's firewall again after its address
+// variable varName changed, so a port or egress grant that names it opens
+// to the new addresses at once. The value is stored either way; a firewall
+// that did not load is logged.
+func (s *Service) refreshAddress(ctx context.Context, name string, running Manifest, varName string) {
+	if d, ok := running.Variable(varName); !ok || d.Kind != VarAddress {
+		return
+	}
+	if err := s.refreshNet(ctx, name); err != nil {
+		s.log.Error("address variable changed; stack firewall not refreshed", "stack", name, "variable", varName, "error", err)
+	}
 }
 
 // runningManifest is the manifest of the stack's current generation, or the

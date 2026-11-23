@@ -11,8 +11,8 @@ import (
 
 // The words an address variable's value may hold next to addresses and
 // CIDRs. Each stands for one of the host's networks (Nets) and is resolved
-// at each start, so a change to the LAN, the VPN or Tailscale reaches the
-// stack at its next restart.
+// again when the host's networks change: a running stack's firewall at
+// once, and the values its services read at its next restart.
 const (
 	WordLAN     = FromLAN
 	WordVPN     = "vpn"
@@ -50,6 +50,20 @@ func (n Nets) Word(w string) (cidrs []string, ok bool) {
 		return []string{TailnetRange}, true
 	}
 	return nil, false
+}
+
+// why says why the word w stands for no network on this host: the setting
+// that would give it one.
+func (n Nets) why(w string) string {
+	switch w {
+	case WordLAN:
+		return "the host has no LAN subnet (Settings › Network)"
+	case WordVPN:
+		return "the VPN is off"
+	case WordTailnet:
+		return "the host is not on a tailnet"
+	}
+	return ""
 }
 
 // ParseAddresses reads an address variable's value: IPv4 addresses, CIDRs

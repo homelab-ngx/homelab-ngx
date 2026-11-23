@@ -221,7 +221,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
     host: { hostname: "homelab", timezone: "Europe/Stockholm", ssh_keys: ["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoKeyDemoKeyDemoKeyDemoKeyDemoKeyDemoKeyDemo demo@laptop"] },
     domain: { domain: "home.example", dashboard_label: "homelab", dns_provider: "cloudflare", dns_credentials_set: true, acme_email: "admin@home.example" },
     network: { lan: ["192.0.2.0/24"], ipv4: { mode: "dhcp", address: "192.0.2.10/24", gateway: "192.0.2.1", dns: ["192.0.2.1"] } },
-    wired: [{ name: "enp3s0", mac: "02:00:5e:00:53:10", addresses: ["192.0.2.10"] }],
+    wired: [{ name: "enp3s0", mac: "02:00:5e:00:53:10", addresses: ["192.0.2.10"], subnets: ["192.0.2.0/24"] }],
     firewall: { openings: [{ port: 22, proto: "tcp", from: ["192.0.2.0/24"], note: "SSH from the LAN" }] },
     wireguard: { enabled: true, address: "10.99.0.1/24", endpoint: "vpn.home.example:51820", listen_port: 51820, public_key: "DemoDemoDemoDemoDemoDemoDemoDemoDemoDemoDem0=", peers: [{ name: "phone", address: "10.99.0.2/32", public_key: "PhonePhonePhonePhonePhonePhonePhonePhonePho0=" }, { name: "laptop", address: "10.99.0.3/32", public_key: "LaptopLaptopLaptopLaptopLaptopLaptopLaptopL0=" }] },
     tunnel: { enabled: true, credentials_set: true, dns_managed: true, tunnel_id: "00000000-demo-4000-8000-000000000000", routes: [{ hostname: "photos.home.example", target: "http://photos:2283" }] },

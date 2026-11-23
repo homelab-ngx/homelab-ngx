@@ -460,7 +460,7 @@ func TestWired(t *testing.T) {
 		{Name: "wg-homelab"},
 		{Name: "eth0", HardwareAddr: mac},
 	})
-	want := []Interface{{Name: "enp5s0", MAC: "d8:43:ae:00:11:22", Addresses: []string{}}, {Name: "eth0", MAC: "d8:43:ae:00:11:22", Addresses: []string{}}}
+	want := []Interface{{Name: "enp5s0", MAC: "d8:43:ae:00:11:22", Addresses: []string{}, Subnets: []string{}}, {Name: "eth0", MAC: "d8:43:ae:00:11:22", Addresses: []string{}, Subnets: []string{}}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("wired = %v, want %v", got, want)
 	}

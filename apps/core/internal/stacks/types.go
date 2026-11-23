@@ -38,6 +38,9 @@ type Stack struct {
 	// Generations Built generations, newest first.
 	Generations []StackGeneration `json:"generations" doc:"Built generations, newest first."`
 
+	// IdleGrants Port and egress grants that open nothing on this host now.
+	IdleGrants []StackIdleGrant `json:"idle_grants" doc:"Port and egress grants of the manifest the stack runs that open nothing on this host now, such as a port grant from lan while the host has no LAN subnet. The firewall leaves them out until the setting or value they wait for is given."`
+
 	// Label The name the dashboard shows for the stack, set by the operator.
 	// Empty: show the stack's name.
 	Label string `json:"label" doc:"The name the dashboard shows for the stack, set by the operator. Empty: show the stack's name."`
@@ -185,6 +188,15 @@ type StackGrant struct {
 func (StackGrant) TransformSchema(_ huma.Registry, s *huma.Schema) *huma.Schema {
 	s.Description = "One thing a manifest asks of the host."
 	return s
+}
+
+// StackIdleGrant A port or egress grant that opens nothing on this host now.
+type StackIdleGrant struct {
+	// Detail The grant, as the operator approved it.
+	Detail string         `json:"detail" doc:"The grant, as the operator approved it."`
+	Kind   StackGrantKind `json:"kind" enum:"egress,port"`
+	// Reason What it waits for: a host setting or a variable's value.
+	Reason string `json:"reason" doc:"What it waits for: a host setting, such as the LAN's subnets, or a variable's value."`
 }
 
 // StackGrantKind is the kind of a StackGrant.

@@ -3459,6 +3459,8 @@ export interface components {
             mac: string;
             /** @description The interface's name, such as enp5s0. */
             name: string;
+            /** @description The IPv4 subnets those addresses are in, such as 192.168.1.0/24: what the LAN's subnets usually are. */
+            subnets: string[];
         };
         Keep: {
             /** Format: int64 */
@@ -4177,6 +4179,8 @@ export interface components {
             generation: number;
             /** @description Built generations, newest first. */
             generations: components["schemas"]["StackGeneration"][];
+            /** @description Port and egress grants of the manifest the stack runs that open nothing on this host now, such as a port grant from lan while the host has no LAN subnet. The firewall leaves them out until the setting or value they wait for is given. */
+            idle_grants: components["schemas"]["StackIdleGrant"][];
             /** @description The name the dashboard shows for the stack, set by the operator. Empty: show the stack's name. */
             label: string;
             /** @description The stack's name, chosen at install and fixed after it: its container, its units (<name>-<unit>) and its state are keyed on it. */
@@ -4321,6 +4325,14 @@ export interface components {
         StackIDSet: {
             /** Format: int64 */
             id: number;
+        };
+        StackIdleGrant: {
+            /** @description The grant, as the operator approved it. */
+            detail: string;
+            /** @enum {string} */
+            kind: "egress" | "port";
+            /** @description What it waits for: a host setting, such as the LAN's subnets, or a variable's value. */
+            reason: string;
         };
         StackLock: {
             stacks: components["schemas"]["StackLockEntry"][];

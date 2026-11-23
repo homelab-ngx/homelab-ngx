@@ -16,6 +16,8 @@
   const storedIPv4 = (): Schema<"IPv4"> => ({ dns: [], ...settings.network.ipv4, mode: settings.network.ipv4?.mode ?? "dhcp" });
   let lan = $state(untrack(() => joinList(settings.network.lan)));
   let ipv4 = $state(untrack(storedIPv4));
+  /** The wired network's subnet, offered while no LAN is set. */
+  const wiredSubnet = $derived(settings.wired.flatMap((w) => w.subnets ?? [])[0] ?? "");
 </script>
 
 <HostCard
@@ -35,6 +37,14 @@
     <div class="grid gap-1">
       <label for="{id}-lan" class="text-muted">LAN subnets</label>
       <input id="{id}-lan" class="input" autocomplete="off" placeholder="192.168.1.0/24" bind:value={lan} />
+      {#if !lan.trim()}
+        <p class="flex flex-wrap items-center gap-2 text-muted">
+          Port grants from the LAN open nothing until it's set.
+          {#if wiredSubnet && !readOnly}
+            <button type="button" class="btn btn-sm" onclick={() => (lan = wiredSubnet)}>Use {wiredSubnet}</button>
+          {/if}
+        </p>
+      {/if}
     </div>
     {#if settings.wired.length > 0}
       <dl class="flex flex-wrap gap-x-6 gap-y-1">

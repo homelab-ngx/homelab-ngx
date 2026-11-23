@@ -312,3 +312,98 @@ func TestAChangedOwnerIsAnUpdate(t *testing.T) {
 		t.Errorf("after the update: state=%s\n%s", s.UpdateState, flake)
 	}
 }
+
+func TestIdleGrants(t *testing.T) {
+	t.Parallel()
+	m, err := ParseManifest([]byte(v8Manifest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	reasons := func(g []IdleGrant) map[string]string {
+		out := map[string]string{}
+		for _, x := range g {
+			out[x.Detail] = x.Reason
+		}
+		return out
+	}
+	vars := []storedVar{{Name: "MQTT_HOST", Value: "192.168.1.102"}}
+	cameras := "CAMERAS (the addresses you give) port 554/tcp"
+	lanOnly := "host port 8555/udp from the host's LAN to stack port 8555"
+	both := "host port 32400/tcp from the host's LAN, MQTT_HOST (the addresses you give) to stack port 32400"
+
+	// With a LAN, only the egress to the unset CAMERAS opens nothing.
+	got := reasons(idleGrants(m, vars, Nets{LAN: []string{"192.168.1.0/24"}}))
+	if len(got) != 1 || got[cameras] != "CAMERAS has no value" {
+		t.Errorf("with a LAN: %q", got)
+	}
+	// Without one, the port only for the LAN opens nothing either; the one
+	// MQTT_HOST also names still opens to it.
+	got = reasons(idleGrants(m, vars, Nets{}))
+	if len(got) != 2 || got[lanOnly] != "the host has no LAN subnet (Settings › Network)" {
+		t.Errorf("without a LAN: %q", got)
+	}
+	// A variable that names only words for networks the host lacks opens
+	// nothing, and says which.
+	vars = []storedVar{{Name: "MQTT_HOST", Value: "lan,vpn"}}
+	got = reasons(idleGrants(m, vars, Nets{}))
+	want := "the host has no LAN subnet (Settings › Network); MQTT_HOST is lan, and the host has no LAN subnet (Settings › Network); MQTT_HOST is vpn, and the VPN is off"
+	if got[both] != want {
+		t.Errorf("port 32400: %q, want %q", got[both], want)
+	}
+	if len(got) != 4 {
+		t.Errorf("idle grants: %q", got)
+	}
+}
+
+func TestHostNetworksReachARunningStack(t *testing.T) {
+	t.Parallel()
+	svc, _, mu, _, loaded := newV8Runtime(t)
+	ctx := context.Background()
+	finishedOn(t, svc, "players", svc.Start)
+	rules := func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return *loaded
+	}
+
+	// The LAN goes: the port only for it is dropped at once, and the stack
+	// says so.
+	svc.SetHostValues("https://homelab.example.com", Nets{})
+	if r := rules(); strings.Contains(r, "192.168.1.0/24") || strings.Contains(r, "dport 8555") {
+		t.Errorf("rules still open to the old LAN:\n%s", r)
+	}
+	s, err := svc.Get(ctx, "players")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(s.IdleGrants, func(g StackIdleGrant) bool {
+		return g.Kind == StackGrantKindPort && strings.Contains(g.Detail, "8555") && strings.Contains(g.Reason, "no LAN subnet")
+	}) {
+		t.Errorf("idle grants = %+v", s.IdleGrants)
+	}
+
+	// A new LAN opens the port to it, with no restart.
+	svc.SetHostValues("https://homelab.example.com", Nets{LAN: []string{"10.1.0.0/24"}})
+	if r := rules(); !strings.Contains(r, "ip saddr { 10.1.0.0/24 } fib daddr type local udp dport 8555") {
+		t.Errorf("rules not loaded for the new LAN:\n%s", r)
+	}
+	// An address variable that names the LAN is delivered as the new LAN,
+	// for the stack's next restart.
+	if _, err := svc.SetVariable(ctx, "players", "MQTT_HOST", StackVariableSet{Value: "lan"}); err != nil {
+		t.Fatal(err)
+	}
+	if r := rules(); !strings.Contains(r, "ip daddr 10.1.0.0/24 tcp dport 1883 accept") {
+		t.Errorf("rules not loaded for the changed variable:\n%s", r)
+	}
+	svc.SetHostValues("https://homelab.example.com", Nets{LAN: []string{"10.2.0.0/24"}})
+	env, err := os.ReadFile(filepath.Join(svc.host.VarsDir, "players", varsEnvName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(env), "MQTT_HOST=10.2.0.0/24\n") {
+		t.Errorf("env file:\n%s", env)
+	}
+	if s, err = svc.Get(ctx, "players"); err != nil || !s.RestartNeeded || len(s.IdleGrants) != 1 {
+		t.Errorf("restart_needed = %v, idle grants = %+v, %v", s.RestartNeeded, s.IdleGrants, err)
+	}
+}

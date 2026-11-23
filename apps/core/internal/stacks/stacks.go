@@ -38,7 +38,11 @@ type Service struct {
 	history History
 	host    Host
 	// hostMu guards host.DashboardURL and the host networks (LAN, VPN, Tailnet), which the host settings change.
-	hostMu   sync.RWMutex
+	hostMu sync.RWMutex
+	// netMu is held while a stack's firewall is loaded or removed, so rules
+	// loaded for the host's new networks are never replaced by rules an
+	// operation worked out from the old ones.
+	netMu    sync.Mutex
 	r        cmdrunner.Runner
 	notifier Notifier
 	log      *slog.Logger
@@ -550,8 +554,8 @@ func (s *Service) view(ctx context.Context, r store.Stack) (Stack, error) {
 	v := Stack{
 		Name: r.Name, Label: r.Label, Source: r.Source, CreatedAt: time.UnixMilli(r.CreatedAt),
 		Fetched:   revision(r.FetchedRev, r.FetchedUrl, fetched, r.FetchedAt),
-		NewGrants: []StackGrant{},
-		Running:   s.isRunning(ctx, r.Name), WantRunning: r.WantRunning != 0, Autostart: r.Autostart != 0,
+		NewGrants: []StackGrant{}, IdleGrants: []StackIdleGrant{},
+		Running: s.isRunning(ctx, r.Name), WantRunning: r.WantRunning != 0, Autostart: r.Autostart != 0,
 		Generation: int(r.Generation), Generations: []StackGeneration{},
 		Address:     stackAddr(r.Subnet),
 		Operation:   s.operationView(r.Name),
@@ -570,6 +574,11 @@ func (s *Service) view(ctx context.Context, r store.Stack) (Stack, error) {
 	v.VariablesReady = v.VariablesReady && varsErr == nil
 	s.ownerView(ctx, r.Name, v.Variables)
 	v.Folders = s.foldersView(ctx, r, folders)
+	if m, err := s.runningManifest(ctx, r); err == nil && varsErr == nil {
+		for _, g := range idleGrants(m, vars, s.hostNets()) {
+			v.IdleGrants = append(v.IdleGrants, StackIdleGrant{Kind: StackGrantKind(g.Kind), Detail: g.Detail, Reason: g.Reason})
+		}
+	}
 	gens, err := s.st.Queries().ListStackGenerations(ctx, r.Name)
 	if err != nil {
 		return Stack{}, err
@@ -650,12 +659,22 @@ func revision(rev, url string, m Manifest, at int64) StackRevision {
 
 // SetHostValues changes what the host gives version 8 stacks from now on:
 // the dashboard's address and the networks "lan" and the address words
-// stand for. A running stack sees them on its next boot or update.
+// stand for. When they changed, every running stack's firewall is loaded
+// again at once, and its variables are delivered again for its next
+// restart (refreshNet).
 func (s *Service) SetHostValues(dashboardURL string, nets Nets) {
 	s.hostMu.Lock()
-	defer s.hostMu.Unlock()
+	changed := s.host.DashboardURL != dashboardURL || !slices.Equal(s.host.LAN, nets.LAN) ||
+		s.host.VPN != nets.VPN || s.host.Tailnet != nets.Tailnet
 	s.host.DashboardURL, s.host.LAN = dashboardURL, slices.Clone(nets.LAN)
 	s.host.VPN, s.host.Tailnet = nets.VPN, nets.Tailnet
+	s.hostMu.Unlock()
+	s.mu.Lock()
+	bg := s.ctx
+	s.mu.Unlock()
+	if changed && bg != nil {
+		s.refreshNets(bg)
+	}
 }
 
 func (s *Service) hostNets() Nets {

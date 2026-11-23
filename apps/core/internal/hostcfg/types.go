@@ -54,6 +54,7 @@ type Interface struct {
 	MAC  string `json:"mac" doc:"Its MAC address, such as d8:43:ae:00:11:22."`
 	// Addresses are read with the interface; they are not a setting.
 	Addresses []string `json:"addresses" doc:"Its IPv4 addresses on the LAN, such as 192.168.1.20."`
+	Subnets   []string `json:"subnets" doc:"The IPv4 subnets those addresses are in, such as 192.168.1.0/24: what the LAN's subnets usually are."`
 }
 
 // Applied is the last apply's outcome.

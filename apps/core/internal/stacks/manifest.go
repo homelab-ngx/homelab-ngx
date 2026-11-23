@@ -1069,7 +1069,7 @@ func (m Manifest) Grants() []Grant {
 		out = append(out, Grant{GrantGPU, "/dev/dri"})
 	}
 	for _, e := range m.Egress {
-		out = append(out, Grant{GrantEgress, fmt.Sprintf("%s port %d/%s", addrDetail(e.To), e.Port, e.Proto)})
+		out = append(out, Grant{GrantEgress, e.detail()})
 	}
 	for _, p := range m.Ports {
 		out = append(out, Grant{GrantPort, p.detail()})
@@ -1093,6 +1093,10 @@ func (v Variable) grantDetail() string {
 		return fmt.Sprintf("%s: %s (default) at %s, %s", v.Name, *v.Default, v.Mount, mode)
 	}
 	return fmt.Sprintf("%s at %s, %s, host path chosen by you", v.Name, v.Mount, mode)
+}
+
+func (e Egress) detail() string {
+	return fmt.Sprintf("%s port %d/%s", addrDetail(e.To), e.Port, e.Proto)
 }
 
 func (p Port) detail() string {

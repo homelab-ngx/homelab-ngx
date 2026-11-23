@@ -22,6 +22,7 @@ const stack = (name: string, extra: Partial<Stack> = {}, icon?: string): Stack =
     new_grants: [],
     variables_ready: true,
     restart_needed: false,
+    idle_grants: [],
     variables: [],
     ...extra,
   }) as unknown as Stack;

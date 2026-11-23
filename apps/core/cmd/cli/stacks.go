@@ -908,6 +908,12 @@ func printStack(c *cli.Context, s stacks.Stack) error {
 			fmt.Printf("Fill in the missing values with: homelab stacks var set %s <NAME> --value-stdin\n", s.Name)
 		}
 	}
+	if len(s.IdleGrants) > 0 {
+		fmt.Println("\nOpen nothing now:")
+		for _, g := range s.IdleGrants {
+			fmt.Printf("  %s %s: %s\n", g.Kind, g.Detail, g.Reason)
+		}
+	}
 	if s.RestartNeeded {
 		fmt.Printf("\nRestart needed: the container runs with other paths than its values give now. Apply them with: homelab stacks stop %s && homelab stacks start %s\n", s.Name, s.Name)
 	}

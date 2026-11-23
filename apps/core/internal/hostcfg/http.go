@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -188,12 +189,15 @@ func wired(ifs []net.Interface) []Interface {
 		if len(i.HardwareAddr) == 0 || !(strings.HasPrefix(i.Name, "en") || strings.HasPrefix(i.Name, "eth")) {
 			continue
 		}
-		iface := Interface{Name: i.Name, MAC: i.HardwareAddr.String(), Addresses: []string{}}
+		iface := Interface{Name: i.Name, MAC: i.HardwareAddr.String(), Addresses: []string{}, Subnets: []string{}}
 		// Index 0 would list every interface's addresses.
 		if addrs, err := i.Addrs(); err == nil && i.Index > 0 {
 			for _, a := range addrs {
 				if p, err := netip.ParsePrefix(a.String()); err == nil && p.Addr().Is4() {
 					iface.Addresses = append(iface.Addresses, p.Addr().String())
+					if sub := p.Masked().String(); p.Bits() < 32 && !slices.Contains(iface.Subnets, sub) {
+						iface.Subnets = append(iface.Subnets, sub)
+					}
 				}
 			}
 		}

@@ -222,6 +222,7 @@ function seedStack(s: StackSeed, i: number, now: number): Stack {
     nixpkgs: "nixos-26.05",
     nixpkgs_rev: rev("nixpkgs0"),
     restart_needed: false,
+    idle_grants: [],
     running: true,
     want_running: true,
     autostart: true,

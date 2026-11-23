@@ -23,6 +23,7 @@ const stack = (name = "media"): Stack =>
     new_grants: [],
     variables_ready: true,
     restart_needed: false,
+    idle_grants: [],
     variables: [],
   }) as unknown as Stack;
 

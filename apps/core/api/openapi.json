@@ -3209,12 +3209,20 @@
           "name": {
             "description": "The interface's name, such as enp5s0.",
             "type": "string"
+          },
+          "subnets": {
+            "description": "The IPv4 subnets those addresses are in, such as 192.168.1.0/24: what the LAN's subnets usually are.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
           "name",
           "mac",
-          "addresses"
+          "addresses",
+          "subnets"
         ],
         "type": "object"
       },
@@ -5372,6 +5380,13 @@
             },
             "type": "array"
           },
+          "idle_grants": {
+            "description": "Port and egress grants of the manifest the stack runs that open nothing on this host now, such as a port grant from lan while the host has no LAN subnet. The firewall leaves them out until the setting or value they wait for is given.",
+            "items": {
+              "$ref": "#/components/schemas/StackIdleGrant"
+            },
+            "type": "array"
+          },
           "label": {
             "description": "The name the dashboard shows for the stack, set by the operator. Empty: show the stack's name.",
             "type": "string"
@@ -5452,6 +5467,7 @@
           "frozen",
           "generation",
           "generations",
+          "idle_grants",
           "label",
           "name",
           "new_grants",
@@ -5799,6 +5815,32 @@
         },
         "required": [
           "id"
+        ],
+        "type": "object"
+      },
+      "StackIdleGrant": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "description": "The grant, as the operator approved it.",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "egress",
+              "port"
+            ],
+            "type": "string"
+          },
+          "reason": {
+            "description": "What it waits for: a host setting, such as the LAN's subnets, or a variable's value.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "detail",
+          "kind",
+          "reason"
         ],
         "type": "object"
       },
