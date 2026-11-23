@@ -3,6 +3,7 @@ package metrics
 import (
 	"bufio"
 	"bytes"
+	"math"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -22,6 +23,7 @@ type Paths struct {
 	Hwmon    string // /sys/class/hwmon
 	DevBlock string // /sys/dev/block
 	DMI      string // /sys/class/dmi/id
+	Powercap string // /sys/class/powercap
 }
 
 // DefaultPaths is the layout on the homelab host.
@@ -30,7 +32,7 @@ func DefaultPaths() Paths {
 		Proc: "/proc", Cgroup: "/sys/fs/cgroup", Machines: "/sys/fs/cgroup/machine.slice",
 		Services: "/sys/fs/cgroup/system.slice", Init: "/sys/fs/cgroup/init.scope", Sessions: "/sys/fs/cgroup/user.slice",
 		Net: "/sys/class/net", Hwmon: "/sys/class/hwmon", DevBlock: "/sys/dev/block",
-		DMI: "/sys/class/dmi/id",
+		DMI: "/sys/class/dmi/id", Powercap: "/sys/class/powercap",
 	}
 }
 
@@ -321,4 +323,43 @@ func readTemp(path string) float64 {
 		return nan
 	}
 	return float64(v) / 1000
+}
+
+// rapl is one reading of the CPU packages' energy counters.
+type rapl struct {
+	uj, wrap uint64 // µJ, and where the counter wraps
+	ok       bool
+}
+
+// readRAPL sums the package zones, intel-rapl:N (AMD's rapl driver uses the
+// same name); intel-rapl:N:M are their parts.
+func readRAPL(powercap string) rapl {
+	var r rapl
+	zones, _ := filepath.Glob(filepath.Join(powercap, "intel-rapl:*"))
+	for _, z := range zones {
+		if strings.Count(filepath.Base(z), ":") != 1 {
+			continue
+		}
+		e, ok := readUint(filepath.Join(z, "energy_uj"))
+		if !ok {
+			continue
+		}
+		w, _ := readUint(filepath.Join(z, "max_energy_range_uj"))
+		r.uj += e
+		r.wrap += w
+		r.ok = true
+	}
+	return r
+}
+
+// watts is the draw between two readings secs apart; NaN without both.
+func watts(prev, cur rapl, secs float64) float64 {
+	if !prev.ok || !cur.ok || secs <= 0 {
+		return math.NaN()
+	}
+	e := cur.uj - prev.uj
+	if cur.uj < prev.uj {
+		e = cur.wrap - prev.uj + cur.uj
+	}
+	return float64(e) / 1e6 / secs
 }

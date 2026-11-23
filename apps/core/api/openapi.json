@@ -3602,6 +3602,16 @@
             "$ref": "#/components/schemas/MetricSeries",
             "description": "The rest of the host: the kernel's own work and caches, such as the file system's. CPU, memory and disk only."
           },
+          "power_cpu": {
+            "description": "CPU package power in W, from RAPL; null where the host has none.",
+            "items": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "type": "array"
+          },
           "services": {
             "$ref": "#/components/schemas/MetricSeries",
             "description": "The host's services, the homelab daemon among them, and systemd itself. CPU, memory and disk only."
@@ -3651,7 +3661,8 @@
           "kernel",
           "stacks",
           "temp_cpu",
-          "temp_disk"
+          "temp_disk",
+          "power_cpu"
         ],
         "type": "object"
       },

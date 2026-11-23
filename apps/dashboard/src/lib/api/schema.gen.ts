@@ -3661,6 +3661,8 @@ export interface components {
             host: components["schemas"]["MetricSeries"];
             /** @description The rest of the host: the kernel's own work and caches, such as the file system's. CPU, memory and disk only. */
             kernel: components["schemas"]["MetricSeries"];
+            /** @description CPU package power in W, from RAPL; null where the host has none. */
+            power_cpu: (number | null)[];
             /** @description The host's services, the homelab daemon among them, and systemd itself. CPU, memory and disk only. */
             services: components["schemas"]["MetricSeries"];
             /** @description Login sessions and the user services they run (user.slice), such as coding agents. CPU, memory and disk only. */

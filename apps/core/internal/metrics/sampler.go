@@ -60,6 +60,7 @@ const (
 	figTempDisk
 	figCPUMax
 	figMemoryMax
+	figPowerCPU
 	nFig
 )
 
@@ -133,6 +134,8 @@ type Metrics struct {
 	scopesAt time.Time
 	minute   minuteAcc
 	prunedAt time.Time
+	rapl     rapl
+	raplAt   time.Time
 
 	mu    sync.Mutex
 	ring  []sample
@@ -227,6 +230,9 @@ func (m *Metrics) tick(ctx context.Context) {
 		s.host[figTempCPU] = readTemp(m.sensors.cpu)
 		s.host[figTempDisk] = readTemp(m.sensors.disk)
 	}
+	r := readRAPL(m.paths.Powercap)
+	s.host[figPowerCPU] = watts(m.rapl, r, now.Sub(m.raplAt).Seconds())
+	m.rapl, m.raplAt = r, now
 
 	for _, sc := range m.currentScopes(ctx) {
 		dir := filepath.Join(m.paths.Machines, sc.Name+".scope")
@@ -443,6 +449,7 @@ func framesOf(ss []sample, step int, withMax bool) MetricFrames {
 		f.Stacks[n] = seriesOf(ps, withMax)
 	}
 	f.TempCPU, f.TempDisk = column(hosts, figTempCPU), column(hosts, figTempDisk)
+	f.PowerCPU = column(hosts, figPowerCPU)
 	return f
 }
 

@@ -2,11 +2,13 @@ package metrics
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -26,6 +28,7 @@ func newFakeHost(t *testing.T) *fakeHost {
 		Services: filepath.Join(root, "cg", "system.slice"),
 		Init:     filepath.Join(root, "cg", "init.scope"), Sessions: filepath.Join(root, "cg", "user.slice"),
 		Hwmon: filepath.Join(root, "hwmon"), DevBlock: filepath.Join(root, "block"),
+		Powercap: filepath.Join(root, "powercap"),
 	}}
 	h.write("proc/stat", "cpu  1 2 3\ncpu0 1 2 3\ncpu1 1 2 3\ncpu2 1 2 3\ncpu3 1 2 3\nbtime 1700000000\n")
 	// Disks: sda is real, zram0 is not, nvme0n1p1 is a partition.
@@ -139,6 +142,8 @@ func TestTickTurnsCountersIntoRates(t *testing.T) {
 	ctx := context.Background()
 
 	h.set(state{memAvailKB: 12000000, stackMem: 1000, unitMem: 100})
+	h.write("powercap/intel-rapl:0/energy_uj", "1000000\n")
+	h.write("powercap/intel-rapl:0:0/energy_uj", "500000\n")
 	m.tick(ctx)
 	if len(m.ring) != 0 || m.Usage("immich") != nil {
 		t.Fatal("the first reading has no rates")
@@ -152,6 +157,7 @@ func TestTickTurnsCountersIntoRates(t *testing.T) {
 		svcCPU: 1_200_000, svcDisk: 400, svcMem: 3e9, svcVmalloc: 1.5e9,
 		sessCPU: 800_000, sessMem: 1e9,
 	})
+	h.write("powercap/intel-rapl:0/energy_uj", "5000000\n")
 	m.tick(ctx)
 	if len(m.ring) != 1 {
 		t.Fatalf("ring has %d samples", len(m.ring))
@@ -166,6 +172,7 @@ func TestTickTurnsCountersIntoRates(t *testing.T) {
 	near(t, "host net rx (lo left out)", s.host[figNetRx], 2000)
 	near(t, "cpu temp", s.host[figTempCPU], 55)
 	near(t, "disk temp", s.host[figTempDisk], 41.85)
+	near(t, "cpu package power (its parts left out)", s.host[figPowerCPU], 2)
 
 	st, ok := s.stacks["immich"]
 	if !ok {
@@ -307,5 +314,39 @@ func TestNumIsRoundedAndNullable(t *testing.T) {
 	}
 	if string(b) != "[null,12.3,3]" {
 		t.Errorf("json = %s", b)
+	}
+}
+
+func TestRAPLWraps(t *testing.T) {
+	got := watts(rapl{uj: 900, wrap: 1000, ok: true}, rapl{uj: 100, wrap: 1000, ok: true}, 1)
+	near(t, "watts across the wrap", got, 200e-6)
+	if !math.IsNaN(watts(rapl{}, rapl{uj: 1, ok: true}, 1)) {
+		t.Error("watts without a first reading")
+	}
+}
+
+// TestOpenDBAddsPowerCPU opens a metrics.db made before power_cpu.
+func TestOpenDBAddsPowerCPU(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "metrics.db")
+	old, err := sql.Open("sqlite", "file:"+path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.ExecContext(ctx, strings.Replace(schema, " power_cpu REAL,", "", 1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := old.ExecContext(ctx, "INSERT INTO metrics_minute (scope, ts, cpu) VALUES (?, 60, 5)", hostScope); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+	db, err := OpenDB(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	got, err := db.samples(ctx, time.Unix(0, 0), 60)
+	if err != nil || len(got) != 1 || !math.IsNaN(got[0].host[figPowerCPU]) || got[0].host[figCPU] != 5 {
+		t.Fatalf("samples: %+v %v", got, err)
 	}
 }

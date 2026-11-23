@@ -26,7 +26,7 @@ type DB struct{ db *sql.DB }
 var columns = []string{
 	"cpu", "memory", "pressure_cpu", "pressure_memory", "pressure_io",
 	"disk_read", "disk_write", "net_rx", "net_tx", "temp_cpu", "temp_disk",
-	"cpu_max", "memory_max",
+	"cpu_max", "memory_max", "power_cpu",
 }
 
 const schema = `CREATE TABLE IF NOT EXISTS metrics_minute (
@@ -34,7 +34,7 @@ const schema = `CREATE TABLE IF NOT EXISTS metrics_minute (
   ts INTEGER NOT NULL,
   cpu REAL, memory REAL, pressure_cpu REAL, pressure_memory REAL, pressure_io REAL,
   disk_read REAL, disk_write REAL, net_rx REAL, net_tx REAL, temp_cpu REAL, temp_disk REAL,
-  cpu_max REAL, memory_max REAL,
+  cpu_max REAL, memory_max REAL, power_cpu REAL,
   PRIMARY KEY (ts, scope)
 ) WITHOUT ROWID`
 
@@ -56,6 +56,19 @@ func OpenDB(ctx context.Context, path string) (*DB, error) {
 	if _, err := sdb.ExecContext(ctx, schema); err != nil {
 		sdb.Close()
 		return nil, fmt.Errorf("metrics: open %s: %w", abs, err)
+	}
+	// A table from before power_cpu gains it; its old rows read as no
+	// reading.
+	var has int
+	if err := sdb.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('metrics_minute') WHERE name = 'power_cpu'").Scan(&has); err != nil {
+		sdb.Close()
+		return nil, fmt.Errorf("metrics: open %s: %w", abs, err)
+	}
+	if has == 0 {
+		if _, err := sdb.ExecContext(ctx, "ALTER TABLE metrics_minute ADD COLUMN power_cpu REAL"); err != nil {
+			sdb.Close()
+			return nil, fmt.Errorf("metrics: open %s: %w", abs, err)
+		}
 	}
 	return &DB{db: sdb}, nil
 }

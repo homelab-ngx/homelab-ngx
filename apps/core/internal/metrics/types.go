@@ -80,6 +80,8 @@ type MetricFrames struct {
 	// TempCPU and TempDisk are the CPU package and NVMe temperatures in °C.
 	TempCPU  []Num `json:"temp_cpu" doc:"CPU package temperature in °C."`
 	TempDisk []Num `json:"temp_disk" doc:"System disk temperature in °C."`
+	// PowerCPU is the CPU packages' draw in watts, from RAPL.
+	PowerCPU []Num `json:"power_cpu" doc:"CPU package power in W, from RAPL; null where the host has none."`
 }
 
 // Info are facts about the host that do not change while it runs.
