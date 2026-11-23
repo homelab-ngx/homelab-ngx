@@ -5,13 +5,15 @@ import { tailscaleState, type HostSettings, type TailscaleStatus } from "./host.
 import { failingOf, type Channel, type Snapshot } from "./notifications.ts";
 import { POSTURE, RESULT } from "./security.ts";
 
-/** A tile's status: a mark and a word, or plain muted text when tone is absent. */
+/**
+ * A tile's status: a mark and a word, or plain muted text when tone is
+ * absent. A count is drawn as a number on the tile's icon, not in the text.
+ */
 export interface TileStatus {
   tone?: Tone;
   text: string;
+  count?: number;
 }
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** Host: its name and time zone. */
 export const hostLine = (s: HostSettings): TileStatus => ({ text: `${s.host.hostname || "homelab"} · ${s.host.timezone || "UTC"}` });
@@ -50,28 +52,31 @@ export function tailscaleStatus(s: HostSettings, st: TailscaleStatus | undefined
 
 /** WireGuard: on and how many devices, or off. */
 export const vpnStatus = (s: HostSettings): TileStatus =>
-  s.wireguard.enabled ? { tone: "ok", text: `on · ${plural(s.wireguard.peers.length, "device")}` } : { tone: "idle", text: "off" };
+  s.wireguard.enabled ? { tone: "ok", text: "on", count: s.wireguard.peers.length } : { tone: "idle", text: "off" };
 
 /** Cloudflare Tunnel: on once it has its credentials. */
 export const tunnelStatus = (s: HostSettings): TileStatus =>
-  s.tunnel.enabled && s.tunnel.credentials_set ? { tone: "ok", text: `on · ${plural(s.tunnel.routes.length, "route")}` } : { tone: "idle", text: "off" };
+  s.tunnel.enabled && s.tunnel.credentials_set ? { tone: "ok", text: "on", count: s.tunnel.routes.length } : { tone: "idle", text: "off" };
 
 /** Firewall: the openings besides the built-in ones. */
-export const firewallLine = (s: HostSettings): TileStatus => ({ text: s.firewall.openings.length > 0 ? plural(s.firewall.openings.length, "opening") : "no openings" });
+export function firewallLine(s: HostSettings): TileStatus {
+  const n = s.firewall.openings.length;
+  return n > 0 ? { text: n === 1 ? "opening" : "openings", count: n } : { text: "no openings" };
+}
 
 /** SSH: the keys that may log in as root. */
 export const sshLine = (s: HostSettings): TileStatus => {
   const n = s.host.ssh_keys?.length ?? 0;
-  return n > 0 ? { text: plural(n, "key") } : { tone: "idle", text: "no keys" };
+  return n > 0 ? { text: n === 1 ? "key" : "keys", count: n } : { tone: "idle", text: "no keys" };
 };
 
 /** Notifications: failing channels first, else how many deliver. */
 export function notificationsStatus(channels: Channel[] | undefined, snapshot: Snapshot | undefined): TileStatus | undefined {
   if (!channels) return undefined;
   const failing = failingOf(snapshot).length;
-  if (failing > 0) return { tone: "bad", text: `${failing} failing` };
+  if (failing > 0) return { tone: "bad", text: "failing", count: failing };
   const on = channels.filter((c) => c.enabled).length;
-  return on > 0 ? { tone: "ok", text: plural(on, "channel") } : { tone: "idle", text: "no channels" };
+  return on > 0 ? { tone: "ok", text: "on", count: on } : { tone: "idle", text: "no channels" };
 }
 
 /** Security audit: the last one's posture, else its result, else never run. */

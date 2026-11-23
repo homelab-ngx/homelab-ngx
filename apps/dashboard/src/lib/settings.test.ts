@@ -58,8 +58,8 @@ describe("this host's tiles", () => {
     const failing = { failing_channels: { Phone: { since: "", error: "x" } }, open: {}, history: [] } as Snapshot;
     expect(notificationsStatus(undefined, undefined)).toBeUndefined();
     expect(notificationsStatus([], undefined)).toEqual({ tone: "idle", text: "no channels" });
-    expect(notificationsStatus([on, on], undefined)).toEqual({ tone: "ok", text: "2 channels" });
-    expect(notificationsStatus([on], failing)).toEqual({ tone: "bad", text: "1 failing" });
+    expect(notificationsStatus([on, on], undefined)).toEqual({ tone: "ok", text: "on", count: 2 });
+    expect(notificationsStatus([on], failing)).toEqual({ tone: "bad", text: "failing", count: 1 });
   });
 });
 
@@ -73,7 +73,8 @@ describe("network tiles", () => {
     expect(domainLine(settings()).text).toBe("not set");
     expect(lanLine(settings({ network: { lan: ["192.168.1.0/24"] } })).text).toBe("192.168.1.0/24");
     expect(firewallLine(settings()).text).toBe("no openings");
-    expect(sshLine(settings({ host: { ssh_keys: ["a", "b"] } })).text).toBe("2 keys");
+    expect(sshLine(settings({ host: { ssh_keys: ["a", "b"] } }))).toEqual({ text: "keys", count: 2 });
+    expect(firewallLine(settings({ firewall: { openings: [{}] as HostSettings["firewall"]["openings"] } })).count).toBe(1);
   });
   it("reads Tailscale's state only when it is on", () => {
     expect(tailscaleStatus(settings(), { state: "running", ips: [] })).toEqual({ tone: "idle", text: "off" });
@@ -81,7 +82,7 @@ describe("network tiles", () => {
   });
   it("counts devices and routes only when on", () => {
     const peers = [{}, {}, {}] as HostSettings["wireguard"]["peers"];
-    expect(vpnStatus(settings({ wireguard: { enabled: true, peers } })).text).toBe("on · 3 devices");
+    expect(vpnStatus(settings({ wireguard: { enabled: true, peers } }))).toEqual({ tone: "ok", text: "on", count: 3 });
     expect(vpnStatus(settings({ wireguard: { enabled: false, peers } })).text).toBe("off");
     expect(tunnelStatus(settings({ tunnel: { enabled: true, credentials_set: false, dns_managed: false, routes: [] } })).text).toBe("off");
   });

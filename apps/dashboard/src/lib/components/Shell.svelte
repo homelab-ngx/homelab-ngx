@@ -89,13 +89,15 @@
       </div>
       <button
         type="button"
-        class="relative flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-accent aria-expanded:bg-accent-soft aria-expanded:text-accent"
+        class="relative flex shrink-0 items-center rounded-md py-1 pr-3 pl-2 text-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-accent aria-expanded:bg-accent-soft aria-expanded:text-accent"
         aria-label={count > 0 ? `Notifications, ${count} need attention` : "Notifications"}
         aria-expanded={tray}
         onclick={() => (tray = !tray)}
       >
-        <Bell class="size-4" aria-hidden="true" />
-        {#if count > 0}<span class="rounded-full bg-bad-soft px-1.5 text-xs text-bad" aria-hidden="true">{count}</span>{/if}
+        <span class="relative">
+          <Bell class="size-4" aria-hidden="true" />
+          {#if count > 0}<span class="absolute -top-1.5 left-full ml-px text-xs leading-none font-semibold tabular-nums text-bad" aria-hidden="true">{count}</span>{/if}
+        </span>
       </button>
       <button
         type="button"

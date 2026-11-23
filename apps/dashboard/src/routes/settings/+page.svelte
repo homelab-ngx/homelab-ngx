@@ -125,8 +125,11 @@
 
   type Icon = typeof House;
 
-  const tileClass =
-    "group flex min-h-24 flex-col items-center gap-1.5 rounded-lg px-2 pt-3.5 pb-3 text-center hover:bg-sunken focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
+  // A tile spans three rows of its section's grid (icon, name, status), so
+  // each row lines up across the tiles beside it, even when a name wraps.
+  const cell = "row-span-3 grid grid-rows-subgrid justify-items-center gap-y-1.5 px-2 pt-3.5 pb-3 text-center";
+  const tileClass = `${cell} group rounded-lg hover:bg-sunken focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent`;
+  const grid = "grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] gap-x-1 gap-y-1 p-3";
 </script>
 
 <svelte:head><title>System Settings · Homelab-ngx</title></svelte:head>
@@ -136,12 +139,18 @@
 {#snippet status(st: TileStatus | undefined)}
   <span class="flex max-w-full min-h-4 items-center justify-center gap-1.5 text-xs text-muted">
     {#if st?.tone}<StatusMark tone={st.tone} />{/if}
-    {#if st}<span class="truncate">{st.text}</span>{/if}
+    {#if st}<span class="truncate">{#if st.count !== undefined}<span class="sr-only">{st.count} </span>{/if}{st.text}</span>{/if}
   </span>
 {/snippet}
 
+<!-- A count is a bare number at the icon's top right, in the text colour (bad when failing). -->
 {#snippet face(Icon: Icon, name: string, st: TileStatus | undefined, core: boolean)}
-  <Icon class="size-7 {core ? 'text-core' : 'text-fg'}" strokeWidth={1.5} aria-hidden="true" />
+  <span class="relative">
+    <Icon class="size-7 {core ? 'text-core' : 'text-fg'}" strokeWidth={1.5} aria-hidden="true" />
+    {#if st?.count}
+      <span aria-hidden="true" class="absolute -top-1.5 left-full ml-0.5 text-xs leading-none font-semibold tabular-nums {st.tone === 'bad' ? 'text-bad' : 'text-fg'}">{st.count}</span>
+    {/if}
+  </span>
   <span class="font-medium group-hover:underline {core ? 'text-core' : 'text-accent'}">{name}</span>
   {@render status(st)}
 {/snippet}
@@ -164,7 +173,7 @@
 <div class="mt-5 grid gap-5">
   <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="host-h">
     {@render band("host-h", "This host")}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] gap-1 p-3">
+    <div class={grid}>
       {@render tile(House, "Host", "/settings/general#host", s && hostLine(s))}
       {@render tile(Clock, "Clock", "/settings/general#clock", s && clockStatus(s))}
       {@render tile(Keyboard, "Console", "/settings/general#console", s && consoleLine(s, layouts.data?.layouts))}
@@ -178,7 +187,7 @@
 
   <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="net-h">
     {@render band("net-h", "Network", s && appliedStatus(s))}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] gap-1 p-3">
+    <div class={grid}>
       {@render tile(Globe, "Domain", "/settings/network#domain", s && domainLine(s))}
       {@render tile(Network, "LAN", "/settings/network#lan", s && lanLine(s))}
       {@render tile(Waypoints, "Tailscale", "/settings/network#tailscale", s && tailscaleStatus(s, tailscale.data))}
@@ -191,7 +200,7 @@
 
   <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="ai-h">
     {@render band("ai-h", "Assistant")}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] gap-1 p-3">
+    <div class={grid}>
       {@render tile(Sparkles, "AI assistant", "/settings/assistant", assistantStatus)}
       {@render tile(ShieldCheck, "Security audit", "/settings/security", auditStatus(audits.data))}
     </div>
@@ -199,10 +208,10 @@
 
   <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="browser-h">
     {@render band("browser-h", "This browser")}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] gap-1 p-3">
+    <div class={grid}>
       {@render action(Lock, "Change password…", () => (changing = true))}
       {@render action(LogOut, "Sign out", signOut)}
-      <div class="flex min-h-24 flex-col items-center gap-1.5 px-2 pt-3.5 pb-3 text-center">
+      <div class={cell}>
         <SunMoon class="size-7 text-fg" strokeWidth={1.5} aria-hidden="true" />
         <span id="theme-h" class="font-medium">Theme</span>
         <span class="flex overflow-hidden rounded-md border border-line text-xs" role="radiogroup" aria-labelledby="theme-h">
