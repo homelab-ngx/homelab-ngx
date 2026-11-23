@@ -224,6 +224,10 @@ _Avoid_: restart (that is a stack's or a unit's), shutdown sequence
 How the host trades speed for power while it runs: Power saver, Balanced (the default) or Performance, with an optional CPU governor. The daemon writes it to sysfs at every start; Power saver also turns on PCIe link sleep on every link and USB autosuspend on every device. It does not spin disks down or suspend the host.
 _Avoid_: power plan, power mode, power action (that is a reboot or poweroff)
 
+**Power meter**:
+A power sensor in Home Assistant, such as a smart plug the host is plugged into, that the daemon reads for the whole machine's draw at the wall. Set up on Settings, Power profile, with a long-lived access token.
+_Avoid_: energy monitor, smart plug (in the dashboard: the plug is one kind of power meter)
+
 **Core extension**:
 The daemon, CLI, dashboard and Caddy as one system extension (`homelab-core`) merged over the image's /usr; updated without a reboot.
 _Avoid_: core package, sysext (in prose)
