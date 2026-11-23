@@ -1550,7 +1550,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The JSON Schema of homelab-stack.json, version 9, for editors. Check and an install stay the authority. */
+        /** The JSON Schema of homelab-stack.json, version 10, for editors. Check and an install stay the authority. */
         get: operations["getManifestSchema"];
         put?: never;
         post?: never;
@@ -4533,6 +4533,14 @@ export interface components {
             /** @description Flake reference of the stack's repo, optionally with a branch: github:owner/repo, github:owner/repo/branch, or a git+ssh://, git+https:// or git+file:// URL. */
             source: string;
         };
+        StackAddressNetworks: {
+            /** @description The host's LAN subnets. */
+            lan: string[];
+            /** @description The tailnet's range; empty while the host is not on a tailnet. */
+            tailnet: string[];
+            /** @description The WireGuard VPN's subnet; empty while the VPN is off. */
+            vpn: string[];
+        };
         StackApprove: {
             /** @description The fetched commit being approved. */
             rev: string;
@@ -4803,6 +4811,8 @@ export interface components {
             owner?: string;
             read_only?: boolean;
             required: boolean;
+            /** @description An address variable takes one IPv4 address: no CIDR, network word or list (version 10). */
+            single?: boolean;
             /**
              * @description What an env variable's value is, for the dashboard's input (version 7). Values are not checked against it.
              * @enum {string}
@@ -4937,6 +4947,8 @@ export interface components {
             /** @description Where a path is bound inside the stack. Only for a path. */
             mount?: string;
             name: string;
+            /** @description For an address variable that is not single: the CIDRs each of lan, vpn and tailnet stands for on this host now, each empty while that network is off. */
+            networks?: components["schemas"]["StackAddressNetworks"];
             /** @description The user in the stack that takes the uid of the path's host directory (version 8). Only for a path. */
             owner?: string;
             /**
@@ -4954,6 +4966,8 @@ export interface components {
             secret: boolean;
             /** @description A value is stored. */
             set: boolean;
+            /** @description An address variable that takes one IPv4 address: no CIDR, network word or list (version 10). */
+            single?: boolean;
             /**
              * @description Where the value comes from: stored, the manifest's default, or nowhere (unset).
              * @enum {string}

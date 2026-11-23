@@ -227,7 +227,7 @@ func (h *HTTP) Register(a httpx.APIs) {
 			return &nixStoreBody{Body: h.svc.NixStore(ctx)}, nil
 		})
 	httpx.Register(a, httpx.ScopeRead, op("getManifestSchema", http.MethodGet, "/stacks-manifest-schema",
-		"The JSON Schema of homelab-stack.json, version 9, for editors. Check and an install stay the authority.", 0),
+		"The JSON Schema of homelab-stack.json, version 10, for editors. Check and an install stay the authority.", 0),
 		func(context.Context, *struct{}) (*schemaBody, error) {
 			return &schemaBody{Body: json.RawMessage(ManifestSchema)}, nil
 		})

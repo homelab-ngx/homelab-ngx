@@ -68,7 +68,7 @@ func TestParseManifestRejects(t *testing.T) {
 	}{
 		{"unknown field", base(`,"vpn":true`), "unknown field"},
 		{"trailing data", base("") + "{}", "trailing data"},
-		{"future version", `{"version":10,"name":"a"}`, "version"},
+		{"future version", `{"version":11,"name":"a"}`, "version"},
 		{"nixpkgs before version 7", `{"version":6,"name":"a","nixpkgs":"nixos-unstable"}`, "nixpkgs needs version 7"},
 		{"version 7 without nixpkgs", `{"version":7,"name":"a"}`, "nixpkgs"},
 		{"nixpkgs a branch name", `{"version":7,"name":"a","nixpkgs":"master"}`, "nixpkgs"},

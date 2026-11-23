@@ -1,5 +1,5 @@
 {
-  "version": 9,
+  "version": 10,
   "name": "NAME",
   "nixpkgs": "nixos-unstable",
   "routes": [{ "host": "NAME", "port": 8080 }],

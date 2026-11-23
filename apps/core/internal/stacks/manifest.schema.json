@@ -2,14 +2,14 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "homelab-stack.json",
   "title": "homelab-stack.json",
-  "description": "A stack's manifest, version 9: what the stack asks of the host. Each route, path, egress, port, GPU, containers and API entry is a grant the operator approves. The host's Check is the authority; this schema is for the editor.",
+  "description": "A stack's manifest, version 10: what the stack asks of the host. Each route, path, egress, port, GPU, containers and API entry is a grant the operator approves. The host's Check is the authority; this schema is for the editor.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "name", "nixpkgs"],
   "properties": {
     "version": {
-      "description": "The manifest format. Write 9.",
-      "const": 9
+      "description": "The manifest format. Write 10.",
+      "const": 10
     },
     "name": {
       "description": "The stack's suggested name: 1-32 characters of a-z, 0-9 and '-', starting with a letter. The operator picks the installed name.",
@@ -165,7 +165,7 @@
           "not": { "enum": ["HOMELAB_API_TOKEN", "HOMELAB_API_URL", "HOMELAB_DOMAIN", "HOMELAB_DASHBOARD_URL"] }
         },
         "kind": {
-          "description": "env: a plain value. secret: write-only. path: a host folder bound in at mount. address: IPv4 addresses or CIDRs (and the words lan, vpn and tailnet, which the operator may tick), used by egress and ports as $NAME.",
+          "description": "env: a plain value. secret: write-only. path: a host folder bound in at mount. address: IPv4 addresses or CIDRs (and the words lan, vpn and tailnet, which the operator may tick), used by egress and ports as $NAME. With single, one IPv4 address.",
           "enum": ["env", "secret", "path", "address"]
         },
         "description": {
@@ -194,7 +194,8 @@
           "description": "path only: a group the module declares, which takes the host folder's gid.",
           "type": "string",
           "pattern": "^[a-z_][a-z0-9_-]{0,31}$"
-        }
+        },
+        "single": { "description": "address only: the value is one IPv4 address, with no CIDR, network word or list.", "type": "boolean" }
       }
     },
     "egress": {

@@ -373,6 +373,9 @@ type StackManifestVariable struct {
 	Group    string `json:"group,omitempty" doc:"The group in the stack that takes the gid of a path's host directory (version 8)."`
 	Required bool   `json:"required"`
 
+	// Single An address variable takes one IPv4 address (version 10).
+	Single bool `json:"single,omitempty" doc:"An address variable takes one IPv4 address: no CIDR, network word or list (version 10)."`
+
 	// Type What an env variable's value is, for the dashboard's input (version 7).
 	Type string `json:"type,omitempty" enum:"string,number,boolean" doc:"What an env variable's value is, for the dashboard's input (version 7). Values are not checked against it."`
 }
@@ -558,6 +561,12 @@ type StackVariable struct {
 	// Set It has a value.
 	Set bool `json:"set" doc:"A value is stored."`
 
+	// Single An address variable that takes one IPv4 address.
+	Single bool `json:"single,omitempty" doc:"An address variable that takes one IPv4 address: no CIDR, network word or list (version 10)."`
+
+	// Networks What the address words stand for on this host now.
+	Networks *StackAddressNetworks `json:"networks,omitempty" doc:"For an address variable that is not single: the CIDRs each of lan, vpn and tailnet stands for on this host now, each empty while that network is off."`
+
 	// Source Where the value comes from.
 	Source StackVariableSource `json:"source" enum:"stored,default,unset" doc:"Where the value comes from: stored, the manifest's default, or nowhere (unset)."`
 
@@ -569,6 +578,15 @@ type StackVariable struct {
 
 	// Value The value of a plain variable. Absent for a secret.
 	Value string `json:"value,omitempty" doc:"The stored value of a plain variable; for a path, the host path. Absent for a secret and when none is stored."`
+}
+
+// StackAddressNetworks is what the words of an address variable stand for
+// on this host: the CIDRs the stack receives for each, none while that
+// network is off.
+type StackAddressNetworks struct {
+	Lan     []string `json:"lan" doc:"The host's LAN subnets."`
+	Vpn     []string `json:"vpn" doc:"The WireGuard VPN's subnet; empty while the VPN is off."`
+	Tailnet []string `json:"tailnet" doc:"The tailnet's range; empty while the host is not on a tailnet."`
 }
 
 // StackVariableKind is the kind of a StackVariable.

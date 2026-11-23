@@ -6060,6 +6060,38 @@
         ],
         "type": "object"
       },
+      "StackAddressNetworks": {
+        "additionalProperties": false,
+        "properties": {
+          "lan": {
+            "description": "The host's LAN subnets.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "tailnet": {
+            "description": "The tailnet's range; empty while the host is not on a tailnet.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "vpn": {
+            "description": "The WireGuard VPN's subnet; empty while the VPN is off.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "lan",
+          "vpn",
+          "tailnet"
+        ],
+        "type": "object"
+      },
       "StackApprove": {
         "additionalProperties": false,
         "properties": {
@@ -6892,6 +6924,10 @@
           "required": {
             "type": "boolean"
           },
+          "single": {
+            "description": "An address variable takes one IPv4 address: no CIDR, network word or list (version 10).",
+            "type": "boolean"
+          },
           "type": {
             "description": "What an env variable's value is, for the dashboard's input (version 7). Values are not checked against it.",
             "enum": [
@@ -7211,6 +7247,10 @@
           "name": {
             "type": "string"
           },
+          "networks": {
+            "$ref": "#/components/schemas/StackAddressNetworks",
+            "description": "For an address variable that is not single: the CIDRs each of lan, vpn and tailnet stands for on this host now, each empty while that network is off."
+          },
           "owner": {
             "description": "The user in the stack that takes the uid of the path's host directory (version 8). Only for a path.",
             "type": "string"
@@ -7243,6 +7283,10 @@
           },
           "set": {
             "description": "A value is stored.",
+            "type": "boolean"
+          },
+          "single": {
+            "description": "An address variable that takes one IPv4 address: no CIDR, network word or list (version 10).",
             "type": "boolean"
           },
           "source": {
@@ -21124,7 +21168,7 @@
             "description": "Error"
           }
         },
-        "summary": "The JSON Schema of homelab-stack.json, version 9, for editors. Check and an install stay the authority.",
+        "summary": "The JSON Schema of homelab-stack.json, version 10, for editors. Check and an install stay the authority.",
         "tags": [
           "stacks"
         ]

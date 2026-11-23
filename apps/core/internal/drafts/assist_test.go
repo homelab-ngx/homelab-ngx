@@ -106,7 +106,7 @@ func TestGuideHoldsTheTemplate(t *testing.T) {
 	if !strings.Contains(g, `<file path="flake.nix">`) || !strings.Contains(g, "services.nginx") || !strings.Contains(g, "example, a homelab stack") {
 		t.Fatalf("guide ends with %q", g[len(g)-300:])
 	}
-	if strings.Contains(g, "{{") || !strings.Contains(g, StackRules+"\n# Check and Build\n") || !strings.Contains(g, "## homelab-stack.json (manifest version 9)") {
+	if strings.Contains(g, "{{") || !strings.Contains(g, StackRules+"\n# Check and Build\n") || !strings.Contains(g, "## homelab-stack.json (manifest version 10)") {
 		t.Fatal("the guide does not hold the stack rules in their place")
 	}
 }

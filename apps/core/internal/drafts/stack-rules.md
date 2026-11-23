@@ -2,18 +2,18 @@
 
 Every stack repo has `homelab-stack.json` (the manifest: what the stack asks of the host) and `flake.nix`, which exports the stack's NixOS module as `nixosModules.default`. A repo may hold more files the module imports or reads; keep to how it is laid out. The flake needs no inputs; for a new stack, write the module inline in flake.nix as `outputs = _: { nixosModules.default = { config, lib, pkgs, ... }: { … }; };`. The host builds the module on its own base module, with the nixpkgs the manifest names, so the whole stack uses one nixpkgs.
 
-## homelab-stack.json (manifest version 9)
+## homelab-stack.json (manifest version 10)
 
 Unknown fields are refused. Fields:
 
-- `"version": 9` and `"name"`: the stack's suggested name, 1-32 characters of a-z, 0-9 and '-', starting with a letter. Its first 12 characters name its network interface, so keep them apart from other stacks' names.
+- `"version": 10` and `"name"`: the stack's suggested name, 1-32 characters of a-z, 0-9 and '-', starting with a letter. Its first 12 characters name its network interface, so keep them apart from other stacks' names.
 - `"nixpkgs"` (required): `"nixos-unstable"`, `"nixos-YY.MM"` or a 40-character NixOS/nixpkgs commit.
 - `"routes"`: `[{ "host": "<label>", "port": <port in the stack>, "max_body": "50GB" (optional) }]`. A label such as `"photos"` is served privately as `photos.<the host's domain>` over HTTPS through the host's Caddy. Each route is a grant the person approves.
 - `"variables"`: values the host gives the stack. Each is `{ "name", "kind", "description", "required" }` plus fields by kind. Names match `^[A-Z][A-Z0-9_]{0,63}$`. Write `description` as one short sentence that says what the value is, with an example where it helps ("The tunnel address, such as 10.2.0.2/32."); the dashboard shows it as the help for that variable.
   - `"env"`: a plain value. No default in the manifest: the value the module sets is the default. Optional `"type"` (`string`, `number`, `boolean`) and `"enum"` (allowed values).
   - `"secret"`: write-only, no default.
   - `"path"`: a host folder the person picks, bound into the stack at `"mount"` (required; an absolute path inside the stack, used once). Optional `"default"` (a host folder), `"read_only": true`, and `"owner"` / `"group"`: a user and a group the module declares, which then take the host folder's uid and gid. The person makes the folder from the stack's page, which gives it the host's ids for those names; they never pick a number. A path is a grant.
-  - `"address"`: IPv4 addresses or CIDRs, comma-separated, used by egress and ports as `"$NAME"`. The operator may also tick `lan`, `vpn` and `tailnet`, which the stack receives as CIDRs. No default.
+  - `"address"`: IPv4 addresses or CIDRs, comma-separated, used by egress and ports as `"$NAME"`. The operator may also tick `lan`, `vpn` and `tailnet`, which the stack receives as CIDRs. No default. Add `"single": true` when the stack needs one host, such as a device it connects to: the value is then one IPv4 address, never a list or a network.
   The names `HOMELAB_API_TOKEN`, `HOMELAB_API_URL`, `HOMELAB_DOMAIN` and `HOMELAB_DASHBOARD_URL` are the host's; do not declare them.
 - `"egress"`: `[{ "to": "host" | "<CIDR>" | "$NAME", "port": <n>, "proto": "tcp" | "udp" }]`. The stack reaches the internet and the host's Caddy on 443 without one; the LAN, other host ports, Tailscale and IPv6 are blocked unless opened here. The host's mail relay is `"to": "host", "port": 25`.
 - `"ports"`: `[{ "port": <host port>, "to": <stack port>, "proto": "tcp" | "udp", "from": ["lan" | "<CIDR>" | "$NAME"] }]`, for protocols Caddy cannot carry (RTSP, a game server, a media server's direct connections). Never 22, 53, 80 or 443.

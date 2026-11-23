@@ -100,6 +100,38 @@ func ParseAddresses(value string) ([]string, string, error) {
 	return out, strings.Join(fields, ","), nil
 }
 
+// ParseSingleAddress reads the value of a single address variable: one
+// IPv4 address, returned as written without a prefix.
+func ParseSingleAddress(value string) (string, error) {
+	v := strings.TrimSpace(value)
+	if a, err := netip.ParseAddr(v); err == nil && a.Is4() {
+		return a.String(), nil
+	}
+	if v == "" {
+		return "", errors.New("give one IPv4 address, such as 192.168.1.20")
+	}
+	return "", fmt.Errorf("%q is not one IPv4 address; give one, such as 192.168.1.20", v)
+}
+
+// fitsSingle is whether value fits a single address variable.
+func fitsSingle(value string) bool {
+	_, err := ParseSingleAddress(value)
+	return err == nil
+}
+
+// networks is what each address word stands for on this host, as the API
+// shows it.
+func (n Nets) networks() *StackAddressNetworks {
+	word := func(w string) []string {
+		cidrs, _ := n.Word(w)
+		if cidrs == nil {
+			return []string{}
+		}
+		return cidrs
+	}
+	return &StackAddressNetworks{Lan: word(WordLAN), Vpn: word(WordVPN), Tailnet: word(WordTailnet)}
+}
+
 // Resolve is the CIDRs of an address variable's value on this host: its
 // addresses and CIDRs, and what its words stand for. nil when the value
 // does not parse.

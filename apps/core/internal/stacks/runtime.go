@@ -162,7 +162,11 @@ func (s *Service) Start(ctx context.Context, name string) (Stack, error) {
 		if r.Generation == 0 {
 			return s.variablesGate(r)
 		}
-		return nil
+		m, err := s.runningManifest(ctx, r)
+		if err != nil {
+			return err
+		}
+		return s.misfitGate(name, m)
 	}, func(ctx context.Context, o *operation) error { return s.start(ctx, o, name) })
 }
 
@@ -538,6 +542,10 @@ func (s *Service) start(ctx context.Context, o *operation, name string) error {
 	}
 	m, err := decode(g.Manifest)
 	if err != nil {
+		return err
+	}
+	// Every start path (boot, thaw, retry) meets this before the health wait.
+	if err := s.misfitGate(name, m); err != nil {
 		return err
 	}
 	subnet, err := s.ensureSubnet(ctx, name)

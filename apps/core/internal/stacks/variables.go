@@ -359,7 +359,7 @@ const (
 // host path a stack may be given is no value.
 func resolve(d Variable, vars []storedVar) (value, source string) {
 	if i := slices.IndexFunc(vars, func(v storedVar) bool { return v.Name == d.Name }); i >= 0 {
-		if d.Kind != VarPath || validHostPath(vars[i].Value) == nil {
+		if fits(d, vars[i].Value) {
 			return vars[i].Value, SourceStored
 		}
 		return "", SourceUnset
@@ -368,6 +368,52 @@ func resolve(d Variable, vars []storedVar) (value, source string) {
 		return *d.Default, SourceDefault
 	}
 	return "", SourceUnset
+}
+
+// fits is whether a stored value suits d as declared now: a path must be a
+// valid host path, and a single address one IPv4 address. A value that does
+// not fit resolves to nothing.
+func fits(d Variable, value string) bool {
+	switch {
+	case d.Kind == VarPath:
+		return validHostPath(value) == nil
+	case d.Kind == VarAddress && d.Single:
+		return fitsSingle(value)
+	}
+	return true
+}
+
+// misfitIn lists the single address variables of m whose stored value is
+// not one IPv4 address, as when a commit makes a variable single that held
+// a list.
+func misfitIn(m Manifest, vars []storedVar) []string {
+	var out []string
+	for _, d := range m.Vars() {
+		if d.Kind != VarAddress || !d.Single {
+			continue
+		}
+		if i := slices.IndexFunc(vars, func(v storedVar) bool { return v.Name == d.Name }); i >= 0 && !fitsSingle(vars[i].Value) {
+			out = append(out, d.Name)
+		}
+	}
+	return out
+}
+
+// misfitGate refuses to boot m while a single address variable holds more
+// than one IPv4 address: the stack would get a value it cannot read.
+func (s *Service) misfitGate(name string, m Manifest) error {
+	s.varsMu.Lock()
+	vars, err := s.loadVars(name)
+	s.varsMu.Unlock()
+	if err != nil {
+		return err
+	}
+	if bad := misfitIn(m, vars); len(bad) > 0 {
+		return httpx.Conflict("invalid_address",
+			"stack %q: %s takes one IPv4 address; set it on the stack's page or with `homelab stacks var set %s <NAME> --value-stdin`",
+			name, strings.Join(bad, ", "), name).With("invalid", bad)
+	}
+	return nil
 }
 
 // missingIn lists the required variables of m that resolve to no value.
@@ -400,6 +446,9 @@ func (s *Service) missingValues(name string, m Manifest) ([]string, error) {
 func (s *Service) variablesGate(r store.Stack) error {
 	m, ok, err := approvedManifest(r)
 	if err != nil || !ok {
+		return err
+	}
+	if err := s.misfitGate(r.Name, m); err != nil {
 		return err
 	}
 	missing, err := s.missingValues(r.Name, m)
@@ -457,7 +506,7 @@ func (s *Service) materializePathsLogged(name string, m Manifest) {
 // every variable the fetched manifest requires has a value. Declared ones
 // take their kind and description from the fetched manifest when it declares
 // them, else from the approved one.
-func variablesView(vars []storedVar, approved, fetched Manifest, tokenSet bool, builtins []storedVar) ([]StackVariable, bool) {
+func variablesView(vars []storedVar, approved, fetched Manifest, tokenSet bool, builtins []storedVar, nets Nets) ([]StackVariable, bool) {
 	stored := map[string]storedVar{}
 	for _, v := range vars {
 		stored[v.Name] = v
@@ -480,6 +529,12 @@ func variablesView(vars []storedVar, approved, fetched Manifest, tokenSet bool, 
 			Name: n, Description: d.Description, Declared: true, Kind: StackVariableKind(d.Kind), Required: d.Required,
 			Default: d.Default, Secret: d.Kind == VarSecret || (d.Kind == VarEnv && v.Secret), Set: set,
 			Type: d.Type, Enum: d.Enum,
+		}
+		if d.Kind == VarAddress {
+			sv.Single = d.Single
+			if !d.Single {
+				sv.Networks = nets.networks()
+			}
 		}
 		if d.Kind == VarPath {
 			ro := d.ReadOnly || (set && v.ReadOnly)
@@ -603,7 +658,13 @@ func (s *Service) SetVariable(ctx context.Context, name, varName string, in Stac
 		}
 		s.adoptEmpty(ctx, d, in.Value)
 	}
-	if declared && d.Kind == VarAddress {
+	if declared && d.Kind == VarAddress && d.Single {
+		value, err := ParseSingleAddress(in.Value)
+		if err != nil {
+			return Stack{}, httpx.Unprocessable("invalid_address", "%s: %v", varName, err)
+		}
+		in.Value = value
+	} else if declared && d.Kind == VarAddress {
 		_, value, err := ParseAddresses(in.Value)
 		if err != nil {
 			return Stack{}, httpx.Unprocessable("invalid_address", "%s: %v", varName, err)

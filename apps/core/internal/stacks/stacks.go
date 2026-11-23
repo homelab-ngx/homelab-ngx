@@ -575,7 +575,7 @@ func (s *Service) view(ctx context.Context, r store.Stack) (Stack, error) {
 		// the whole view.
 		s.log.Warn("stack variables not read", "stack", r.Name, "error", varsErr)
 	}
-	v.Variables, v.VariablesReady = variablesView(vars, approved, fetched, r.ApiTokenHash != "", s.builtins(fetched))
+	v.Variables, v.VariablesReady = variablesView(vars, approved, fetched, r.ApiTokenHash != "", s.builtins(fetched), s.hostNets())
 	v.VariablesReady = v.VariablesReady && varsErr == nil
 	s.ownerView(ctx, r.Name, v.Variables)
 	v.Folders = s.foldersView(ctx, r, folders)

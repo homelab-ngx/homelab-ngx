@@ -26,8 +26,9 @@ const ManifestFile = "homelab-stack.json"
 // labels under the host's domain, address variables that egress and port
 // clients can name, the owner and group of a path, and the GPU and firewall
 // from the host; version 9 adds the icons of the stack and its services, and
-// a hint for the folders the operator adds.
-const ManifestVersion = 9
+// a hint for the folders the operator adds; version 10 adds address variables
+// that take a single address.
+const ManifestVersion = 10
 
 // MinBuildVersion is the oldest manifest a stack is built from. Older
 // manifests still parse, since stored generations carry them.
@@ -201,6 +202,9 @@ type Variable struct {
 	// pins no host ids. The stack declares the user or group itself.
 	Owner string `json:"owner,omitempty"`
 	Group string `json:"group,omitempty"`
+	// Single (version 10, address only) is whether the value is one IPv4
+	// address: no CIDR, no network word and no list.
+	Single bool `json:"single,omitempty"`
 }
 
 // Types of an env variable (version 7).
@@ -744,6 +748,14 @@ func (m Manifest) validateVariables() error {
 				return fmt.Errorf("%s.group: %q is not a group name", f, v.Group)
 			case v.Owner == "root" || v.Group == "root":
 				return fmt.Errorf("%s: root cannot take a host directory's ids", f)
+			}
+		}
+		if v.Single {
+			switch {
+			case m.Version < 10:
+				return fmt.Errorf("version: %s.single needs version 10", f)
+			case v.Kind != VarAddress:
+				return fmt.Errorf("%s: single is only for an address", f)
 			}
 		}
 		if v.Kind != VarPath && (v.Mount != "" || v.ReadOnly) {
