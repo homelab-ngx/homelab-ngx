@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strings"
@@ -9,7 +10,9 @@ import (
 
 	"github.com/urfave/cli/v2"
 
+	"homelab-ngx.com/core/internal/metrics"
 	"homelab-ngx.com/core/internal/power"
+	"homelab-ngx.com/core/internal/powermeter"
 	"homelab-ngx.com/core/internal/powerprofile"
 )
 
@@ -229,6 +232,17 @@ func profileCmd() *cli.Command {
 				return printJSON(st)
 			}
 			printProfile(*st)
+			// The meter and the comparison are extras: a daemon without
+			// them still shows the profile.
+			m, _ := call[powermeter.PowerMeter](c.Context, http.MethodGet, "/system/power-meter", nil)
+			q := "/metrics/power-profiles?range=7d"
+			if m != nil && m.IdleOnly {
+				q += "&idle_only=true"
+			}
+			p, _ := call[metrics.MetricsPowerProfiles](c.Context, http.MethodGet, q, nil)
+			for _, l := range powerLines(m, p) {
+				fmt.Println(l)
+			}
 			return nil
 		},
 		Subcommands: []*cli.Command{{
@@ -258,6 +272,43 @@ func profileCmd() *cli.Command {
 			},
 		}},
 	}
+}
+
+// powerLines are the power meter's reading and the average power per
+// profile over the last 7 days; either may be nil.
+func powerLines(m *powermeter.PowerMeter, p *metrics.MetricsPowerProfiles) []string {
+	var out []string
+	if m != nil && m.State != powermeter.StateOff {
+		line := fmt.Sprintf("meter:    %s, %s", m.Entity, m.State)
+		if m.Watts != nil {
+			line = fmt.Sprintf("meter:    %.1f W at the wall (%s)", *m.Watts, m.Entity)
+		} else if m.Detail != "" {
+			line += ": " + m.Detail
+		}
+		out = append(out, line)
+	}
+	if p == nil || len(p.Profiles) == 0 {
+		return out
+	}
+	head := "7 days:"
+	if p.IdleOnly {
+		head = "7 days, idle minutes:"
+	}
+	out = append(out, head)
+	w := func(n metrics.Num) string {
+		if math.IsNaN(float64(n)) {
+			return "-"
+		}
+		return fmt.Sprintf("%.1f W", float64(n))
+	}
+	for _, r := range p.Profiles {
+		over := fmt.Sprintf("%.1f h", float64(r.Minutes)/60)
+		if r.Minutes < 60 {
+			over = fmt.Sprintf("%d min", r.Minutes)
+		}
+		out = append(out, fmt.Sprintf("  %-12s wall %-8s cpu %-8s over %s", r.Profile, w(r.Wall), w(r.CPU), over))
+	}
+	return out
 }
 
 func printProfile(st powerprofile.PowerProfileStatus) {

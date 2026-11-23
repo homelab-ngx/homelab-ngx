@@ -3,13 +3,16 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"homelab-ngx.com/core/internal/metrics"
 	"homelab-ngx.com/core/internal/power"
+	"homelab-ngx.com/core/internal/powermeter"
 	"homelab-ngx.com/core/internal/powerprofile"
 )
 
@@ -136,5 +139,33 @@ func TestProfileSetSendsTheProfileAndGovernor(t *testing.T) {
 	}
 	if err := runApp(t, "system", "profile", "set"); err == nil {
 		t.Fatal("set without a profile went ahead")
+	}
+}
+
+func TestPowerLines(t *testing.T) {
+	w := 14.24
+	m := &powermeter.PowerMeter{Entity: "sensor.plug_power", State: powermeter.StateConnected, Watts: &w}
+	p := &metrics.MetricsPowerProfiles{Range: metrics.Range7d, Profiles: []metrics.MetricsProfilePower{
+		{Profile: "balanced", Minutes: 90, Wall: 16.04, CPU: 2.8},
+		{Profile: "power-saver", Minutes: 30, Wall: metrics.Num(math.NaN()), CPU: 0.9},
+		{Profile: "performance", Minutes: 600, Wall: 31, CPU: 12.25},
+	}}
+	got := strings.Join(powerLines(m, p), "\n")
+	want := strings.Join([]string{
+		"meter:    14.2 W at the wall (sensor.plug_power)",
+		"7 days:",
+		"  balanced     wall 16.0 W   cpu 2.8 W    over 1.5 h",
+		"  power-saver  wall -        cpu 0.9 W    over 30 min",
+		"  performance  wall 31.0 W   cpu 12.2 W   over 10.0 h",
+	}, "\n")
+	if got != want {
+		t.Errorf("got\n%s\nwant\n%s", got, want)
+	}
+	failed := &powermeter.PowerMeter{Entity: "sensor.plug_power", State: powermeter.StateAuthFailed, Detail: "Home Assistant refused the token"}
+	if got := powerLines(failed, nil); len(got) != 1 || got[0] != "meter:    sensor.plug_power, auth_failed: Home Assistant refused the token" {
+		t.Errorf("failed: %q", got)
+	}
+	if got := powerLines(&powermeter.PowerMeter{State: powermeter.StateOff}, &metrics.MetricsPowerProfiles{}); len(got) != 0 {
+		t.Errorf("off: %q", got)
 	}
 }
