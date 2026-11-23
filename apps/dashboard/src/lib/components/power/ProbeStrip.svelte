@@ -16,7 +16,8 @@
 </script>
 
 <!-- One tick per check, newest on the right: a full bar where the host
-     answered, a low hollow one where it did not. -->
+     answered, a low hollow one where it did not, a full ok one for the
+     first answer from the new boot. -->
 <div class="flex items-center gap-3">
   <div class="flex h-4 min-w-0 flex-1 items-end justify-end gap-0.5 overflow-hidden" aria-hidden="true">
     {#each probes as p, n (first + n)}
