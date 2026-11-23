@@ -82,7 +82,7 @@
 
   const assistant = createQuery(() => ({ queryKey: keys.assistant, queryFn: fetchAssistant }));
   const assistantStatus = $derived<TileStatus | undefined>(
-    assistant.data && { tone: assistant.data.provider !== "none" ? "ok" : "idle", text: assistantLabel(assistant.data) },
+    assistant.data && (assistant.data.provider !== "none" ? { tone: "ok", text: assistantLabel(assistant.data) } : { tone: "idle", text: "off" }),
   );
   const audits = createQuery(() => ({ queryKey: securityKeys.audits, queryFn: fetchAudits }));
 
@@ -164,7 +164,7 @@
 <div class="mt-5 grid gap-5">
   <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="host-h">
     {@render band("host-h", "This host")}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-1 p-3">
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] gap-1 p-3">
       {@render tile(House, "Host", "/settings/general#host", s && hostLine(s))}
       {@render tile(Clock, "Clock", "/settings/general#clock", s && clockStatus(s))}
       {@render tile(Keyboard, "Console", "/settings/general#console", s && consoleLine(s, layouts.data?.layouts))}
@@ -178,7 +178,7 @@
 
   <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="net-h">
     {@render band("net-h", "Network", s && appliedStatus(s))}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-1 p-3">
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] gap-1 p-3">
       {@render tile(Globe, "Domain", "/settings/network#domain", s && domainLine(s))}
       {@render tile(Network, "LAN", "/settings/network#lan", s && lanLine(s))}
       {@render tile(Waypoints, "Tailscale", "/settings/network#tailscale", s && tailscaleStatus(s, tailscale.data))}
@@ -191,7 +191,7 @@
 
   <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="ai-h">
     {@render band("ai-h", "Assistant")}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-1 p-3">
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] gap-1 p-3">
       {@render tile(Sparkles, "AI assistant", "/settings/assistant", assistantStatus)}
       {@render tile(ShieldCheck, "Security audit", "/settings/security", auditStatus(audits.data))}
     </div>
@@ -199,7 +199,7 @@
 
   <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="browser-h">
     {@render band("browser-h", "This browser")}
-    <div class="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-1 p-3">
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(8rem,1fr))] gap-1 p-3">
       {@render action(Lock, "Change password…", () => (changing = true))}
       {@render action(LogOut, "Sign out", signOut)}
       <div class="flex min-h-24 flex-col items-center gap-1.5 px-2 pt-3.5 pb-3 text-center">

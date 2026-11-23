@@ -44,13 +44,13 @@
   const toneText = { ok: "text-muted", warn: "text-warn", bad: "text-bad", info: "text-muted", idle: "text-muted" } as const;
 </script>
 
-{#snippet removalLine(o: NonNullable<Pool["operation"]>)}
+{#snippet removalLine(o: NonNullable<Pool["operation"]>, track = "bg-sunken")}
   {@const r = removal(o, bytes)}
   <div role="status">
     <div class="flex flex-wrap items-center gap-x-4 gap-y-1">
       <span class="tabular-nums {o.phase === 'failed' ? 'text-bad' : ''}">{r.text}</span>
       {#if running(o)}
-        <div class="h-1.5 min-w-40 flex-1 overflow-hidden rounded-full bg-sunken" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={r.percent} aria-label="Data moved off the disk">
+        <div class="h-1.5 min-w-40 flex-1 overflow-hidden rounded-full {track}" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow={r.percent} aria-label="Data moved off the disk">
           <div class="h-full rounded-full bg-accent transition-[width] duration-700" style:width="{r.percent}%"></div>
         </div>
       {:else}
@@ -173,7 +173,7 @@
             </tr>
             {#if p.operation && p.operation.disk === d.path}
               <tr class="border-b border-line bg-sunken last:border-0">
-                <td colspan="8" class="px-3 py-2 sm:pl-8">{@render removalLine(p.operation)}</td>
+                <td colspan="8" class="px-3 py-2 sm:pl-8">{@render removalLine(p.operation, "bg-surface")}</td>
               </tr>
             {/if}
           {/each}
