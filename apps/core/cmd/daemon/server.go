@@ -96,6 +96,11 @@ func handlers(d deps) (operator, web, stack http.Handler) {
 	if d.drafts != nil {
 		opMux.HandleFunc("GET "+httpx.Prefix+"/drafts/{name}/lsp", d.drafts.LSP)
 	}
+	// A stack shell is a WebSocket too, and the operator's only: root in
+	// the container must never be reachable from the stack listener.
+	if d.stacks != nil {
+		opMux.HandleFunc("GET "+httpx.Prefix+"/stacks/{name}/shell", d.stacks.Shell)
+	}
 	return httpx.Middleware(nil)(opMux), httpx.Middleware(nil)(auth.Gate(d.auth)(opMux)), httpx.Middleware(nil)(stackMux)
 }
 

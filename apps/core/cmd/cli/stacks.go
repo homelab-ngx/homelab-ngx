@@ -314,6 +314,7 @@ func stacksCmd() *cli.Command {
 					}
 					return nil
 				}), &cli.IntFlag{Name: "generation", Usage: "the generation to go back to"}),
+			stackShellCmd(),
 			stackVarCmd(),
 			stackFolderCmd(),
 			stackIDsCmd(),

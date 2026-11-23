@@ -115,6 +115,11 @@ type Service struct {
 
 	trees *treeCache // each commit's tree in the store (tree.go)
 	icons *iconCache // the stacks' and services' icons (iconserve.go)
+
+	// openShell opens a stack shell's terminal; nil: machined (shell.go).
+	// shellSlots bounds the shells open at once.
+	openShell  ShellOpener
+	shellSlots chan struct{}
 }
 
 // New wires the service. notifier may be nil.
@@ -125,7 +130,7 @@ func New(st *store.Store, src Source, host Host, notifier Notifier, log *slog.Lo
 	s := &Service{
 		st: st, src: src, host: host, r: host.Runner, notifier: notifier, log: log, now: time.Now,
 		probe: httpProbe, healthTimeout: 5 * time.Minute, healthEvery: 3 * time.Second, monitorEvery: time.Minute,
-		ops: map[string]*operation{}, ctx: context.Background(),
+		ops: map[string]*operation{}, ctx: context.Background(), shellSlots: make(chan struct{}, shellSessions),
 		statDir: isDir, timeZone: HostTimeZone, statOwner: statOwner, statfs: diskRoom, bootID: readBootID,
 	}
 	s.chown = chownPath(host.Runner)

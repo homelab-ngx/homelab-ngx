@@ -27,6 +27,7 @@ func TestOperationalCommandsAreExposed(t *testing.T) {
 			"pool-create", "pool-add-disk", "pool-remove-disk", "pool-cancel", "pool-delete"}},
 		{hostCmd(), []string{"core-services", "version"}},
 		{systemCmd(), []string{"reboot", "poweroff", "status", "cancel"}},
+		{stacksCmd(), []string{"shell"}},
 	}
 	for _, tt := range tests {
 		got := commandNames(tt.group.Subcommands)
