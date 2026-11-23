@@ -102,6 +102,7 @@ jobs:
           [ ! -e homelab-ngx_"$prev".img ] || cp homelab-ngx_"$prev".img "$GITHUB_WORKSPACE/image/out/homelab_$prev.raw"
 
       - name: make image
+        id: image
         run: make image VERSION="$VERSION"
 
       # The check only installs and breaks this one: a copy of the build
@@ -156,11 +157,14 @@ jobs:
           echo "image check: $VERSION built, checked and signed; nothing published" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The Nix store saves itself at the end of a green job (image-env).
-      # The image cache saves even when the check fails: it holds only the
-      # build root and packages, not the build.
+      # The image cache saves once make image has passed, even when the
+      # check fails: it holds only the build root and packages, not the
+      # build. A failed build's would hold some of the packages under the
+      # key every later run then matches exactly, and none of them would
+      # save the rest.
       - name: Pack the image cache
         id: pack
-        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.env.outputs.image-cache-hit != 'true' }}
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.image.outcome == 'success' && steps.env.outputs.image-cache-hit != 'true' }}
         run: |
           sudo test -e /var/cache/homelab-image/mkosi || { echo "no image cache to save"; exit 0; }
           sudo tar --zstd --numeric-owner -cpf "$RUNNER_TEMP/homelab-image.tar.zst" -C /var/cache homelab-image

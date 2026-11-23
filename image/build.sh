@@ -23,7 +23,8 @@
 # HOMELAB_IMAGE_OUT moves the output (default image/out).
 #
 # mkosi keeps the snapshot's packages in the cache, so a second build
-# downloads none. HOMELAB_IMAGE_UPDATE=1 builds an update for the host it
+# downloads none, and a build whose download failed tries again (three
+# tries) without fetching the same packages twice. HOMELAB_IMAGE_UPDATE=1 builds an update for the host it
 # runs on (the daemon sets it): mkosi starts from the OS tree of the build
 # before (Incremental=) when the packages are the same, and the whole-disk
 # .raw, which only an installer needs, is removed.
@@ -106,12 +107,26 @@ $sudo chown -R 0:0 "$tree"
 # mkosi's workspace is in the /out bind, so it renames its outputs into
 # place: from another mount it copies them, gigabytes each time.
 work=$out/.mkosi-work
-$sudo rm -rf "$work"
-mkdir -p "$work"
-nspawn --bind="$here:/work" --bind="$out:/out" --bind="$mkcache:/cache" --chdir=/work/base \
-  /usr/bin/mkosi --image-version "$version" --output-directory /out --workspace-directory /out/.mkosi-work \
-  --cache-directory /cache/images --package-cache-dir /cache/packages \
-  ${update:+--incremental=yes} --extra-tree=/out/var-tree:/ --force build
+# pacman gives up on a download that stalls for 10 s, and the Arch archive
+# stalls now and then. The packages it did fetch stay in the package cache,
+# so another try fetches only the rest. Any other failure ends the build.
+log=$(mktemp)
+for try in 1 2 3; do
+  $sudo rm -rf "$work"
+  mkdir -p "$work"
+  if nspawn --bind="$here:/work" --bind="$out:/out" --bind="$mkcache:/cache" --chdir=/work/base \
+    /usr/bin/mkosi --image-version "$version" --output-directory /out --workspace-directory /out/.mkosi-work \
+    --cache-directory /cache/images --package-cache-dir /cache/packages \
+    ${update:+--incremental=yes} --extra-tree=/out/var-tree:/ --force build 2>&1 | tee "$log"; then
+    break
+  fi
+  if [ "$try" = 3 ] || ! grep -q 'failed retrieving file' "$log"; then
+    rm -f "$log"
+    exit 1
+  fi
+  echo "a package download failed (try $try of 3); building again"
+done
+rm -f "$log"
 $sudo rm -rf "$tree" "$work"
 # An update needs no installer image; repart writes it with the split files.
 [ -z "$update" ] || $sudo rm -f "$out/homelab_$version.raw"
