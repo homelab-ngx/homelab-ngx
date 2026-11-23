@@ -85,7 +85,7 @@ export function ownedText(v: StackVariable): string {
 const kindWords: Record<VariableKind, string> = { env: "a setting", secret: "a secret", path: "a path", address: "an address" };
 
 /** A refused save in words, for the row it belongs to. */
-export function variableError(e: unknown, v: Pick<StackVariable, "name" | "kind">): string {
+export function variableError(e: unknown, v: Pick<StackVariable, "name" | "kind" | "single">): string {
   if (!(e instanceof ProblemError)) return e instanceof Error ? e.message : String(e);
   // The daemon prefixes "NAME: "; the row already names it.
   const why = e.detail.startsWith(`${v.name}: `) ? e.detail.slice(v.name.length + 2) : e.detail;
@@ -93,7 +93,7 @@ export function variableError(e: unknown, v: Pick<StackVariable, "name" | "kind"
     case "invalid_path":
       return `${why}. Create the folder here, or name one that exists.`;
     case "invalid_address":
-      return `${why}. Use IPv4 addresses or ranges, separated by commas.`;
+      return v.single ? `${why}.` : `${why}. Use IPv4 addresses or ranges, separated by commas.`;
     case "kind_mismatch":
       return `Declared as ${kindWords[v.kind]}; it cannot be made secret.`;
     case "secret_stays_secret":
@@ -122,4 +122,16 @@ export function addressParts(value: string): { words: AddressWord[]; other: stri
 export function addressValue(words: readonly AddressWord[], other: string): string {
   const ticked = ADDRESS_WORDS.map((w) => w.word).filter((w) => words.includes(w));
   return [...ticked, ...other.split(/[\s,]+/).filter(Boolean)].join(",");
+}
+
+/**
+ * What the stack gets for an address value on this host, as one line: each
+ * network as its CIDRs, then the custom addresses; a network that is off
+ * reads "VPN off". "" for no value.
+ */
+export function addressPreview(value: string, networks: Schema<"StackAddressNetworks">): string {
+  const { words, other } = addressParts(value);
+  const nets: Record<AddressWord, string[]> = { lan: networks.lan ?? [], vpn: networks.vpn ?? [], tailnet: networks.tailnet ?? [] };
+  const out = ADDRESS_WORDS.filter((w) => words.includes(w.word)).flatMap((w) => (nets[w.word].length ? nets[w.word] : [`${w.label} off`]));
+  return [...out, ...other.split(/[\s,]+/).filter(Boolean)].join(" · ");
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ProblemError, type Stack } from "./api/client.ts";
-import { addressParts, addressValue, generateKey, groupVariables, missingVariables, NAME_RE, nameProblem, needsValue, variableError, type StackVariable } from "./variables.ts";
+import { addressParts, addressPreview, addressValue, generateKey, groupVariables, missingVariables, NAME_RE, nameProblem, needsValue, variableError, type StackVariable } from "./variables.ts";
 
 const v = (name: string, over: Partial<StackVariable> = {}): StackVariable => ({
   name,
@@ -96,5 +96,12 @@ describe("address values", () => {
     expect(addressParts("192.168.1.5, lan tailnet,10.0.0.0/8")).toEqual({ words: ["lan", "tailnet"], other: "192.168.1.5, 10.0.0.0/8" });
     expect(addressValue(["tailnet", "lan"], "192.168.1.5, 10.0.0.0/8")).toBe("lan,tailnet,192.168.1.5,10.0.0.0/8");
     expect(addressValue([], "")).toBe("");
+  });
+
+  it("previews what the stack gets for an address value", () => {
+    const nets = { lan: ["192.168.1.0/24"], vpn: [], tailnet: ["100.64.0.0/10"] };
+    expect(addressPreview("lan,192.168.1.102", nets)).toBe("192.168.1.0/24 · 192.168.1.102");
+    expect(addressPreview("vpn,tailnet", nets)).toBe("VPN off · 100.64.0.0/10");
+    expect(addressPreview("", nets)).toBe("");
   });
 });

@@ -156,11 +156,14 @@ const SEEDS: StackSeed[] = [
     manifest: {
       routes: [{ host: "home", port: 8123 }],
       ports: [{ port: 1883, proto: "tcp", to: 1883, from: ["$IOT"] }],
+      egress: [{ to: "$HUB", port: 80, proto: "tcp" }],
       api: ["read"],
       backup: { folders: [{ label: "Configuration", path: "/var/lib/hass" }] },
     },
     variables: [
-      { name: "IOT", kind: "address", description: "The devices that may reach MQTT.", declared: true, required: true, secret: false, in_env: false, set: true, source: "stored", value: "192.0.2.0/26" },
+      { name: "IOT", kind: "address", description: "The devices that may reach MQTT.", declared: true, required: true, secret: false, in_env: false, set: true, source: "stored", value: "vpn,192.0.2.0/26",
+        networks: { lan: ["192.0.2.0/24"], vpn: ["10.99.0.0/24"], tailnet: [] } },
+      { name: "HUB", kind: "address", single: true, description: "The Zigbee hub the bridge connects to.", declared: true, required: true, secret: false, in_env: false, set: true, source: "stored", value: "192.0.2.40" },
     ],
   },
   {

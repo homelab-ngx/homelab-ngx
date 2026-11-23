@@ -272,12 +272,12 @@ describe("StackMappings", () => {
     }
   });
 
-  it("sets an address from the network boxes and the other addresses", async () => {
+  it("sets an address from the network boxes and the custom addresses", async () => {
     const put = vi.spyOn(api, "PUT").mockResolvedValue({ data: stack([]), response: new Response(null, { status: 200 }) } as never);
     try {
       const clients = variable("SMB_CLIENTS", { declared: true, kind: "address", source: "stored", value: "192.168.1.5" });
       render(Harness, { props: { client: new QueryClient(), stack: stack([clients]) } });
-      const other = screen.getByLabelText("Other addresses for SMB_CLIENTS") as HTMLInputElement;
+      const other = screen.getByLabelText("Custom addresses for SMB_CLIENTS") as HTMLInputElement;
       expect(other.value).toBe("192.168.1.5");
       await fireEvent.click(screen.getByLabelText("Tailnet"));
       await fireEvent.click(screen.getByLabelText("VPN"));
@@ -289,6 +289,52 @@ describe("StackMappings", () => {
       expect(put).toHaveBeenCalledWith("/stacks/{name}/variables/{var}", {
         params: { path: { name: "media", var: "SMB_CLIENTS" } },
         body: { value: "vpn,tailnet,192.168.1.5,10.0.0.0/24" },
+      });
+    } finally {
+      put.mockRestore();
+    }
+  });
+
+  it("shows the custom field only while Custom is ticked, and what the stack gets", async () => {
+    const put = vi.spyOn(api, "PUT").mockResolvedValue({ data: stack([]), response: new Response(null, { status: 200 }) } as never);
+    try {
+      const networks = { lan: ["192.168.1.0/24"], vpn: [], tailnet: ["100.64.0.0/10"] };
+      const clients = variable("CLIENTS", { declared: true, kind: "address", source: "stored", value: "lan,192.168.1.5", networks });
+      render(Harness, { props: { client: new QueryClient(), stack: stack([clients]) } });
+      expect(screen.getByText("Gets 192.168.1.0/24 · 192.168.1.5")).toBeTruthy();
+      const box = screen.getByLabelText("Custom") as HTMLInputElement;
+      expect(box.checked).toBe(true);
+      // Unticked, the addresses leave the value and the field goes; ticked again, they come back.
+      await fireEvent.click(box);
+      expect(screen.queryByLabelText("Custom addresses for CLIENTS")).toBeNull();
+      expect(screen.getByText("Gets 192.168.1.0/24")).toBeTruthy();
+      await fireEvent.click(screen.getByLabelText("VPN"));
+      expect(screen.getByText("Gets 192.168.1.0/24 · VPN off")).toBeTruthy();
+      await fireEvent.click(box);
+      expect((screen.getByLabelText("Custom addresses for CLIENTS") as HTMLInputElement).value).toBe("192.168.1.5");
+      await fireEvent.click(box);
+      await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+      expect(put).toHaveBeenCalledWith("/stacks/{name}/variables/{var}", {
+        params: { path: { name: "media", var: "CLIENTS" } },
+        body: { value: "lan,vpn" },
+      });
+    } finally {
+      put.mockRestore();
+    }
+  });
+
+  it("takes a single address in one field, without network boxes", async () => {
+    const put = vi.spyOn(api, "PUT").mockResolvedValue({ data: stack([]), response: new Response(null, { status: 200 }) } as never);
+    try {
+      const device = variable("DEVICE", { declared: true, kind: "address", single: true, required: true, source: "unset" });
+      render(Harness, { props: { client: new QueryClient(), stack: stack([device]) } });
+      expect(screen.queryByLabelText("LAN")).toBeNull();
+      expect(screen.queryByLabelText("Custom")).toBeNull();
+      await fireEvent.input(screen.getByLabelText("Address for DEVICE"), { target: { value: "192.168.1.20" } });
+      await fireEvent.click(screen.getByRole("button", { name: "Apply" }));
+      expect(put).toHaveBeenCalledWith("/stacks/{name}/variables/{var}", {
+        params: { path: { name: "media", var: "DEVICE" } },
+        body: { value: "192.168.1.20" },
       });
     } finally {
       put.mockRestore();
