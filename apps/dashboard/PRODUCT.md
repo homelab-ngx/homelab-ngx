@@ -23,13 +23,13 @@ Unraid-style runtime management on NixOS: a stack is added by giving a repo, the
 ## Operating Context
 
 - Served by Caddy on the host's private domain, reachable only on the LAN and the VPN. Not public.
-- Alerts go to the notification channels set on the Notifications page (ntfy, webhook).
+- Alerts go to the notification channels set under Settings > Notifications (ntfy, webhook); open problems and the history are in the tray from the bell in the header.
 - Desktop browser is the main scene. Phone use exists (PWA) but is secondary.
 - The daemon API (`/api`, problem+json errors) is the only data source; the CLI exposes the same operations.
 
 ## Capabilities and Constraints
 
-- Pages: Stacks (overview, a stack's page, add a stack), Storage, Backups, Notifications, System Settings (Updates for the core host, Network, the assistant, the security audit, logs). Updates and Logs are being folded into Stacks (2026-11-16); core and backup logs move under Settings.
+- Pages: Stacks (overview, a stack's page, add a stack), Storage, Backups, System Settings (Updates for the core host, Network, notification channels, the assistant, the security audit, logs). Updates and Logs are being folded into Stacks (2026-11-16); core and backup logs move under Settings.
 - Stack operations: add from a git repo or a local folder, approve grants, fill in variables (env, secret, path), start, stop, restart, update, update all, roll back to a generation, remove (data kept).
 - Built with SvelteKit (static SPA), Svelte 5 runes, Tailwind v4, bits-ui, TanStack Query and a client generated from the daemon's OpenAPI spec.
 - Terminology follows the repo's `CONTEXT.md` (stack, grant, generation, attempt, variable, core).

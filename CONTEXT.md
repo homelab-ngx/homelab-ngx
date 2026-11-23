@@ -233,7 +233,7 @@ One message sent to every enabled notification channel and logged with its deliv
 _Avoid_: alert (a notification is a message, a problem is a condition)
 
 **Notification channel**:
-Where notifications go, added on the Notifications page: an ntfy topic or a webhook that takes the generic JSON payload. Its token is sealed to the host's age key.
+Where notifications go, added under Settings > Notifications: an ntfy topic or a webhook that takes the generic JSON payload. Its token is sealed to the host's age key.
 _Avoid_: notifier (the code that sends), provider
 
 ### Health checking
