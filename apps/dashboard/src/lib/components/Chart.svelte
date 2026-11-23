@@ -10,6 +10,8 @@
   import "uplot/dist/uPlot.min.css";
   import { untrack } from "svelte";
   import type { Attachment } from "svelte/attachments";
+  import { clock } from "#lib/clock.svelte.ts";
+  import { clockTime, dateTime } from "#lib/format.ts";
   import type { Line } from "#lib/metrics.ts";
 
   type Props = {
@@ -80,7 +82,8 @@
         },
       },
       axes: [
-        axis,
+        // Times in the host's clock format: uPlot's own are 12-hour.
+        { ...axis, values: (_u, splits) => splits.map((v) => tick(v, splits.at(-1)! - splits[0]!)) },
         {
           ...axis,
           values: (_u, splits) => splits.map((v) => format(v)),
@@ -96,7 +99,7 @@
       series: [
         {
           label: "Time",
-          value: (_u: uPlot, v: number | null) => (v === null ? "latest" : new Date(v * 1000).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: at.length > 1 && (at[1]! - at[0]!) < 60 ? "2-digit" : undefined })),
+          value: (_u: uPlot, v: number | null) => (v === null ? "latest" : dateTime(v * 1000, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: at.length > 1 && at[1]! - at[0]! < 60 ? "2-digit" : undefined })),
         },
         ...lines.map((l, i) => ({
           label: l.label,
@@ -116,12 +119,20 @@
     };
   }
 
+  /** A time axis label: the day across days and at midnight, else the time. */
+  function tick(v: number, span: number): string {
+    const d = new Date(v * 1000);
+    if (span >= 2 * 86400 || (d.getHours() === 0 && d.getMinutes() === 0)) return dateTime(d, { day: "numeric", month: "short" });
+    return span < 120 ? clockTime(d, true) : dateTime(d, { hour: "numeric", minute: "2-digit" });
+  }
+
   const last = (vs: (number | null)[] | undefined) => vs?.findLast((v) => v !== null);
 
   let plot: uPlot | undefined;
 
   const mount: Attachment<HTMLDivElement> = (node) => {
     void shape;
+    void clock.format;
     const u = untrack(() => new uPlot(options(node.clientWidth), data(), node));
     plot = u;
     const ro = new ResizeObserver(() => u.setSize({ width: node.clientWidth, height }));

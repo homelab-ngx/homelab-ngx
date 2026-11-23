@@ -227,6 +227,18 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
     tunnel: { enabled: true, credentials_set: true, dns_managed: true, tunnel_id: "00000000-demo-4000-8000-000000000000", routes: [{ hostname: "photos.home.example", target: "http://photos:2283" }] },
     tailscale: { enabled: false },
     ddns: { enabled: true, name: "vpn", status: { record: "vpn.home.example", ips: ["203.0.113.7"], at: iso(h.now() - 3 * MIN) } },
+    time: { clock: "", ntp: [] },
+    time_sync: { synced: true, server: "0.arch.pool.ntp.org" },
+    console: { keyboard: "se" },
+  }),
+  "/host-settings/keyboard-layouts": () => ({
+    layouts: [
+      { name: "gb", description: "English (UK)" },
+      { name: "us", description: "English (US)" },
+      { name: "fr", description: "French" },
+      { name: "de", description: "German" },
+      { name: "se", description: "Swedish" },
+    ],
   }),
   "/host-settings/tailscale/status": () => ({ state: "off", ips: [] }),
   "/host-settings/tunnel/login": () => ({ state: "idle" }),

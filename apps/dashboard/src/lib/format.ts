@@ -1,4 +1,5 @@
 /** Short display forms shared by the pages. */
+import { clock } from "./clock.svelte.ts";
 
 export function shortRev(rev: string | undefined): string {
   return rev ? rev.slice(0, 7) : "–";
@@ -34,9 +35,32 @@ export function ago(iso: string | undefined | null, now = Date.now()): string {
   return rtf.format(Math.round(s / 86400), "day");
 }
 
+/** The host's clock format as Intl options; none follows the browser. */
+function cycle(): Intl.DateTimeFormatOptions {
+  if (clock.format === "12h") return { hourCycle: "h12" };
+  if (clock.format === "24h") return { hourCycle: "h23" };
+  return {};
+}
+
+/** A date and time in the host's clock format: 3 Mar, 14:05. */
+export function dateTime(at: Date | string | number, opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }): string {
+  return new Date(at).toLocaleString(undefined, { ...opts, ...cycle() });
+}
+
+/** A time of day in the host's clock format: 14:05. */
+export function clockTime(at: Date | string | number, seconds = false): string {
+  return new Date(at).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: seconds ? "2-digit" : undefined, ...cycle() });
+}
+
+/** A wall-clock "HH:MM" (a schedule's, in the host's time) in the host's clock format. */
+export function wallTime(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  return clockTime(new Date(2000, 0, 1, h || 0, m || 0));
+}
+
 export function stamp(iso: string | undefined | null): string {
   if (!iso) return "–";
-  return new Date(iso).toLocaleString(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+  return dateTime(iso);
 }
 
 export function duration(from: string, to?: string | null, now = Date.now()): string {

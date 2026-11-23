@@ -45,7 +45,7 @@ function push(s: Series, t: number, key: number, cpu: number, memory: number, ne
   s.net_tx.push(on && net ? Math.round(wave(t, key + 6, cpu * 240_000, 1.6)) : null);
 }
 
-export const info = (h: Host): Schema<"HostInfo"> => ({ cores: 8, memory_total: 32 * GB, booted_at: Math.floor(h.now() / 1000) - 6 * 86400 });
+export const info = (h: Host): Schema<"HostInfo"> => ({ cores: 8, memory_total: 32 * GB, model: "ASRock B550M Pro4", cpu: "AMD Ryzen 7 5700G with Radeon Graphics", booted_at: Math.floor(h.now() / 1000) - 6 * 86400 });
 
 /** The points from `from` to `to` (unix seconds), one every `step`. */
 export function frames(h: Host, from: number, to: number, step: number): Frames {

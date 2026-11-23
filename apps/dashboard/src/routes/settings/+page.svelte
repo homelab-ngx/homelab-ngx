@@ -5,6 +5,7 @@
   import { fetchAssistant, keys } from "#lib/api/queries.ts";
   import { headline } from "#lib/components/core/core.ts";
   import Help from "#lib/components/Help.svelte";
+  import { clockTime } from "#lib/format.ts";
   import PasswordForm from "#lib/components/PasswordForm.svelte";
   import Pill from "#lib/components/Pill.svelte";
   import { session } from "#lib/auth.svelte.ts";
@@ -112,7 +113,7 @@
             same pools.
           </Help>
           {#if scheduled}
-            <span class="font-normal text-muted">{scheduled.action} at {new Date(scheduled.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+            <span class="font-normal text-muted">{scheduled.action} at {clockTime(scheduled.at)}</span>
           {/if}
         </span>
         <span class="flex flex-wrap gap-2">

@@ -2,6 +2,7 @@
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { api, call, describe } from "#lib/api/client.ts";
   import Help from "#lib/components/Help.svelte";
+  import { clockTime } from "#lib/format.ts";
   import PowerDialog from "#lib/components/PowerDialog.svelte";
   import { busyPoll, idlePoll } from "#lib/api/queries.ts";
   import DeployCard from "#lib/components/core/DeployCard.svelte";
@@ -76,7 +77,7 @@
 {/if}
 {#if scheduled}
   <p role="status" class="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-md bg-core-soft px-3 py-2 text-core">
-    <span class="grow">{scheduled.action === "reboot" ? "Reboots" : "Shuts down"} at {new Date(scheduled.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+    <span class="grow">{scheduled.action === "reboot" ? "Reboots" : "Shuts down"} at {clockTime(scheduled.at)}</span>
     <button type="button" class="btn btn-sm" disabled={cancel.isPending} onclick={() => cancel.mutate()}>Cancel</button>
   </p>
 {/if}

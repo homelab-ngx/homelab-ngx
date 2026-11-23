@@ -3,6 +3,7 @@
   import { untrack } from "svelte";
   import { api, call, describe, type AssistantModels, type AssistantSettings, type AssistantTest } from "#lib/api/client.ts";
   import { fetchAssistantLimits, keys } from "#lib/api/queries.ts";
+  import { dateTime } from "#lib/format.ts";
   import { CLAUDE_MODELS, LIMIT_WINDOWS, OPENAI_EXAMPLES, usageLabel } from "#lib/assistant.ts";
   import Help from "./Help.svelte";
   import Pill from "./Pill.svelte";
@@ -292,7 +293,7 @@
             <span>{LIMIT_WINDOWS[l.window] ?? l.window}</span>
             <Pill tone={l.status === "ok" ? "ok" : "warn"}>{l.status}</Pill>
             <span class="text-muted tabular-nums">
-              {Math.round(l.percent)}%{#if l.resets_at}{" · "}resets {new Date(l.resets_at).toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}{/if}
+              {Math.round(l.percent)}%{#if l.resets_at}{" · "}resets {dateTime(l.resets_at, { weekday: "short", hour: "2-digit", minute: "2-digit" })}{/if}
             </span>
           </li>
         {/each}

@@ -1,7 +1,7 @@
 /** Backups: the pure logic behind the Backups page and its forms. */
 import type { Schema } from "./api/client.ts";
 import type { Tone } from "./components/Pill.svelte";
-import { bytes, duration } from "./format.ts";
+import { bytes, duration, wallTime } from "./format.ts";
 
 export type Backup = Schema<"Backup">;
 export type Run = Schema<"BackupRun">;
@@ -62,12 +62,12 @@ export function toCron(s: Schedule): string {
   return s.mode === "daily" ? `${at} *` : `${at} ${s.weekday}`;
 }
 
-/** A schedule in words. */
+/** A schedule in words, its time in the host's clock format. */
 export function describeSchedule(cron: string): string {
   const s = parseSchedule(cron);
   if (s.mode === "manual") return "Manual";
-  if (s.mode === "daily") return `Daily at ${s.time}`;
-  if (s.mode === "weekly") return `${WEEKDAYS[s.weekday]}s at ${s.time}`;
+  if (s.mode === "daily") return `Daily at ${wallTime(s.time)}`;
+  if (s.mode === "weekly") return `${WEEKDAYS[s.weekday]}s at ${wallTime(s.time)}`;
   return s.cron;
 }
 

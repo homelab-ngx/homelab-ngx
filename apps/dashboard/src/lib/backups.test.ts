@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { clock } from "./clock.svelte.ts";
 import {
   backupState,
   byDestination,
@@ -70,10 +71,14 @@ describe("schedule", () => {
   });
 
   it("says it in words", () => {
+    clock.format = "24h";
     expect(describeSchedule("0 4 * * *")).toBe("Daily at 04:00");
     expect(describeSchedule("0 4 * * 1")).toBe("Mondays at 04:00");
     expect(describeSchedule("")).toBe("Manual");
     expect(describeSchedule("@hourly")).toBe("@hourly");
+    clock.format = "12h";
+    expect(describeSchedule("0 16 * * *")).not.toContain("16");
+    clock.format = "";
   });
 });
 

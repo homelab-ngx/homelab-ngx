@@ -6,6 +6,7 @@
   import { page } from "$app/state";
   import { DEMO } from "#lib/api/client.ts";
   import { fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
+  import { clock } from "#lib/clock.svelte.ts";
   import { help, toggleHelp } from "#lib/help.svelte.ts";
   import { fetchHostSettings, hostKeys } from "#lib/host.ts";
   import type { NavItem } from "#lib/nav.ts";
@@ -21,9 +22,12 @@
   }
   let { active, nav, settings, wide = false, children }: Props = $props();
 
-  // The host's own name heads every page; saving it on the Network page
-  // updates this query's data.
+  // The host's own name heads every page, and its clock format is every
+  // time's; saving them on the General page updates this query's data.
   const host = createQuery(() => ({ queryKey: hostKeys.settings, queryFn: fetchHostSettings }));
+  $effect(() => {
+    clock.format = host.data?.time.clock ?? "";
+  });
   const hostname = $derived(host.data?.host.hostname);
   const shortName = $derived(hostname && hostname.length > 16 ? `${hostname.slice(0, 16)}…` : hostname);
 
