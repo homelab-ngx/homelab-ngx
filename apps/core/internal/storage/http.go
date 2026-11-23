@@ -18,7 +18,8 @@ type HTTP struct{ svc *Service }
 func NewHTTP(svc *Service) *HTTP { return &HTTP{svc: svc} }
 
 // problem maps domain errors: 409 subvolume_not_empty, 404 unknown_pool,
-// 403 outside_roots, 404 not_found, 400 invalid_name, 409 name_taken. Command failures carry their
+// 403 outside_roots, 404 not_found, 400 invalid_name, 409 name_taken, and
+// the file editor's not_a_file, symlink, changed_on_disk, exists, is_root. Command failures carry their
 // message to the client as storage_failed (the operator needs mount's stderr).
 func problem(err error) error {
 	switch {
@@ -60,6 +61,24 @@ func problem(err error) error {
 		return httpx.Conflict("image_too_old", "%s", err)
 	case errors.Is(err, ErrConfirm):
 		return httpx.Unprocessable("confirm", "%s", err)
+	case errors.Is(err, ErrNoSuchFile):
+		return httpx.NotFound("not_found", "%s", err)
+	case errors.Is(err, ErrNotAFile):
+		return httpx.Unprocessable("not_a_file", "%s", err)
+	case errors.Is(err, ErrSymlink):
+		return httpx.Unprocessable("symlink", "%s", err)
+	case errors.Is(err, ErrTooLarge):
+		return httpx.Unprocessable("too_large", "%s", err)
+	case errors.Is(err, ErrChangedOnDisk):
+		return httpx.Conflict("changed_on_disk", "%s", err)
+	case errors.Is(err, ErrExists):
+		return httpx.Conflict("exists", "%s", err)
+	case errors.Is(err, ErrIsRoot):
+		return httpx.Forbidden("is_root", "%s", err)
+	case errors.Is(err, ErrHoldsRoot):
+		return httpx.Forbidden("holds_root", "%s", err)
+	case errors.Is(err, ErrMountPoint):
+		return httpx.Conflict("mount_point", "%s", err)
 	}
 	return httpx.Internal("storage_failed", "%s", err)
 }
@@ -102,7 +121,16 @@ type (
 	browseIn struct {
 		Path string `query:"path" default:"/" doc:"Absolute host path of the folder."`
 	}
-	browseOut      struct{ Body Listing }
+	browseOut struct{ Body Listing }
+	fileIn    struct {
+		Path string `query:"path" required:"true" minLength:"2" doc:"Absolute host path of the file."`
+	}
+	fileOut       struct{ Body HostFile }
+	writeFileIn   struct{ Body FileWrite }
+	deleteEntryIn struct {
+		Path    string `query:"path" required:"true" minLength:"2" doc:"Absolute host path of the file or folder."`
+		Confirm string `query:"confirm" doc:"The folder's name. Needed for a folder that holds anything."`
+	}
 	browseUsageOut struct{ Body FolderFigures }
 )
 
@@ -193,7 +221,7 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "browseFolder", Method: http.MethodGet, Path: "/storage/browse", Tags: tags,
 		Summary: "List a folder in a subvolume or a stack's host folder.",
-		Description: "Read-only. Above those folders only the folders leading to one are listed. " +
+		Description: "Above those folders only the folders leading to one are listed. " +
 			"`403 outside_roots` for any other path, `404 not_found` for a missing folder. At most 5,000 entries.",
 	}, h.browse)
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
@@ -202,6 +230,50 @@ func (h *HTTP) Register(a httpx.APIs) {
 		Description: "One bcdu run measures a whole subvolume or stack folder and is kept for 30 minutes, " +
 			"so the first call takes a few seconds.",
 	}, h.browseUsage)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "readFile", Method: http.MethodGet, Path: "/storage/file", Tags: tags,
+		Summary: "Read a file in a subvolume or a stack's host folder.",
+		Description: "A file over 1 MiB, or one that is not UTF-8, comes back as binary without its content. " +
+			"`403 outside_roots`, `404 not_found`, `422 not_a_file`.",
+	}, h.readFile)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "writeFile", Method: http.MethodPut, Path: "/storage/file", Tags: tags,
+		Summary: "Save a file in a subvolume or a stack's host folder.",
+		Description: "Written to a temporary file and renamed over the old one. An existing file keeps its mode and owner; " +
+			"a new one takes its folder's owner and mode 0644. `409 changed_on_disk` when version is stale, " +
+			"`409 exists` for create on a taken path, `422 symlink` or `not_a_file` for anything but a file.",
+	}, h.writeFile)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "deleteEntry", Method: http.MethodDelete, Path: "/storage/entry", Tags: tags,
+		Summary: "Delete a file, symlink or folder in a subvolume or a stack's host folder.",
+		Description: "A folder goes with everything in it, and needs confirm to be its name when it holds anything (`422 confirm`). " +
+			"A symlink is deleted, not what it points to. `403 is_root` or `holds_root` for a subvolume, mounted partition " +
+			"or stack folder, `409 mount_point` when something is mounted inside.",
+		DefaultStatus: http.StatusNoContent,
+	}, h.deleteEntry)
+}
+
+func (h *HTTP) readFile(ctx context.Context, in *fileIn) (*fileOut, error) {
+	f, err := h.svc.ReadFile(ctx, in.Path)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &fileOut{Body: f}, nil
+}
+
+func (h *HTTP) writeFile(ctx context.Context, in *writeFileIn) (*fileOut, error) {
+	f, err := h.svc.WriteFile(ctx, in.Body)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &fileOut{Body: f}, nil
+}
+
+func (h *HTTP) deleteEntry(ctx context.Context, in *deleteEntryIn) (*struct{}, error) {
+	if err := h.svc.DeleteEntry(ctx, in.Path, in.Confirm); err != nil {
+		return nil, problem(err)
+	}
+	return nil, nil
 }
 
 func (h *HTTP) browse(ctx context.Context, in *browseIn) (*browseOut, error) {

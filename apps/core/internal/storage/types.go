@@ -220,3 +220,22 @@ type FolderFigures struct {
 	MeasuredAt *time.Time                      `json:"measured_at,omitempty"`
 	Folders    map[string]bcachefs.FolderUsage `json:"folders" doc:"By folder name."`
 }
+
+// HostFile is a file in a browse root, as the editor reads it.
+type HostFile struct {
+	Path       string    `json:"path" doc:"The file, its folder's symlinks resolved."`
+	Root       string    `json:"root" doc:"The browse root the file is in."`
+	Size       int64     `json:"size"`
+	ModifiedAt time.Time `json:"modified_at"`
+	Version    string    `json:"version" doc:"Names this state of the file. Send it back when saving to refuse a save over a change made since."`
+	Binary     bool      `json:"binary" doc:"True for a file over 1 MiB or one that is not UTF-8: content is then absent."`
+	Content    *string   `json:"content,omitempty" doc:"Absent when binary, and in the answer to a save."`
+}
+
+// FileWrite saves a file in a browse root.
+type FileWrite struct {
+	Path    string `json:"path" minLength:"2" maxLength:"4096" doc:"Absolute host path of the file."`
+	Content string `json:"content" maxLength:"1048576"`
+	Version string `json:"version,omitempty" doc:"The version the file was read at. When it changed since, the save is refused. Leave it out to save regardless."`
+	Create  bool   `json:"create,omitempty" doc:"Make a new file: refused when the path is taken."`
+}

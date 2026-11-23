@@ -16,7 +16,7 @@ import (
 	"homelab-ngx.com/core/internal/storage/bcachefs"
 )
 
-// The file browser is read-only and confined to the browse roots: the
+// The file browser is confined to the browse roots: the
 // subvolumes and the host folders bound into stacks. Above a root only the
 // folders that lead to one are listed, so the operator can walk down from /
 // without seeing the rest of the host.

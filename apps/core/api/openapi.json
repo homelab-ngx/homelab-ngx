@@ -2376,6 +2376,34 @@
         ],
         "type": "object"
       },
+      "FileWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "maxLength": 1048576,
+            "type": "string"
+          },
+          "create": {
+            "description": "Make a new file: refused when the path is taken.",
+            "type": "boolean"
+          },
+          "path": {
+            "description": "Absolute host path of the file.",
+            "maxLength": 4096,
+            "minLength": 2,
+            "type": "string"
+          },
+          "version": {
+            "description": "The version the file was read at. When it changed since, the save is refused. Leave it out to save regardless.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "type": "object"
+      },
       "Finding": {
         "additionalProperties": false,
         "properties": {
@@ -2585,6 +2613,48 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "HostFile": {
+        "additionalProperties": false,
+        "properties": {
+          "binary": {
+            "description": "True for a file over 1 MiB or one that is not UTF-8: content is then absent.",
+            "type": "boolean"
+          },
+          "content": {
+            "description": "Absent when binary, and in the answer to a save.",
+            "type": "string"
+          },
+          "modified_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "path": {
+            "description": "The file, its folder's symlinks resolved.",
+            "type": "string"
+          },
+          "root": {
+            "description": "The browse root the file is in.",
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "version": {
+            "description": "Names this state of the file. Send it back when saving to refuse a save over a change made since.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "root",
+          "size",
+          "modified_at",
+          "version",
+          "binary"
+        ],
         "type": "object"
       },
       "HostInfo": {
@@ -22115,7 +22185,7 @@
     },
     "/storage/browse": {
       "get": {
-        "description": "Read-only. Above those folders only the folders leading to one are listed. `403 outside_roots` for any other path, `404 not_found` for a missing folder. At most 5,000 entries.",
+        "description": "Above those folders only the folders leading to one are listed. `403 outside_roots` for any other path, `404 not_found` for a missing folder. At most 5,000 entries.",
         "operationId": "browseFolder",
         "parameters": [
           {
@@ -22254,6 +22324,225 @@
           }
         },
         "summary": "bcdu's figures for the folders in a browsed folder (bcachefs only).",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
+    "/storage/entry": {
+      "delete": {
+        "description": "A folder goes with everything in it, and needs confirm to be its name when it holds anything (`422 confirm`). A symlink is deleted, not what it points to. `403 is_root` or `holds_root` for a subvolume, mounted partition or stack folder, `409 mount_point` when something is mounted inside.",
+        "operationId": "deleteEntry",
+        "parameters": [
+          {
+            "description": "Absolute host path of the file or folder.",
+            "explode": false,
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "Absolute host path of the file or folder.",
+              "minLength": 2,
+              "type": "string"
+            }
+          },
+          {
+            "description": "The folder's name. Needed for a folder that holds anything.",
+            "explode": false,
+            "in": "query",
+            "name": "confirm",
+            "schema": {
+              "description": "The folder's name. Needed for a folder that holds anything.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Delete a file, symlink or folder in a subvolume or a stack's host folder.",
+        "tags": [
+          "storage"
+        ]
+      }
+    },
+    "/storage/file": {
+      "get": {
+        "description": "A file over 1 MiB, or one that is not UTF-8, comes back as binary without its content. `403 outside_roots`, `404 not_found`, `422 not_a_file`.",
+        "operationId": "readFile",
+        "parameters": [
+          {
+            "description": "Absolute host path of the file.",
+            "explode": false,
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "description": "Absolute host path of the file.",
+              "minLength": 2,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostFile"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Read a file in a subvolume or a stack's host folder.",
+        "tags": [
+          "storage"
+        ]
+      },
+      "put": {
+        "description": "Written to a temporary file and renamed over the old one. An existing file keeps its mode and owner; a new one takes its folder's owner and mode 0644. `409 changed_on_disk` when version is stale, `409 exists` for create on a taken path, `422 symlink` or `not_a_file` for anything but a file.",
+        "operationId": "writeFile",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FileWrite"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HostFile"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Save a file in a subvolume or a stack's host folder.",
         "tags": [
           "storage"
         ]

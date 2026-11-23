@@ -1892,7 +1892,7 @@ export interface paths {
         };
         /**
          * List a folder in a subvolume or a stack's host folder.
-         * @description Read-only. Above those folders only the folders leading to one are listed. `403 outside_roots` for any other path, `404 not_found` for a missing folder. At most 5,000 entries.
+         * @description Above those folders only the folders leading to one are listed. `403 outside_roots` for any other path, `404 not_found` for a missing folder. At most 5,000 entries.
          */
         get: operations["browseFolder"];
         put?: never;
@@ -1916,6 +1916,50 @@ export interface paths {
          */
         get: operations["getBrowseUsage"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/entry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a file, symlink or folder in a subvolume or a stack's host folder.
+         * @description A folder goes with everything in it, and needs confirm to be its name when it holds anything (`422 confirm`). A symlink is deleted, not what it points to. `403 is_root` or `holds_root` for a subvolume, mounted partition or stack folder, `409 mount_point` when something is mounted inside.
+         */
+        delete: operations["deleteEntry"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/storage/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read a file in a subvolume or a stack's host folder.
+         * @description A file over 1 MiB, or one that is not UTF-8, comes back as binary without its content. `403 outside_roots`, `404 not_found`, `422 not_a_file`.
+         */
+        get: operations["readFile"];
+        /**
+         * Save a file in a subvolume or a stack's host folder.
+         * @description Written to a temporary file and renamed over the old one. An existing file keeps its mode and owner; a new one takes its folder's owner and mode 0644. `409 changed_on_disk` when version is stale, `409 exists` for create on a taken path, `422 symlink` or `not_a_file` for anything but a file.
+         */
+        put: operations["writeFile"];
         post?: never;
         delete?: never;
         options?: never;
@@ -3169,6 +3213,15 @@ export interface components {
             pattern: string;
             reason: string;
         };
+        FileWrite: {
+            content: string;
+            /** @description Make a new file: refused when the path is taken. */
+            create?: boolean;
+            /** @description Absolute host path of the file. */
+            path: string;
+            /** @description The version the file was read at. When it changed since, the save is refused. Leave it out to save regardless. */
+            version?: string;
+        };
         Finding: {
             /** @enum {string} */
             area: "exposure" | "access" | "stacks" | "secrets" | "updates";
@@ -3235,6 +3288,22 @@ export interface components {
             ssh_keys?: string[];
             /** @description An IANA zone such as Europe/Stockholm; empty is UTC. */
             timezone?: string;
+        };
+        HostFile: {
+            /** @description True for a file over 1 MiB or one that is not UTF-8: content is then absent. */
+            binary: boolean;
+            /** @description Absent when binary, and in the answer to a save. */
+            content?: string;
+            /** Format: date-time */
+            modified_at: string;
+            /** @description The file, its folder's symlinks resolved. */
+            path: string;
+            /** @description The browse root the file is in. */
+            root: string;
+            /** Format: int64 */
+            size: number;
+            /** @description Names this state of the file. Send it back when saving to refuse a save over a change made since. */
+            version: string;
         };
         HostInfo: {
             /**
@@ -13157,6 +13226,133 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FolderFigures"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    deleteEntry: {
+        parameters: {
+            query: {
+                /** @description Absolute host path of the file or folder. */
+                path: string;
+                /** @description The folder's name. Needed for a folder that holds anything. */
+                confirm?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    readFile: {
+        parameters: {
+            query: {
+                /** @description Absolute host path of the file. */
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostFile"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    writeFile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileWrite"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostFile"];
                 };
             };
             /** @description Error */
