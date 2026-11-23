@@ -8,6 +8,7 @@
   import Pill, { type Tone } from "#lib/components/Pill.svelte";
   import UpdatedDialog from "#lib/components/core/UpdatedDialog.svelte";
   import { bytes } from "#lib/format.ts";
+  import { watts } from "#lib/power-profile.ts";
   import { LiveMetrics } from "#lib/live-metrics.svelte.ts";
   import { byScope, CORE_HUE, latest, machineLine, mood, PAIR_HUES, PARTS, stackHues, type Frames, type Line, type Mood, type Resource } from "#lib/metrics.ts";
   import { stackTitles } from "#lib/stacks.ts";
@@ -70,6 +71,7 @@
   const cpuNow = $derived(latest(now.host.cpu));
   const memNow = $derived(latest(now.host.memory));
   const tempCpu = $derived(latest(now.temp_cpu));
+  const powerCpu = $derived(latest(now.power_cpu));
   const tempDisk = $derived(latest(now.temp_disk));
   const pool = $derived((storage.data?.pools ?? []).find((p) => p.usage && p.usage.total_bytes > 0));
   const poolCap = $derived(pool ? capacity(pool) : null);
@@ -139,7 +141,7 @@
   <div class="card">
     <p class="text-muted">CPU usage</p>
     <p class="mt-1 text-lg tabular-nums">{cpuNow === undefined ? "–" : pct(cpuNow)}</p>
-    <p class="text-xs text-muted">{cores ? `of ${cores} cores` : ""}</p>
+    <p class="text-xs text-muted">{[cores ? `of ${cores} cores` : "", powerCpu === undefined ? "" : watts(powerCpu)].filter(Boolean).join(" · ")}</p>
   </div>
   <div class="card">
     <p class="text-muted">Memory</p>

@@ -39,6 +39,7 @@ const frames = (at: number[], stacks: Record<string, (number | null)[]> = {}): F
   stacks: Object.fromEntries(Object.entries(stacks).map(([k, v]) => [k, series(v)])),
   temp_cpu: at.map(() => 40),
   temp_disk: at.map(() => 30),
+  power_cpu: at.map(() => 5),
 });
 
 describe("appendFrames", () => {

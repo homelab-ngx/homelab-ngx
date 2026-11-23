@@ -6,7 +6,7 @@
  */
 import type { paths } from "#lib/api/schema.gen.ts";
 import type { Schema } from "#lib/api/client.ts";
-import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerStatus, freezeThaw, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
+import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerProfile, powerStatus, freezeThaw, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
 import { history } from "./metrics.ts";
 
 /** A stack's files as the demo shows them: its manifest and a short flake. */
@@ -312,6 +312,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
   "/system-updates/deploys": (h) => h.deploys,
   "/system-updates/image": (h) => h.image,
   "/system/power": (h) => powerStatus(h),
+  "/system/power-profile": (h) => powerProfile(h),
   "/version": (h) => ({ version: h.image.core.active, commit: "demo" }),
 };
 
@@ -342,6 +343,12 @@ const posts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknow
 /** The puts it acts out: disabling a stack's service. */
 const puts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknown }> = {
   "/services/{unit}/mask": (h, c) => (maskService(h, c.path.unit!, true), { status: 204 }),
+  "/system/power-profile": (h, c) => {
+    const p = String(c.body.profile);
+    if (p !== "power-saver" && p !== "balanced" && p !== "performance") throw new DemoProblem(400, "invalid_setting", "profile: power-saver, balanced or performance");
+    h.profile = { profile: p, governor: String(c.body.governor ?? "") };
+    return { status: 200, body: powerProfile(h) };
+  },
 };
 
 /** The deletes it acts out: a pool, a pool's disk, a removal that is stopped, and enabling a disabled service. */

@@ -40,6 +40,7 @@ export interface Host {
   deploys: Schema<"CoreDeploy">[];
   storage: Schema<"StorageStatus">;
   power: Schema<"PowerStatus">;
+  profile: Schema<"PowerProfileSettings">;
   /** Until when the host is down (ms): every request fails, as when it reboots. */
   downUntil: number;
   pending: Pending[];
@@ -533,6 +534,7 @@ export function newHost(now: () => number = Date.now): Host {
       ],
     },
     power: idlePower("demo-boot-1"),
+    profile: { profile: "balanced", governor: "" },
     downUntil: 0,
     pending: [],
   };
@@ -922,4 +924,49 @@ export function deletePool(h: Host, uuid: string, confirm: string | null) {
   h.storage.pools = h.storage.pools.filter((x) => x !== p);
   h.storage.subvolumes = h.storage.subvolumes.filter((s) => !s.path.startsWith(`${p.mountdir}/`));
   h.storage.unassigned.push(...p.disks.map((d) => ({ ...d, fstype: "", label: "", bcachefs_label: "", state: "", contents: "", data_target: "", metadata_target: "" })));
+}
+
+/** The power profile on the demo's Ryzen: amd-pstate-epp, no package states, a Realtek NIC and a UPS on USB. */
+export function powerProfile(h: Host): Schema<"PowerProfileStatus"> {
+  const { profile, governor } = h.profile;
+  const saver = profile === "power-saver";
+  const perf = profile === "performance";
+  const gov = governor || (perf ? "performance" : "powersave");
+  const t = (name: Schema<"PowerTunable">["name"], files: number, value: string, detail = ""): Schema<"PowerTunable"> => ({
+    name, files, value, detail, refused: 0, state: value ? "set" : "boot",
+  });
+  const blockers: Schema<"PowerBlocker">[] = [];
+  if (!saver) {
+    blockers.push({ kind: "aspm", device: "0000:05:00.0", id: "10ec:8125", driver: "r8169", name: "", fix: "power-saver" });
+    blockers.push({ kind: "usb_autosuspend", device: "1-4", id: "051d:0002", driver: "usbhid", name: "Back-UPS ES 700", fix: "power-saver" });
+  }
+  if (perf) blockers.push({ kind: "runtime_pm", device: "0000:05:00.0", id: "10ec:8125", driver: "r8169", name: "", fix: "balanced" });
+  const deep = saver ? 0.86 : perf ? 0.55 : 0.78;
+  return {
+    profile, governor, read_only: false, driver: "amd-pstate-epp", governors: ["performance", "powersave"],
+    tunables: [
+      t("governor", 16, gov),
+      t("epp", 16, gov === "powersave" ? { "power-saver": "power", balanced: "balance_performance", performance: "performance" }[profile] : "", gov === "powersave" ? "" : `set by the ${gov} governor`),
+      t("aspm_policy", 1, saver ? "powersupersave" : perf ? "performance" : ""),
+      t("aspm_links", 6, saver ? "1" : ""),
+      t("pci_runtime_pm", 24, perf ? "" : "auto"),
+      t("usb_autosuspend", 5, saver ? "auto" : ""),
+      t("sata_alpm", 6, perf ? "max_performance" : "med_power_with_dipm"),
+      t("nmi_watchdog", 1, perf ? "" : "0"),
+      t("dirty_writeback", 1, saver ? "1500" : ""),
+    ],
+    idle: {
+      window_seconds: 60,
+      active: +(1 - deep - 0.06).toFixed(3),
+      cpu_states: [
+        { name: "POLL", latency_us: 0, share: 0.001 },
+        { name: "C1", latency_us: 1, share: 0.05 },
+        { name: "C2", latency_us: 350, share: +(deep + 0.009).toFixed(3) },
+      ],
+      package_states: [],
+      deepest: "",
+      watts: saver ? 6.8 : perf ? 14.2 : 8.9,
+    },
+    blockers,
+  };
 }

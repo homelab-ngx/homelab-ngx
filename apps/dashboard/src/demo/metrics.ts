@@ -49,7 +49,7 @@ export const info = (h: Host): Schema<"HostInfo"> => ({ cores: 8, memory_total: 
 
 /** The points from `from` to `to` (unix seconds), one every `step`. */
 export function frames(h: Host, from: number, to: number, step: number): Frames {
-  const f: Frames = { at: [], step, host: emptySeries(), kernel: emptySeries(), services: emptySeries(), sessions: emptySeries(), stacks: {}, temp_cpu: [], temp_disk: [] };
+  const f: Frames = { at: [], step, host: emptySeries(), kernel: emptySeries(), services: emptySeries(), sessions: emptySeries(), stacks: {}, temp_cpu: [], temp_disk: [], power_cpu: [] };
   for (const s of h.stacks) f.stacks[s.name] = emptySeries();
   for (let t = Math.ceil(from / step) * step; t <= to; t += step) {
     f.at.push(t);
@@ -65,6 +65,7 @@ export function frames(h: Host, from: number, to: number, step: number): Frames 
     }
     f.temp_cpu.push(Math.round(41 + (f.host.cpu[n] ?? 0) * 0.6));
     f.temp_disk.push(Math.round(wave(t, 104, 37, 0.04)));
+    f.power_cpu.push(+(4 + (f.host.cpu[n] ?? 0) * 0.5).toFixed(1));
   }
   return f;
 }

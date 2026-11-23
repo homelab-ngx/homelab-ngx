@@ -3,6 +3,7 @@ import type { Schema, SecurityAuditItem } from "./api/client.ts";
 import type { Tone } from "./components/Pill.svelte";
 import { tailscaleState, type HostSettings, type TailscaleStatus } from "./host.ts";
 import { failingOf, type Channel, type Snapshot } from "./notifications.ts";
+import { profileLabel, watts, type PowerProfileStatus } from "./power-profile.ts";
 import { POSTURE, RESULT } from "./security.ts";
 
 /**
@@ -87,3 +88,8 @@ export function auditStatus(audits: SecurityAuditItem[] | undefined): TileStatus
   if (last.posture) return { tone: POSTURE[last.posture], text: last.posture };
   return { tone: RESULT[last.result].tone, text: RESULT[last.result].label };
 }
+
+/** Power profile: the profile, the deepest package state of the last minute, the package's watts. */
+export const powerProfileLine = (st: PowerProfileStatus): TileStatus => ({
+  text: [profileLabel(st.profile).toLowerCase(), st.idle.deepest, watts(st.idle.watts)].filter(Boolean).join(" · "),
+});

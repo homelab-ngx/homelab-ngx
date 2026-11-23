@@ -3,6 +3,7 @@
     Bell,
     BrickWall,
     Clock,
+    Gauge,
     Cloud,
     Globe,
     House,
@@ -34,6 +35,7 @@
   import { fetchHostSettings, fetchTailscale, hostKeys } from "#lib/host.ts";
   import { channelKeys, notificationKeys, type Channel, type Snapshot } from "#lib/notifications.ts";
   import { fetchPower, powerKey, type PowerAction } from "#lib/power.ts";
+  import { fetchPowerProfile, powerProfileKey } from "#lib/power-profile.ts";
   import { fetchAudits, securityKeys } from "#lib/security.ts";
   import {
     appliedStatus,
@@ -45,6 +47,7 @@
     hostLine,
     lanLine,
     notificationsStatus,
+    powerProfileLine,
     sshLine,
     tailscaleStatus,
     tunnelStatus,
@@ -73,6 +76,7 @@
     return { tone: h.tone, text: h.state };
   });
 
+  const profile = createQuery(() => ({ queryKey: powerProfileKey, queryFn: fetchPowerProfile }));
   const channels = createQuery(() => ({ queryKey: channelKeys.list, queryFn: () => call<Channel[]>(api.GET("/notification-channels")) }));
   const notes = createQuery(() => ({
     queryKey: notificationKeys.snapshot,
@@ -177,6 +181,7 @@
       {@render tile(House, "Host", "/settings/general#host", s && hostLine(s))}
       {@render tile(Clock, "Clock", "/settings/general#clock", s && clockStatus(s))}
       {@render tile(Keyboard, "Console", "/settings/general#console", s && consoleLine(s, layouts.data?.layouts))}
+      {@render tile(Gauge, "Power profile", "/settings/power-profile", profile.data && powerProfileLine(profile.data))}
       {@render tile(RefreshCw, "Updates", "/settings/updates", updates, true)}
       {@render tile(Bell, "Notifications", "/settings/notifications", notificationsStatus(channels.data, notes.data))}
       {@render tile(ScrollText, "Logs", "/settings/logs", { text: "host, backups" })}
