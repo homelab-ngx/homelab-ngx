@@ -1,14 +1,9 @@
 <script lang="ts">
   import { page } from "$app/state";
   import HostEditor from "#lib/components/files/HostEditor.svelte";
-  import { browseHref, parentOf, relativeTo } from "#lib/storage.ts";
+  import { browseHref, editTarget } from "#lib/storage.ts";
 
-  const path = $derived(page.url.searchParams.get("path") ?? "");
-  /** The file list starts at ?root= when the file is below it, else at the file's own folder. */
-  const root = $derived.by(() => {
-    const r = page.url.searchParams.get("root");
-    return r && relativeTo(r, path) !== null ? r : parentOf(path);
-  });
+  const { path, root } = $derived(editTarget(page.url));
 </script>
 
 <svelte:head><title>{path || "Files"} · Storage · Homelab-ngx</title></svelte:head>

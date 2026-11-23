@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
+  import { FileOutput, Save } from "@lucide/svelte";
   import { untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import { beforeNavigate, goto } from "$app/navigation";
@@ -8,7 +9,7 @@
   import FileList from "#lib/components/drafts/FileList.svelte";
   import DeleteEntryDialog from "#lib/components/storage/DeleteEntryDialog.svelte";
   import { ago, bytes } from "#lib/format.ts";
-  import { ancestors, browseHref, editHref, hostPathProblem, hostTree, joinPath, parentOf, relativeTo } from "#lib/storage.ts";
+  import { ancestors, browseHref, editHref, editTarget, hostPathProblem, hostTree, joinPath, parentOf, relativeTo } from "#lib/storage.ts";
 
   type HostFile = Schema<"HostFile">;
   type Entry = Schema<"Entry">;
@@ -42,9 +43,18 @@
   /** The row whose delete dialog is open. */
   let deleting = $state<{ path: string; type: Entry["type"] } | null>(null);
 
-  /** What was typed into the open file, by path; a file without an entry is as saved. */
+  /**
+   * What was typed, by host path; a file without an entry is as saved. Edits
+   * stay while other files are opened, until they are saved or discarded.
+   */
   let edits = $state<Record<string, string>>({});
   const dirty = $derived(path in edits);
+  /** The files with unsaved changes, as the file list names them. */
+  const unsaved = $derived(
+    Object.keys(edits)
+      .map((p) => ({ path: p, name: relativeTo(root, p) ?? p }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  );
   const text = $derived(edits[path] ?? file.data?.content ?? "");
 
   // The file list: each folder is read when it is first opened.
@@ -106,6 +116,10 @@
     }
   }
 
+  function discard() {
+    delete edits[path];
+  }
+
   function reload() {
     delete edits[path];
     conflict = false;
@@ -148,15 +162,15 @@
     const rel = relativeTo(root, gone);
     for (const p of Object.keys(listings)) if (rel && (p === rel || p.startsWith(`${rel}/`))) delete listings[p];
     void list(relativeTo(root, parentOf(gone)) ?? "");
-    if (gone === path || path.startsWith(`${gone}/`)) {
-      delete edits[path];
-      void goto(browseHref(root));
-    }
+    for (const p of Object.keys(edits)) if (p === gone || p.startsWith(`${gone}/`)) delete edits[p];
+    if (gone === path || path.startsWith(`${gone}/`)) void goto(browseHref(root));
   }
 
+  // Opening another file of this list keeps every edit; leaving the editor asks first.
   beforeNavigate((nav) => {
-    if (dirty && !confirm("Unsaved changes. Leave anyway?")) nav.cancel();
-    else delete edits[path];
+    const to = nav.to?.url;
+    if (to?.pathname === "/storage/edit" && editTarget(to).root === root) return;
+    if (unsaved.length && !confirm("Unsaved changes. Leave anyway?")) nav.cancel();
   });
 
   function keydown(e: KeyboardEvent) {
@@ -170,7 +184,7 @@
 <svelte:window
   onkeydown={keydown}
   onbeforeunload={(e) => {
-    if (dirty) e.preventDefault();
+    if (unsaved.length) e.preventDefault();
   }}
 />
 
@@ -195,20 +209,37 @@
               if (e.key === "Escape") saveAs = null;
             }}
           />
-          <button type="submit" class="btn btn-sm btn-primary" disabled={!saveAs.trim() || saving}>Save</button>
-          <button type="button" class="btn btn-sm" onclick={() => (saveAs = null)}>Cancel</button>
+          <button type="submit" class="btn btn-primary" disabled={!saveAs.trim() || saving}>
+            <Save class="size-4" aria-hidden="true" />Save
+          </button>
+          <button type="button" class="btn" onclick={() => (saveAs = null)}>Cancel</button>
         </form>
       {:else}
-        <button type="button" class="btn btn-sm" disabled={!dirty || saving} onclick={() => save()} title="Ctrl+S">
-          {saving ? "Saving…" : dirty ? "Save" : "Saved"}
+        <button type="button" class="btn {dirty ? 'btn-primary' : ''}" disabled={!dirty || saving} onclick={() => save()} title="Ctrl+S">
+          <Save class="size-4" aria-hidden="true" />{saving ? "Saving…" : dirty ? "Save" : "Saved"}
         </button>
-        <button type="button" class="btn btn-sm" disabled={!file.data || file.data.binary} onclick={() => (saveAs = open)}>Save as…</button>
+        <button type="button" class="btn" disabled={!file.data || file.data.binary} onclick={() => (saveAs = open)}>
+          <FileOutput class="size-4" aria-hidden="true" />Save as…
+        </button>
       {/if}
     </div>
   </div>
 
   {#if error}
     <p role="alert" class="border-b border-line bg-bad-soft px-3 py-1.5 text-bad">{error}</p>
+  {/if}
+  {#if unsaved.length}
+    <div role="status" class="flex flex-wrap items-center gap-2 border-b border-line bg-warn-soft px-3 py-1.5 text-warn">
+      <p class="min-w-48 flex-1 [overflow-wrap:anywhere]">
+        Not saved:
+        {#each unsaved as u, i (u.path)}{#if i}, {/if}{#if u.path === path}<strong class="font-semibold">{u.name}</strong>{:else}<button
+              type="button"
+              class="underline underline-offset-2 hover:text-fg"
+              onclick={() => show(u.path)}>{u.name}</button
+            >{/if}{/each}
+      </p>
+      {#if dirty}<button type="button" class="btn btn-sm" onclick={discard}>Discard</button>{/if}
+    </div>
   {/if}
   {#if conflict}
     <div role="alert" class="flex flex-wrap items-center gap-2 border-b border-line bg-warn-soft px-3 py-1.5">
@@ -224,7 +255,7 @@
         {rows}
         {expanded}
         {open}
-        changed={dirty ? [open] : []}
+        changed={unsaved.map((u) => u.name)}
         required={[]}
         onToggle={toggle}
         problemOf={(p) => hostPathProblem(p, rows)}
@@ -267,7 +298,7 @@
 
   <div class="flex flex-wrap items-center gap-x-3 border-t border-line bg-sunken px-3 py-1 text-xs text-muted tabular-nums">
     {#if file.data}
-      <span>{dirty ? "Unsaved" : "Saved"} · {bytes(file.data.size)} · modified {ago(file.data.modified_at)}</span>
+      <span>{bytes(file.data.size)} · modified {ago(file.data.modified_at)}</span>
       <span class="[overflow-wrap:anywhere]">In {file.data.root}</span>
     {/if}
   </div>

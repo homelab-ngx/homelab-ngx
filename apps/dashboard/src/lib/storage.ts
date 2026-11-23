@@ -154,6 +154,16 @@ export function editHref(path: string, root?: string): string {
   return `/storage/edit?${q}`;
 }
 
+/**
+ * The file an editor address opens and the folder its file list starts at:
+ * ?root= when the file is below it, else the file's own folder.
+ */
+export function editTarget(url: { searchParams: { get(name: string): string | null } }): { path: string; root: string } {
+  const path = url.searchParams.get("path") ?? "";
+  const r = url.searchParams.get("root");
+  return { path, root: r && relativeTo(r, path) !== null ? r : parentOf(path) };
+}
+
 /** The folder a host path is in. */
 export function parentOf(path: string): string {
   const i = path.replace(/\/+$/, "").lastIndexOf("/");

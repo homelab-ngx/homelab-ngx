@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/svelte-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { goto } from "$app/navigation";
+import { beforeNavigate, goto } from "$app/navigation";
 import { api, type Schema } from "#lib/api/client.ts";
 import Harness from "./HostEditorHarness.test.svelte";
 
@@ -24,6 +24,7 @@ beforeEach(() => {
   get = vi.spyOn(api, "GET").mockImplementation(((route: string, opts: { params: { query: { path: string } } }) => {
     const path = opts.params.query.path;
     if (route === "/storage/browse") return Promise.resolve(answer({ path, root: "/srv", entries: folders[path] ?? [], total: 0, truncated: false }));
+    if (path.endsWith("db.json")) return Promise.resolve(answer({ ...file, path, content: "{}\n" }));
     return Promise.resolve(answer(file));
   }) as never);
 });
@@ -101,5 +102,34 @@ describe("HostEditor", () => {
     await fireEvent.submit(field.closest("form")!);
     await vi.waitFor(() => expect(goto).toHaveBeenCalled());
     expect(put).toHaveBeenCalledWith("/storage/file", { body: { path: "/srv/app/data/new.conf", content: "", create: true } });
+  });
+
+  it("keeps what was typed while other files are opened, and asks only when leaving the editor", async () => {
+    const view = show();
+    await type("a = 2\n");
+    expect(screen.getByRole("status").textContent).toMatch(/Not saved:\s*app.conf/);
+
+    await view.rerender({ path: "/srv/app/data/db.json" });
+    expect(((await screen.findByLabelText("data/db.json")) as HTMLTextAreaElement).value).toBe("{}\n");
+    expect(screen.getByRole("button", { name: "Saved" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "app.conf" })).toBeTruthy();
+
+    await view.rerender({ path: "/srv/app/app.conf" });
+    expect(((await screen.findByLabelText("app.conf")) as HTMLTextAreaElement).value).toBe("a = 2\n");
+
+    const guard = vi.mocked(beforeNavigate).mock.calls.at(-1)![0];
+    const ask = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const nav = (url: string) => ({ to: { url: new URL(url, "http://host") }, cancel: vi.fn() }) as never as Parameters<typeof guard>[0];
+    const inside = nav("/storage/edit?path=%2Fsrv%2Fapp%2Fdata%2Fdb.json&root=%2Fsrv%2Fapp");
+    guard(inside);
+    expect(ask).not.toHaveBeenCalled();
+    const away = nav("/storage");
+    guard(away);
+    expect(ask).toHaveBeenCalled();
+    expect(away.cancel).toHaveBeenCalled();
+
+    await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.queryByRole("status")).toBeNull();
+    expect((screen.getByLabelText("app.conf") as HTMLTextAreaElement).value).toBe("a = 1\n");
   });
 });
