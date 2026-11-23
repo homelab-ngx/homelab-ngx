@@ -214,3 +214,39 @@ func TestDeleteEntry(t *testing.T) {
 		t.Fatalf("music still there: %v", err)
 	}
 }
+
+// A stack's folder belongs to the stack's own user: a saved file keeps that
+// owner, and a new one takes it from its folder. Only root can set them.
+func TestFileOwnerAsRoot(t *testing.T) {
+	if os.Geteuid() != 0 {
+		t.Skip("needs root to own files as another user")
+	}
+	t.Parallel()
+	h, tmp := browseHarness(t)
+	ctx := context.Background()
+	dir := filepath.Join(tmp, "data")
+	old := filepath.Join(dir, "old.conf")
+	if err := os.WriteFile(old, []byte("a"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{dir, old} {
+		if err := os.Chown(p, 2000, 2001); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.svc.WriteFile(ctx, FileWrite{Path: old, Content: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.WriteFile(ctx, FileWrite{Path: filepath.Join(dir, "new.conf"), Create: true}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"old.conf", "new.conf"} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st := info.Sys().(*syscall.Stat_t); st.Uid != 2000 || st.Gid != 2001 {
+			t.Errorf("%s owner = %d:%d, want 2000:2001", name, st.Uid, st.Gid)
+		}
+	}
+}
