@@ -59,6 +59,7 @@ type StackUnit struct {
 	StartedAt             time.Time // zero unless active
 	Usage                 *Usage    // nil unless running
 	Masked                bool      // the operator disabled it
+	DiskBytes             *int64    // what its user owns in the stack's root; nil when unknown
 }
 
 // SetStacks adds the units inside stacks to the service list and its

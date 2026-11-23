@@ -317,6 +317,7 @@ func run(configPath string) error {
 		})
 		g.Go(func() error { stacksSvc.RunChecks(gctx); return nil })
 		g.Go(func() error { stacksSvc.WatchStore(gctx); return nil })
+		g.Go(func() error { stacksSvc.WatchDisk(gctx); return nil })
 		// Disk health and folder sizes; folders are only listed once mounted.
 		g.Go(func() error { stor.Run(gctx); return nil })
 		// Backups read the pools, so they wait for the mount.
@@ -406,7 +407,7 @@ func (a stackUnits) Units(ctx context.Context) []services.StackUnit {
 	in := a.Service.Units(ctx)
 	out := make([]services.StackUnit, len(in))
 	for i, u := range in {
-		out[i] = services.StackUnit{Stack: u.Stack, Unit: u.Unit, Name: u.Name, ActiveState: u.ActiveState, SubState: u.SubState, StartedAt: u.StartedAt, Usage: u.Usage, Masked: u.Masked}
+		out[i] = services.StackUnit{Stack: u.Stack, Unit: u.Unit, Name: u.Name, ActiveState: u.ActiveState, SubState: u.SubState, StartedAt: u.StartedAt, Usage: u.Usage, Masked: u.Masked, DiskBytes: u.DiskBytes}
 	}
 	return out
 }

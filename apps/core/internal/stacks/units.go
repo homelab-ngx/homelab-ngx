@@ -27,6 +27,9 @@ type Unit struct {
 	Usage *services.Usage
 	// Masked: the operator disabled it (masks.go).
 	Masked bool
+	// DiskBytes is what its user owns in the stack's root at the last
+	// measurement (disk.go); nil when unknown or when it runs as root.
+	DiskBytes *int64
 }
 
 // unitsTTL bounds how often the service views, which poll, make the daemon
@@ -87,10 +90,12 @@ func (s *Service) Units(ctx context.Context) []Unit {
 	return s.withUsage(slices.Clone(out))
 }
 
-// withUsage puts each unit's latest CPU and memory on it.
+// withUsage puts each unit's latest CPU and memory, and its last measured
+// disk use, on it.
 func (s *Service) withUsage(us []Unit) []Unit {
 	for i := range us {
 		us[i].Usage = s.usageOf(us[i].Stack + "/" + us[i].Unit)
+		us[i].DiskBytes = s.diskOf(us[i].Stack, us[i].Unit)
 	}
 	return us
 }

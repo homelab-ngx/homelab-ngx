@@ -26,6 +26,9 @@ type ServiceInfo struct {
 
 	// Usage CPU and memory of a running stack unit. Absent otherwise.
 	Usage *Usage `json:"usage,omitempty" doc:"CPU and memory of a running stack unit. Absent otherwise."`
+
+	// DiskBytes Bytes the unit's user owns in its stack's root, measured weekly and after each update or rollback.
+	DiskBytes *int64 `json:"disk_bytes,omitempty" doc:"Bytes the unit's user owns in its stack's root, measured weekly and after each update or rollback. It leaves out /nix/store and the host folders bound into the stack. Absent for a unit that runs as root and before the first measurement."`
 }
 
 // ServiceInfoType is the kind of unit; every unit is Native now.

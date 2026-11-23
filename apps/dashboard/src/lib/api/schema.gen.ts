@@ -4099,6 +4099,11 @@ export interface components {
         ServiceInfo: {
             active_state: string;
             description: string;
+            /**
+             * Format: int64
+             * @description Bytes the unit's user owns in its stack's root, measured weekly and after each update or rollback. It leaves out /nix/store and the host folders bound into the stack. Absent for a unit that runs as root and before the first measurement.
+             */
+            disk_bytes?: number;
             /** @description The operator disabled the unit: it stays stopped, across restarts and updates of its stack, and cannot be started until it is enabled again. Its stack's health check leaves it out. Always false for a core unit. */
             masked: boolean;
             name: string;

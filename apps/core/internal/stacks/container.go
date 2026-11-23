@@ -53,6 +53,9 @@ type Host struct {
 	// it knows of the store's size and last collection. Without StoreDir
 	// the store is neither collected nor measured.
 	StoreDir, StoreFile string
+	// DiskFile is where the daemon keeps each stack's last measurement of
+	// its services' disk use. Empty: they are not measured.
+	DiskFile string
 	// DashboardURL is the homelab dashboard's address, handed to version 8
 	// stacks as HOMELAB_DASHBOARD_URL.
 	DashboardURL string
@@ -94,7 +97,8 @@ func DefaultHost(r cmdrunner.Runner) Host {
 		MirrorsDir: "/var/lib/homelab-daemon/stack-mirrors", GitHubTokenFiles: GitHubTokenFiles,
 		BuildsDir: "/var/lib/homelab-daemon/stack-builds",
 		StoreDir:  "/nix/store", StoreFile: "/var/lib/homelab-daemon/nix-store.json",
-		VarsDir: "/run/homelab-stack-vars", AgeKeyFile: "/var/lib/sops-age/keys.txt",
+		DiskFile: "/var/lib/homelab-daemon/stack-disk.json",
+		VarsDir:  "/run/homelab-stack-vars", AgeKeyFile: "/var/lib/sops-age/keys.txt",
 		NetworkDir: "/run/systemd/network", ProcSys: "/proc/sys", UnitsDir: "/run/homelab-stack-units",
 	}
 }

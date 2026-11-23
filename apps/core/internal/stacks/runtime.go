@@ -88,6 +88,11 @@ func (s *Service) finish(name string, o *operation, err error) {
 	if o.kind == opStart || o.kind == opUpdate || o.kind == opRollback {
 		s.tidy(bg, name, o.kind)
 	}
+	// A new build is measured at once; a start, only when the stack has
+	// never been (its install).
+	if err == nil && (o.kind == opUpdate || o.kind == opRollback || (o.kind == opStart && s.diskDue(name))) {
+		s.measureDiskSoon(name)
+	}
 	s.mu.Lock()
 	o.finished = s.now()
 	if err != nil {

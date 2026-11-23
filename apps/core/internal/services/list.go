@@ -39,6 +39,7 @@ func (s *Service) List(ctx context.Context) []ServiceInfo {
 			Description: "In the " + u.Stack + " stack",
 			StartedAt:   startedAt,
 			Usage:       u.Usage,
+			DiskBytes:   u.DiskBytes,
 			Masked:      u.Masked,
 		})
 	}

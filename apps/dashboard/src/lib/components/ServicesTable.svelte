@@ -78,8 +78,8 @@
   <p role="alert" class="mb-3 rounded-md bg-bad-soft px-3 py-2 text-bad">{actionError}</p>
 {/if}
 
-<!-- One stack's services (DESIGN.md, Stack Page). The row keeps one button,
-     Logs; the rest is in its menu, Disable… last. -->
+<!-- One stack's services (DESIGN.md, Stack Page). A row's actions are in its
+     menu, Disable… last. Disk is what the service's user owns in the stack. -->
 <div class="relative overflow-x-auto">
   <table class="w-full border-collapse text-left tabular-nums">
     <thead>
@@ -88,6 +88,7 @@
         <th scope="col" class="label px-3 py-2">State</th>
         <th scope="col" class="label px-3 py-2 text-right max-sm:hidden">CPU</th>
         <th scope="col" class="label px-3 py-2 text-right max-sm:hidden">Memory</th>
+        <th scope="col" class="label px-3 py-2 text-right max-sm:hidden">Disk</th>
         <th scope="col" class="px-3 py-2"><span class="sr-only">Actions</span></th>
       </tr>
     </thead>
@@ -104,15 +105,13 @@
           <td class="px-3 py-1.5"><Pill {tone}>{unitWord(u)}</Pill></td>
           <td class="px-3 py-1.5 text-right max-sm:hidden">{cpu(u.usage?.cpu_percent)}</td>
           <td class="px-3 py-1.5 text-right max-sm:hidden">{bytes(u.usage?.memory_bytes)}</td>
-          <td class="px-3 py-1.5 whitespace-nowrap">
-            <span class="flex justify-end gap-1">
-              <a class="btn btn-sm" href="/stacks/{stack.name}/logs?unit={encodeURIComponent(logId(u.name))}">Logs</a>
-              <RowMenu name={shortName(stack.name, u.name)} items={unitItems(u)} />
-            </span>
+          <td class="px-3 py-1.5 text-right max-sm:hidden">{bytes(u.disk_bytes)}</td>
+          <td class="px-3 py-1.5 text-right">
+            <RowMenu name={shortName(stack.name, u.name)} items={unitItems(u)} />
           </td>
         </tr>
       {:else}
-        <tr><td colspan="5" class="px-4 py-2 text-muted">No services listed</td></tr>
+        <tr><td colspan="6" class="px-4 py-2 text-muted">No services listed</td></tr>
       {/each}
     </tbody>
   </table>

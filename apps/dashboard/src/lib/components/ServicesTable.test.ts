@@ -31,15 +31,19 @@ const show = (services: ServiceInfo[]) => render(Harness, { props: { client: new
 describe("ServicesTable", () => {
   afterEach(cleanup);
 
-  it("names each service without its stack, with its icon and a link to its logs", () => {
-    const { container } = show([unit("media-plex", "active"), unit("media-sonarr", "failed")]);
+  it("names each service without its stack, with its icon and its disk use", () => {
+    const { container } = show([{ ...unit("media-plex", "active"), disk_bytes: 2_400_000_000 }, unit("media-sonarr", "failed")]);
 
     expect(screen.getByText("plex")).toBeTruthy();
     expect(screen.getByText("failed")).toBeTruthy();
     // plex has an icon in the manifest; sonarr gets the letter tile.
     expect(container.querySelector("img")?.getAttribute("src")).toBe("/api/stacks/media/icon?unit=plex.service&rev=abcdef0123");
     expect(container.querySelectorAll("img")).toHaveLength(1);
-    expect(screen.getAllByRole("link", { name: "Logs" })[0]!.getAttribute("href")).toBe("/stacks/media/logs?unit=media-plex");
+    const cells = [...container.querySelectorAll("tbody tr")].map((r) => [...r.querySelectorAll("td")].map((c) => c.textContent?.trim()));
+    expect(cells[0]![4]).toBe("2.4 GB");
+    // sonarr has no measurement (it runs as root, or was never measured).
+    expect(cells[1]![4]).toBe("–");
+    expect(screen.queryByRole("link", { name: "Logs" })).toBeNull();
   });
 
   it("shows a disabled service as disabled, with Enable as its only action", async () => {

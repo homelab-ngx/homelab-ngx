@@ -94,6 +94,12 @@ type Service struct {
 	// collection (nixstore.go); guarded by storeMu.
 	storeMu  sync.Mutex
 	storeRec *storeRecord
+	// diskRecs is each stack's last measurement of its services' disk use
+	// (disk.go); guarded by diskMu. diskWalk is held while a root is walked,
+	// so two measurements never read the disk at once.
+	diskMu   sync.Mutex
+	diskRecs map[string]diskRecord
+	diskWalk sync.Mutex
 
 	// bootID is this boot's id (/proc/sys/kernel/random/boot_id); a seam
 	// for tests. StartWanted applies autostart once per boot.
@@ -444,6 +450,7 @@ func (s *Service) Remove(ctx context.Context, name string) error {
 	if err := s.removeVarsDir(name); err != nil {
 		s.log.Warn("stack variables not removed from /run", "stack", name, "error", err)
 	}
+	s.forgetDisk(name)
 	s.log.Info("stack removed", "stack", name)
 	s.writeLock(ctx)
 	return nil
