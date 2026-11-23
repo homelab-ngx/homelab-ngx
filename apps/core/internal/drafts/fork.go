@@ -24,7 +24,7 @@ import (
 func (s *Service) Fork(ctx context.Context, name, from string) (Draft, error) {
 	if !stacks.ValidName(name) {
 		return Draft{}, httpx.BadRequest("invalid_name",
-			"%q is not a stack name: use 1-12 characters of a-z, 0-9 and '-', starting with a letter", name)
+			"%q is not a stack name: use 1-32 characters of a-z, 0-9 and '-', starting with a letter", name)
 	}
 	if err := s.fork(ctx, name, from, ""); err != nil {
 		return Draft{}, err

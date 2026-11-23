@@ -325,6 +325,7 @@ func TestStartBuildsTheApprovedCommitAndBootsItWithItsGrants(t *testing.T) {
 	boot := argv(boots[0])
 	for _, want := range []string{
 		"--private-users=pick", "--network-veth", "--bind-ro=/nix/store",
+		"-p Environment=NET_NAMING_SCHEME=v241",  // nspawn cuts a long name as HostIface does
 		"--bind=/pool/immich:/pool/immich:idmap", // the storage grant
 		"--bind=/dev/dri",                        // the GPU grant
 		"--bind-ro=" + svc.profileDir("immich") + ":/nix/var/nix/profiles",
@@ -667,6 +668,19 @@ func TestSecondStackGetsItsOwnSubnet(t *testing.T) {
 	}
 	if again, _ := svc.ensureSubnet(ctx, "email"); again != subnet {
 		t.Errorf("the subnet changed to %q", again)
+	}
+}
+
+func TestNftRulesetOfALongNameUsesItsCutInterface(t *testing.T) {
+	t.Parallel()
+	got, err := nftRuleset("plex-jellyfin", "10.99.3.0/24", nil, nil, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "table inet homelab_stack_plex_jellyfin {") ||
+		!strings.Contains(got, `iifname != "ve-plex-jellyfi" return`) ||
+		strings.Contains(got, "ve-plex-jellyfin") {
+		t.Errorf("ruleset:\n%s", got)
 	}
 }
 

@@ -614,7 +614,7 @@ func (s *S) stackRefused(name string) {
 	s.t.Helper()
 	leader := s.out("machinectl show " + name + " -p Leader --value")
 	host := ""
-	for _, l := range lines(s.out("ip -4 -o addr show dev ve-" + name)) {
+	for _, l := range lines(s.out("ip -4 -o addr show dev " + stacks.HostIface(name))) {
 		f := strings.Fields(l)
 		if len(f) >= 4 && strings.HasPrefix(f[3], "10.99.") {
 			host = strings.Split(f[3], "/")[0]
@@ -910,6 +910,75 @@ func (s *S) stackFork(rev string) {
 		time.Sleep(5 * time.Second)
 	}
 	s.ok("stack site forked into a draft; a saved file arrived as an update and runs (commit %.12s)", saved)
+}
+
+// stackLongName: a stack name longer than the 12 characters its interface
+// takes. The site's repo again, with its name and route host changed, under
+// a name of 14 characters: the host side of its link is ve- and the first
+// 12, nspawn makes the same name, and the stack serves its route. A name
+// that agrees in those 12 is refused, site keeps ve-site, and the stack is
+// removed again so the steps after see only site. A version from before
+// long names refuses the name.
+func (s *S) stackLongName(pool string) {
+	s.t.Helper()
+	const name, clash = "site-long-name", "site-long-namx"
+	ifc := stacks.HostIface(name)
+	dir := "/var/lib/stack-src/" + name
+	s.must("rm -rf " + dir + " && cp -a /var/lib/stack-src/site " + dir + " && cd " + dir +
+		` && sed -i 's/"site"/"` + name + `"/g' homelab-stack.json` +
+		" && git -c user.name=check -c user.email=check@example.com commit -qam " + name)
+	rev := s.must("git -C " + dir + " rev-parse HEAD")
+	add := map[string]string{"name": name, "source": "git+file://" + dir}
+	long := func() (bool, error) {
+		r, err := s.try("POST", "stacks", add)
+		if err != nil {
+			return false, err
+		}
+		switch {
+		case r.Status == 201:
+			return true, nil
+		case r.Problem() == "invalid_name":
+			return false, nil
+		}
+		return false, fmt.Errorf("POST /api/stacks: %s", r)
+	}
+	if !s.has("a stack name longer than 12 characters", long) {
+		return
+	}
+	s.put("stacks/"+name+"/variables/SITE_DIR", map[string]string{"value": pool + "/site"}, "variable refused")
+	s.ask("POST", "stacks/"+name+"/approve", map[string]string{"rev": rev}, "approve refused")
+	s.ask("POST", "stacks/"+name+"/start", nil, "start refused")
+	addr := ""
+	if !s.until(10*time.Minute, func() bool {
+		v := s.getJ("stacks/" + name)
+		if e := sAt(v, "operation.error"); e != "" {
+			s.die("%s failed: %s", name, e)
+		}
+		addr = sAt(v, "address")
+		return bAt(v, "running") && addr != ""
+	}) {
+		s.die("%s did not start in 10 minutes", name)
+	}
+	gw := addr[:strings.LastIndex(addr, ".")] + ".1"
+	if !strings.Contains(s.out("ip -4 -o addr show dev "+ifc), " "+gw+"/") {
+		s.die("%s does not have the host's address %s: links %s", ifc, gw, s.out("ip -o link show type veth | cut -d: -f2"))
+	}
+	if !s.serves(name, "/", "image-check") {
+		s.die("the route of %s is not served", name)
+	}
+	r := s.call("POST", "stacks", map[string]string{"name": clash, "source": "git+file://" + dir})
+	if r.Status != 409 || r.Problem() != "iface_taken" {
+		s.die("%s, which shares %s, was not refused: %s", clash, ifc, r)
+	}
+	if !s.test("ip link show dev ve-site") {
+		s.die("site no longer has ve-site")
+	}
+	s.ask("POST", "stacks/"+name+"/stop", nil, "stop refused")
+	if !s.until(2*time.Minute, func() bool { return !bAt(s.getJ("stacks/"+name), "running") }) {
+		s.die("%s did not stop", name)
+	}
+	s.ask("DELETE", "stacks/"+name, nil, "removal refused")
+	s.ok("stack %s runs on %s and serves its route; %s is refused, site keeps ve-site", name, ifc, clash)
 }
 
 // stackRace: systemd-networkd reading its configuration again leaves the

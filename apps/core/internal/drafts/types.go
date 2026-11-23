@@ -55,7 +55,7 @@ type Draft struct {
 
 // DraftCreate starts a draft.
 type DraftCreate struct {
-	Name string `json:"name" doc:"1-12 characters of a-z, 0-9 and '-', starting with a letter. It is also the stack's name once installed."`
+	Name string `json:"name" doc:"1-32 characters of a-z, 0-9 and '-', starting with a letter. It is also the stack's name once installed."`
 	From string `json:"from,omitempty" doc:"An installed stack to fork: the draft starts from a copy of its approved commit, and the stack stays on its own source. Absent: the template."`
 }
 

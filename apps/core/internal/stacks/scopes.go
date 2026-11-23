@@ -10,6 +10,7 @@ import (
 // check names, without the disabled ones: what the metrics sampler reads.
 type Measured struct {
 	Name  string
+	Iface string // the host side of its veth
 	Units []string
 }
 
@@ -25,7 +26,7 @@ func (s *Service) Measured(ctx context.Context) []Measured {
 		if err != nil || g == nil {
 			continue
 		}
-		mv := Measured{Name: r.Name}
+		mv := Measured{Name: r.Name, Iface: HostIface(r.Name)}
 		if m, err := decode(g.Manifest); err == nil {
 			mv.Units = enabled(m.Health.Units, liveMasks(r, m))
 		}

@@ -12,9 +12,9 @@
       "const": 9
     },
     "name": {
-      "description": "The stack's suggested name: 1-12 characters of a-z, 0-9 and '-', starting with a letter. The operator picks the installed name.",
+      "description": "The stack's suggested name: 1-32 characters of a-z, 0-9 and '-', starting with a letter. The operator picks the installed name.",
       "type": "string",
-      "pattern": "^[a-z][a-z0-9-]{0,11}$"
+      "pattern": "^[a-z][a-z0-9-]{0,31}$"
     },
     "nixpkgs": {
       "description": "The nixpkgs the stack is built with: nixos-unstable, nixos-YY.MM or a 40-character NixOS/nixpkgs commit.",

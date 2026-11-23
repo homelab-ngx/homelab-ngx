@@ -23,7 +23,7 @@ describe("ForkStack", () => {
     const fork = screen.getByRole("button", { name: "Copy" }) as HTMLButtonElement;
     expect(fork.disabled).toBe(true);
     await fireEvent.input(screen.getByLabelText("Draft name"), { target: { value: "Mine" } });
-    expect(screen.getByText(/1-12 characters/)).toBeTruthy();
+    expect(screen.getByText(/1-32 characters/)).toBeTruthy();
     await fireEvent.input(screen.getByLabelText("Draft name"), { target: { value: "mine" } });
     await fireEvent.click(fork);
     expect(post).toHaveBeenCalledWith("/drafts", { body: { name: "mine", from: "photos" } });

@@ -29,7 +29,7 @@ func TestAddUnderAChosenName(t *testing.T) {
 	}
 	_, err = svc.Add(ctx, src, "photos")
 	wantCode(t, err, 409, "stack_exists")
-	for _, bad := range []string{"Photos", "1photos", "a-very-long-name", "pho tos"} {
+	for _, bad := range []string{"Photos", "1photos", "a-name-of-thirty-three-characters", "pho tos"} {
 		_, err = svc.Add(ctx, src, bad)
 		wantCode(t, err, 400, "invalid_name")
 	}
@@ -38,6 +38,42 @@ func TestAddUnderAChosenName(t *testing.T) {
 	fs.set("bbbbbbb2", immichManifest)
 	if s, err = svc.Fetch(ctx, "photos"); err != nil || s.Fetched.Rev != "bbbbbbb2" {
 		t.Fatalf("fetch = %+v, %v", s.Fetched, err)
+	}
+}
+
+func TestALongNameIsCutOnlyForItsInterface(t *testing.T) {
+	t.Parallel()
+	for name, want := range map[string]string{
+		"immich":        "ve-immich",
+		"twelve-chars":  "ve-twelve-chars",
+		"plex-jellyfin": "ve-plex-jellyfi",
+	} {
+		if got := HostIface(name); got != want {
+			t.Errorf("HostIface(%q) = %q, want %q", name, got, want)
+		}
+	}
+
+	svc, fs := newService(t)
+	ctx := context.Background()
+	fs.set("aaaaaaa1", immichManifest)
+	long := "a-name-of-thirty-two-characters1"
+	if s, err := svc.Add(ctx, src, long); err != nil || s.Name != long {
+		t.Fatalf("add %q = %+v, %v", long, s, err)
+	}
+	if _, err := svc.Add(ctx, src, "plex-jellyfin"); err != nil {
+		t.Fatal(err)
+	}
+	// The same first 12 characters, a different 13th: the same interface.
+	_, err := svc.Add(ctx, src, "plex-jellyfix")
+	wantCode(t, err, 409, "iface_taken")
+	if err == nil || !strings.Contains(err.Error(), "ve-plex-jellyfi") {
+		t.Errorf("the refusal does not name the interface: %v", err)
+	}
+	// A 12-character name is its own interface, and so it clashes too.
+	_, err = svc.Add(ctx, src, "plex-jellyfi")
+	wantCode(t, err, 409, "iface_taken")
+	if _, err := svc.Add(ctx, src, "plex-jellyf"); err != nil {
+		t.Fatal(err)
 	}
 }
 

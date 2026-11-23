@@ -178,7 +178,7 @@ func (s *Service) Add(ctx context.Context, source, name string) (Stack, error) {
 	}
 	if name != "" && !ValidName(name) {
 		return Stack{}, httpx.BadRequest("invalid_name",
-			"%q is not a stack name: use 1-12 characters of a-z, 0-9 and '-', starting with a letter", name)
+			"%q is not a stack name: use 1-32 characters of a-z, 0-9 and '-', starting with a letter", name)
 	}
 	f, m, err := s.fetch(ctx, source, name)
 	if err != nil {
@@ -192,6 +192,9 @@ func (s *Service) Add(ctx context.Context, source, name string) (Stack, error) {
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return Stack{}, err
 	}
+	if err := s.ifaceFree(ctx, name); err != nil {
+		return Stack{}, err
+	}
 	if err := s.st.Queries().InsertStack(ctx, store.InsertStackParams{
 		Name: name, Source: source, Now: s.now().UnixMilli(),
 		Rev: f.Rev, Url: f.URL, Manifest: encode(m),
@@ -202,6 +205,24 @@ func (s *Service) Add(ctx context.Context, source, name string) (Stack, error) {
 	s.log.Info("stack installed", "stack", name, "source", source, "rev", f.Rev)
 	s.writeLock(ctx)
 	return s.Get(ctx, name)
+}
+
+// ifaceFree refuses a name whose host interface an installed stack has: two
+// names that agree in their first 12 characters (HostIface).
+func (s *Service) ifaceFree(ctx context.Context, name string) error {
+	rows, err := s.st.Queries().ListStacks(ctx)
+	if err != nil {
+		return err
+	}
+	ifc := HostIface(name)
+	for _, r := range rows {
+		if HostIface(r.Name) == ifc {
+			return httpx.Conflict("iface_taken",
+				"%q would share the network interface %s with the installed stack %q; pick a name that differs in its first %d characters",
+				name, ifc, r.Name, ifaceNameLen)
+		}
+	}
+	return nil
 }
 
 // SetLabel sets the name the dashboard shows for the stack; empty clears it.

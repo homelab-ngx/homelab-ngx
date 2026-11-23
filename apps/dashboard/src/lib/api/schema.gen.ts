@@ -3035,7 +3035,7 @@ export interface components {
         DraftCreate: {
             /** @description An installed stack to fork: the draft starts from a copy of its approved commit, and the stack stays on its own source. Absent: the template. */
             from?: string;
-            /** @description 1-12 characters of a-z, 0-9 and '-', starting with a letter. It is also the stack's name once installed. */
+            /** @description 1-32 characters of a-z, 0-9 and '-', starting with a letter. It is also the stack's name once installed. */
             name: string;
         };
         DraftFile: {
@@ -4128,7 +4128,7 @@ export interface components {
             want_running: boolean;
         };
         StackAdd: {
-            /** @description The name to install the stack under: 1-12 characters of a-z, 0-9 and '-', starting with a letter. Empty: the name its manifest suggests. */
+            /** @description The name to install the stack under: 1-32 characters of a-z, 0-9 and '-', starting with a letter. Empty: the name its manifest suggests. */
             name?: string;
             /** @description Flake reference of the stack's repo, optionally with a branch: github:owner/repo, github:owner/repo/branch, or a git+ssh://, git+https:// or git+file:// URL. */
             source: string;

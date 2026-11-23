@@ -2177,7 +2177,7 @@
             "type": "string"
           },
           "name": {
-            "description": "1-12 characters of a-z, 0-9 and '-', starting with a letter. It is also the stack's name once installed.",
+            "description": "1-32 characters of a-z, 0-9 and '-', starting with a letter. It is also the stack's name once installed.",
             "type": "string"
           }
         },
@@ -5399,7 +5399,7 @@
         "additionalProperties": false,
         "properties": {
           "name": {
-            "description": "The name to install the stack under: 1-12 characters of a-z, 0-9 and '-', starting with a letter. Empty: the name its manifest suggests.",
+            "description": "The name to install the stack under: 1-32 characters of a-z, 0-9 and '-', starting with a letter. Empty: the name its manifest suggests.",
             "type": "string"
           },
           "source": {

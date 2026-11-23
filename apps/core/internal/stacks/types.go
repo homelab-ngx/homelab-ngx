@@ -115,9 +115,9 @@ type StackAdd struct {
 	// `git+ssh://`, `git+https://` or `git+file://` URL.
 	Source string `json:"source" doc:"Flake reference of the stack's repo, optionally with a branch: github:owner/repo, github:owner/repo/branch, or a git+ssh://, git+https:// or git+file:// URL."`
 
-	// Name The name to install the stack under: 1-12 characters of a-z, 0-9
+	// Name The name to install the stack under: 1-32 characters of a-z, 0-9
 	// and '-', starting with a letter. Empty: the name its manifest suggests.
-	Name string `json:"name,omitempty" doc:"The name to install the stack under: 1-12 characters of a-z, 0-9 and '-', starting with a letter. Empty: the name its manifest suggests."`
+	Name string `json:"name,omitempty" doc:"The name to install the stack under: 1-32 characters of a-z, 0-9 and '-', starting with a letter. Empty: the name its manifest suggests."`
 }
 
 // StackPatch is the body of patchStack. A field left out is not changed.

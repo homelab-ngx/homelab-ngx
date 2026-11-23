@@ -97,7 +97,7 @@ export function routeLinks(m: StackManifest | undefined): string[] {
  * (git+file://<state>/drafts/<name>); else null.
  */
 export function draftOf(source: string): string | null {
-  return source.match(/^git\+file:\/\/\/[^?]*\/homelab-daemon\/drafts\/([a-z][a-z0-9-]{0,11})(\?|$)/)?.[1] ?? null;
+  return source.match(/^git\+file:\/\/\/[^?]*\/homelab-daemon\/drafts\/([a-z][a-z0-9-]{0,31})(\?|$)/)?.[1] ?? null;
 }
 
 export interface SourceParts {
@@ -257,7 +257,7 @@ export function stackTitles(stacks: Pick<Stack, "name" | "label">[] | undefined)
 }
 
 /** A name the daemon accepts for a stack: also its container's and its units' prefix. */
-export const validStackName = (name: string) => /^[a-z][a-z0-9-]{0,11}$/.test(name);
+export const validStackName = (name: string) => /^[a-z][a-z0-9-]{0,31}$/.test(name);
 
 /** The longest label the daemon accepts. */
 export const MAX_STACK_LABEL = 40;

@@ -6,7 +6,7 @@ Every stack repo has `homelab-stack.json` (the manifest: what the stack asks of 
 
 Unknown fields are refused. Fields:
 
-- `"version": 9` and `"name"`: the stack's suggested name, 1-12 characters of a-z, 0-9 and '-', starting with a letter.
+- `"version": 9` and `"name"`: the stack's suggested name, 1-32 characters of a-z, 0-9 and '-', starting with a letter. Its first 12 characters name its network interface, so keep them apart from other stacks' names.
 - `"nixpkgs"` (required): `"nixos-unstable"`, `"nixos-YY.MM"` or a 40-character NixOS/nixpkgs commit.
 - `"routes"`: `[{ "host": "<label>", "port": <port in the stack>, "max_body": "50GB" (optional) }]`. A label such as `"photos"` is served privately as `photos.<the host's domain>` over HTTPS through the host's Caddy. Each route is a grant the person approves.
 - `"variables"`: values the host gives the stack. Each is `{ "name", "kind", "description", "required" }` plus fields by kind. Names match `^[A-Z][A-Z0-9_]{0,63}$`. Write `description` as one short sentence that says what the value is, with an example where it helps ("The tunnel address, such as 10.2.0.2/32."); the dashboard shows it as the help for that variable.

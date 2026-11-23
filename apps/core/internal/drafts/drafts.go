@@ -233,7 +233,7 @@ func orEmpty(s []string) []string {
 func (s *Service) Create(ctx context.Context, name string) (Draft, error) {
 	if !stacks.ValidName(name) {
 		return Draft{}, httpx.BadRequest("invalid_name",
-			"%q is not a stack name: use 1-12 characters of a-z, 0-9 and '-', starting with a letter", name)
+			"%q is not a stack name: use 1-32 characters of a-z, 0-9 and '-', starting with a letter", name)
 	}
 	fill := func(dir string) error {
 		for p, content := range Template(name) {

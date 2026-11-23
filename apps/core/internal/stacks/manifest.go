@@ -355,9 +355,10 @@ var builtinNames = []string{BuiltinToken, "HOMELAB_API_URL", BuiltinDomain, Buil
 func IsBuiltin(name string) bool { return slices.Contains(builtinNames, name) }
 
 var (
-	// A stack name is also the machine name and part of the host interface
-	// name `ve-<name>`, which the kernel limits to 15 bytes.
-	nameRE  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,11}$`)
+	// A stack name is also the machine name, the container's hostname and
+	// part of its unit and firewall table names; 32 fits all of them. The
+	// host interface takes only its first 12 characters (HostIface).
+	nameRE  = regexp.MustCompile(`^[a-z][a-z0-9-]{0,31}$`)
 	hostRE  = regexp.MustCompile(`^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$`)
 	labelRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	// A user or group name inside the stack.
@@ -566,7 +567,7 @@ func (m Manifest) Validate() error {
 		return err
 	}
 	if !ValidName(m.Name) {
-		return fmt.Errorf("name: %q must be 1-12 characters of a-z, 0-9 and '-', starting with a letter", m.Name)
+		return fmt.Errorf("name: %q must be 1-32 characters of a-z, 0-9 and '-', starting with a letter", m.Name)
 	}
 	seenHost := map[string]bool{}
 	for i, r := range m.Routes {

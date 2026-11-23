@@ -393,7 +393,7 @@ func (a stackScopes) Scopes(ctx context.Context) []metrics.Scope {
 	in := a.Service.Measured(ctx)
 	out := make([]metrics.Scope, len(in))
 	for i, m := range in {
-		out[i] = metrics.Scope{Name: m.Name, Units: m.Units}
+		out[i] = metrics.Scope{Name: m.Name, Iface: m.Iface, Units: m.Units}
 	}
 	return out
 }

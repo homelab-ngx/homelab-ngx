@@ -120,7 +120,7 @@ func (h *fakeHost) set(s state) {
 type oneStack struct{}
 
 func (oneStack) Scopes(context.Context) []Scope {
-	return []Scope{{Name: "immich", Units: []string{"immich-server.service"}}, {Name: "stopped"}}
+	return []Scope{{Name: "immich", Iface: "ve-immich", Units: []string{"immich-server.service"}}, {Name: "stopped"}}
 }
 
 func near(t *testing.T, what string, got, want float64) {

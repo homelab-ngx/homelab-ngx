@@ -127,7 +127,8 @@ describe("stack titles", () => {
   it("checks a name the way the daemon does", () => {
     expect(validStackName("photos")).toBe(true);
     expect(validStackName("tv-2")).toBe(true);
-    for (const bad of ["", "Photos", "2tv", "a-very-long-name", "pho tos"]) expect(validStackName(bad)).toBe(false);
+    expect(validStackName("plex-jellyfin")).toBe(true);
+    for (const bad of ["", "Photos", "2tv", "a-name-of-thirty-three-characters", "pho tos"]) expect(validStackName(bad)).toBe(false);
   });
 });
 

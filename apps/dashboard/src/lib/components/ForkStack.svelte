@@ -19,8 +19,8 @@
   let error = $state("");
   let pending = $state(false);
 
-  const NAME = /^[a-z][a-z0-9-]{0,11}$/;
-  const nameProblem = $derived(name && !NAME.test(name) ? "1-12 characters of a-z, 0-9 and -, starting with a letter." : "");
+  const NAME = /^[a-z][a-z0-9-]{0,31}$/;
+  const nameProblem = $derived(name && !NAME.test(name) ? "1-32 characters of a-z, 0-9 and -, starting with a letter." : "");
   const ready = $derived(NAME.test(name) && name !== stack.name);
 
   /** A new draft beside the stack, which stays on its own source. */

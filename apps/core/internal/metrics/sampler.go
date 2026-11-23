@@ -91,10 +91,11 @@ func emptyParts() [nPart]point {
 }
 
 // Scope is a stack the sampler reads: its cgroup is
-// <Machines>/<Name>.scope, its veth ve-<Name>, and Units are the services
-// whose CPU and memory the Stacks table shows.
+// <Machines>/<Name>.scope, Iface is the host side of its veth, and Units
+// are the services whose CPU and memory the Stacks table shows.
 type Scope struct {
 	Name  string
+	Iface string // the host side of its veth
 	Units []string
 }
 
@@ -234,7 +235,7 @@ func (m *Metrics) tick(ctx context.Context) {
 		if !ok {
 			continue
 		}
-		c.netRx, c.netTx, c.hasNet = vethNet(m.paths.Net, "ve-"+sc.Name)
+		c.netRx, c.netTx, c.hasNet = vethNet(m.paths.Net, sc.Iface)
 		if p, ok := m.rate(next, sc.Name, now, c); ok {
 			s.stacks[sc.Name] = p
 			usage[sc.Name] = services.Usage{CpuPercent: float32(p[figCPU] * float64(m.cores)), MemoryBytes: int64(c.memory)}

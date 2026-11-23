@@ -92,7 +92,7 @@ func TestParseManifestRejects(t *testing.T) {
 		{"api scope twice", `{"version":3,"name":"a","api":["read","control","read"]}`, "api[2]: \"read\" is listed twice"},
 		{"ports in version 1", base(`,"ports":[{"port":32400,"from":["192.168.1.0/24"]}]`), "need version 2"},
 		{"containers in version 1", base(`,"containers":true`), "need version 2"},
-		{"name too long for the interface", `{"version":1,"name":"abcdefghijklm"}`, "name"},
+		{"name longer than 32 characters", `{"version":1,"name":"` + strings.Repeat("a", 33) + `"}`, "name"},
 		{"name with upper case", `{"version":1,"name":"Immich"}`, "name"},
 		{"a system field: the output name is fixed", `{"version":1,"name":"a","system":"a"}`, "unknown field"},
 		{"route host with a scheme", base(`,"routes":[{"host":"https://x.example.com","port":80}]`), "routes[0].host"},

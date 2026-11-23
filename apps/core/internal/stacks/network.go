@@ -51,7 +51,15 @@ func stackAddr(subnet string) string {
 	return ""
 }
 
-func hostIface(name string) string { return "ve-" + name }
+// ifaceNameLen is how much of a stack's name its host interface keeps: the
+// kernel allows an interface name 15 bytes, and `ve-` takes 3.
+const ifaceNameLen = 12
+
+// HostIface is the host side of the stack's veth: `ve-` and the first 12
+// characters of its name. nspawn names the link and cuts a long name the
+// same way only under an old naming scheme (namingScheme in nspawnArgs).
+// Two installed stacks may not share it (Add).
+func HostIface(name string) string { return "ve-" + name[:min(len(name), ifaceNameLen)] }
 
 // A stack has no say over its address: this file is bound into the stack
 // where its systemd-networkd reads it ahead of the built-in host0 default.
@@ -104,7 +112,7 @@ func nftRuleset(name, subnet string, egress []Egress, ports []Port, api bool) (s
 	if err != nil {
 		return "", err
 	}
-	table, ifc := nftTable(name), hostIface(name)
+	table, ifc := nftTable(name), HostIface(name)
 	var toHost, toNet []string
 	for _, e := range egress {
 		port := fmt.Sprintf("%s dport %d accept", e.Proto, e.Port)
@@ -336,7 +344,7 @@ func (s *Service) linkUp(ctx context.Context, name, subnet string, expect ...int
 	if err != nil {
 		return err
 	}
-	ifc := hostIface(name)
+	ifc := HostIface(name)
 	for _, args := range [][]string{
 		{"address", "replace", host.String() + "/24", "dev", ifc},
 		{"link", "set", ifc, "up"},

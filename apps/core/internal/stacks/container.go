@@ -227,6 +227,15 @@ func shadowedBy(m Manifest, mount string) string {
 	return ""
 }
 
+// namingScheme is the interface naming scheme nspawn runs under. A host
+// interface name is at most 15 bytes, so nspawn shortens `ve-<name>` when a
+// stack's name is longer than 12 characters. From scheme v245 on it keeps 11
+// bytes and adds a hash; before that it keeps the first 15, which is
+// HostIface, the name the firewall rules and the link's address are given.
+// nspawn reads no other part of the scheme, so a short name's link is the
+// same under either.
+const namingScheme = "v241"
+
 // nspawnArgs is the systemd-run command line that boots a stack as the
 // transient unit homelab-stack-<name>.service: a picked user namespace with
 // ID-mapped ownership, a veth, the store read-only and the stack's own
@@ -246,6 +255,7 @@ func nspawnArgs(name, stateDir, profileDir, varsDir, unitsDir string, m Manifest
 		"-p", "Type=notify", "-p", "NotifyAccess=all", "-p", "KillMode=mixed", "-p", "Delegate=yes",
 		"-p", fmt.Sprintf("TimeoutStartSec=%d", int(startTimeout.Seconds())),
 		"-p", fmt.Sprintf("TimeoutStopSec=%d", int(haltTimeout.Seconds())),
+		"-p", "Environment=NET_NAMING_SCHEME=" + namingScheme,
 	}
 	// At a shutdown systemd stops units in the reverse of their start
 	// order: a bound path's mount (a pool under /var/mnt) is unmounted
