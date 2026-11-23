@@ -246,6 +246,7 @@ func EtcFiles(s Snapshot) (files map[string]string, links map[string]string) {
 	if s.Host.Timezone != "" {
 		links["etc/localtime"] = "../usr/share/zoneinfo/" + s.Host.Timezone
 	}
+	generalEtc(s, files)
 	// The dashboard's address under the private domain, for the login
 	// greeting (usr/share/homelab/shell.bash). Without a domain the greeting
 	// names the host's .local name and address itself.
@@ -278,6 +279,8 @@ func (a *ImageApplier) etc(ctx context.Context, s Snapshot) error {
 	root := a.path("/var/lib/confexts/homelab-host")
 	files, links := EtcFiles(s)
 	changed := false
+	// changedFiles are the files (relative to root) written or removed.
+	changedFiles := map[string]bool{}
 	// The WireGuard key file lives on /var, outside the confext.
 	keyFile := a.path("/var/lib/homelab/wireguard/private.key")
 	if s.WireGuard.Enabled && s.WireGuardKey != "" {
@@ -295,6 +298,7 @@ func (a *ImageApplier) etc(ctx context.Context, s Snapshot) error {
 			return err
 		}
 		changed = changed || c
+		changedFiles[rel] = c
 	}
 	for rel, target := range links {
 		p := filepath.Join(root, rel)
@@ -323,6 +327,7 @@ func (a *ImageApplier) etc(ctx context.Context, s Snapshot) error {
 			return nil
 		}
 		changed = true
+		changedFiles[rel] = true
 		return os.Remove(p)
 	})
 	if err != nil {
@@ -342,6 +347,7 @@ func (a *ImageApplier) etc(ctx context.Context, s Snapshot) error {
 		if err := a.run(ctx, "networkctl", "reload"); err != nil {
 			errs = append(errs, err)
 		}
+		errs = append(errs, a.generalReload(ctx, changedFiles)...)
 	}
 	// Every time: at boot the kernel's name is set from the image's
 	// /etc/hostname before the confext is merged.

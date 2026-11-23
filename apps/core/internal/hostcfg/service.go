@@ -76,6 +76,8 @@ type Snapshot struct {
 	TunnelCert string
 	// WireGuardKey is the server's private key (base64).
 	WireGuardKey string
+	// Keymap is the console keyboard's kbd keymap, for getty's console.
+	Keymap string
 }
 
 // Service keeps the settings and applies them.
@@ -89,6 +91,9 @@ type Service struct {
 	now     func() time.Time
 	// TZDir is where time zones are checked; a variable for tests.
 	tzdir string
+	// xkbRules and kbdMap are where keyboard layouts are read; variables
+	// for tests.
+	xkbRules, kbdMap string
 
 	mu       sync.Mutex // serialises changes and applies
 	applied  Applied
@@ -108,7 +113,7 @@ func (s *Service) SetRunner(r cmdrunner.Runner) { s.run = r }
 // managed is ManagedNixOS shows nix and refuses changes; apply may be nil
 // there.
 func New(st *store.Store, keyFile string, managed Managed, nix *config.Nix, apply Applier, log *slog.Logger) *Service {
-	return &Service{st: st, keyFile: keyFile, managed: managed, nix: nix, apply: apply, log: log, now: time.Now, tzdir: "/usr/share/zoneinfo", ddns: newDDNSLoop()}
+	return &Service{st: st, keyFile: keyFile, managed: managed, nix: nix, apply: apply, log: log, now: time.Now, tzdir: "/usr/share/zoneinfo", xkbRules: xkbRules, kbdMap: kbdModelMap, ddns: newDDNSLoop()}
 }
 
 // Detect tells an image host from a NixOS one by its os-release.
@@ -209,6 +214,10 @@ func (s *Service) snapshot(ctx context.Context) (Snapshot, error) {
 	dec("tunnel", &snap.Tunnel)
 	dec("tailscale", &snap.Tailscale)
 	dec("ddns", &snap.DDNS)
+	dec("time", &snap.Time)
+	var con storedConsole
+	dec("console", &con)
+	snap.Console, snap.Keymap = con.Console, con.Keymap
 
 	var ds domainSecret
 	if err := s.open(rs["domain"], &ds); err != nil {
@@ -236,6 +245,7 @@ func (s *Service) snapshot(ctx context.Context) (Snapshot, error) {
 	snap.WireGuard.Peers = nonNil(snap.WireGuard.Peers)
 	snap.Tunnel.Routes = nonNil(snap.Tunnel.Routes)
 	snap.Tailscale.AdvertiseRoutes = nonNil(snap.Tailscale.AdvertiseRoutes)
+	snap.Time.NTP = nonNil(snap.Time.NTP)
 	return snap, nil
 }
 
@@ -251,7 +261,9 @@ func nonNil[T any](s []T) []T {
 // Get returns the settings, no secrets.
 func (s *Service) Get(ctx context.Context) (HostSettings, error) {
 	if s.managed == ManagedNixOS {
-		return s.fromNix(), nil
+		st := s.fromNix()
+		st.TimeSync = readTimeSync(ctx, s.run)
+		return st, nil
 	}
 	snap, err := s.snapshot(ctx)
 	if err != nil {
@@ -262,6 +274,7 @@ func (s *Service) Get(ctx context.Context) (HostSettings, error) {
 	s.mu.Unlock()
 	snap.DDNS.Status = s.ddnsStatus()
 	snap.Applied.Errors = nonNil(snap.Applied.Errors)
+	snap.TimeSync = readTimeSync(ctx, s.run)
 	return snap.HostSettings, nil
 }
 
@@ -381,6 +394,7 @@ func (s *Service) fromNix() HostSettings {
 	}
 	st.Tailscale.Enabled = n.Security.Tailscale.Enabled
 	st.Tailscale.AdvertiseRoutes = []string{}
+	st.Time.NTP = []string{}
 	return st
 }
 

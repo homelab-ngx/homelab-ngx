@@ -38,8 +38,12 @@ type HostSettings struct {
 	Tunnel    Tunnel    `json:"tunnel"`
 	Tailscale Tailscale `json:"tailscale"`
 	DDNS      DDNS      `json:"ddns"`
+	Time      Time      `json:"time"`
+	Console   Console   `json:"console"`
 	// Wired is read from the host for every answer; it is not a setting.
 	Wired []Interface `json:"wired" readOnly:"true" doc:"The host's wired network interfaces. Each wakes the host on a magic packet sent to its MAC address (Wake-on-LAN), where the firmware allows it."`
+	// TimeSync is read from the host for every answer; it is not a setting.
+	TimeSync TimeSync `json:"time_sync" readOnly:"true"`
 	// Applied is when the daemon last wrote the host's files, and what failed.
 	Applied Applied `json:"applied"`
 }
@@ -64,6 +68,49 @@ type Host struct {
 	Timezone string `required:"false" json:"timezone" doc:"An IANA zone such as Europe/Stockholm; empty is UTC."`
 	// Set with setHostSSH; setHostBasics keeps them.
 	SSHKeys []string `required:"false" json:"ssh_keys,omitempty" doc:"Root's authorized SSH public keys (OpenSSH format), set with setHostSSH."`
+}
+
+// Clock is how the dashboard shows the time of day.
+type Clock string
+
+const (
+	// ClockAuto follows each browser's language.
+	ClockAuto Clock = ""
+	Clock12h  Clock = "12h"
+	Clock24h  Clock = "24h"
+)
+
+// Schema documents Clock as its enum.
+func (Clock) Schema(huma.Registry) *huma.Schema {
+	return &huma.Schema{Type: huma.TypeString, Enum: []any{string(ClockAuto), string(Clock12h), string(Clock24h)}}
+}
+
+// Time is how the dashboard shows the time and where the host gets it.
+type Time struct {
+	Clock Clock    `required:"false" json:"clock" doc:"12h, 24h, or empty to follow each browser's language."`
+	NTP   []string `required:"false" json:"ntp" doc:"Up to four time servers (names or addresses) the host sets its clock from. Empty keeps the image's: Arch's pool."`
+}
+
+// TimeSync is whether the host's clock is set from a time server.
+type TimeSync struct {
+	Synced bool   `json:"synced" doc:"The clock was set from a time server."`
+	Server string `json:"server,omitempty" doc:"The server it was set from."`
+}
+
+// Console is the host's own screen and keyboard.
+type Console struct {
+	Keyboard string `required:"false" json:"keyboard" doc:"The keyboard layout on the host's console: an XKB layout such as se or de, from GET /host-settings/keyboard-layouts. Empty is us."`
+}
+
+// KeyboardLayout is one layout the console can use.
+type KeyboardLayout struct {
+	Name        string `json:"name" doc:"The XKB layout, such as se."`
+	Description string `json:"description" doc:"Its name, such as Swedish."`
+}
+
+// KeyboardLayouts is the layouts the console can use.
+type KeyboardLayouts struct {
+	Layouts []KeyboardLayout `json:"layouts" doc:"Sorted by description; empty where the host has no XKB data."`
 }
 
 // SSHKeys is root's authorized SSH public keys.

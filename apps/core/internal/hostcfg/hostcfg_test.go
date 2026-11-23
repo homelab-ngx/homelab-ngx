@@ -478,3 +478,125 @@ func TestTimezoneFolderIsRefused(t *testing.T) {
 		t.Errorf("a zone file: %v", err)
 	}
 }
+
+func TestTimeSettings(t *testing.T) {
+	s, _, rec := newService(t)
+	ctx := context.Background()
+	for _, bad := range []Time{{Clock: "am"}, {NTP: []string{"not a host"}}, {NTP: []string{"a", "b", "c", "d", "e"}}} {
+		if _, err := s.SetTime(ctx, bad); !errors.Is(err, ErrInvalid) {
+			t.Errorf("SetTime(%+v) = %v, want invalid", bad, err)
+		}
+	}
+	st, err := s.SetTime(ctx, Time{Clock: Clock24h, NTP: []string{" Router.Lan. ", "192.168.1.1", "router.lan", ""}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Time.Clock != Clock24h || !reflect.DeepEqual(st.Time.NTP, []string{"router.lan", "192.168.1.1"}) {
+		t.Errorf("time = %+v", st.Time)
+	}
+	files, _ := EtcFiles(rec.got[len(rec.got)-1])
+	if f := files[timesyncdFile]; f != "[Time]\nNTP=router.lan 192.168.1.1\n" {
+		t.Errorf("timesyncd = %q", f)
+	}
+	st, _ = s.SetTime(ctx, Time{})
+	files, _ = EtcFiles(rec.got[len(rec.got)-1])
+	if _, ok := files[timesyncdFile]; ok || st.Time.NTP == nil {
+		t.Errorf("no servers: file kept or ntp nil (%+v)", st.Time)
+	}
+}
+
+func TestConsoleKeyboard(t *testing.T) {
+	s, _, rec := newService(t)
+	ctx := context.Background()
+	dir := t.TempDir()
+	s.xkbRules, s.kbdMap = filepath.Join(dir, "base.lst"), filepath.Join(dir, "kbd-model-map")
+	_ = os.WriteFile(s.xkbRules, []byte("! model\n  pc105  Generic 105-key PC\n\n! layout\n  us              English (US)\n  se              Swedish\n  ara             Arabic\n\n! variant\n  nodeadkeys      se: Swedish (no dead keys)\n"), 0o644)
+	_ = os.WriteFile(s.kbdMap, []byte("# Generated\nsv-latin1\tse\tpc105\t-\tterminate:ctrl_alt_bksp\nse-nodead\tse\tpc105\tnodeadkeys\t-\n"), 0o644)
+	got := s.KeyboardLayouts().Layouts
+	if len(got) != 3 || got[0].Name != "ara" || got[2] != (KeyboardLayout{"se", "Swedish"}) {
+		t.Errorf("layouts = %+v", got)
+	}
+	if _, err := s.SetConsole(ctx, Console{Keyboard: "nodeadkeys"}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("a variant was taken: %v", err)
+	}
+	st, err := s.SetConsole(ctx, Console{Keyboard: "se"})
+	if err != nil || st.Console.Keyboard != "se" {
+		t.Fatal(st.Console, err)
+	}
+	files, _ := EtcFiles(rec.got[len(rec.got)-1])
+	if !strings.HasSuffix(files[kmsconFile], "\nxkb-layout=se\n") || files[vconsoleFile] != vconsoleBase+"KEYMAP=sv-latin1\n" {
+		t.Errorf("kmscon %q, vconsole %q", files[kmsconFile], files[vconsoleFile])
+	}
+	// No keymap for the layout: kmscon only.
+	_, _ = s.SetConsole(ctx, Console{Keyboard: "ara"})
+	files, _ = EtcFiles(rec.got[len(rec.got)-1])
+	if _, ok := files[vconsoleFile]; ok || files[kmsconFile] == "" {
+		t.Errorf("ara: %v", files)
+	}
+	_, _ = s.SetConsole(ctx, Console{})
+	files, _ = EtcFiles(rec.got[len(rec.got)-1])
+	if _, ok := files[kmsconFile]; ok {
+		t.Error("no layout: the image's kmscon.conf is shadowed")
+	}
+}
+
+// The settings' console files start from the image's; they must not drift.
+func TestConsoleBasesMatchTheImage(t *testing.T) {
+	for name, want := range map[string]string{"etc/kmscon/kmscon.conf": kmsconBase, "etc/vconsole.conf": vconsoleBase} {
+		b, err := os.ReadFile(filepath.Join("../../../../image/base/mkosi.extra", name))
+		if errors.Is(err, os.ErrNotExist) {
+			t.Skip("no image tree beside the daemon")
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != want {
+			t.Errorf("%s changed in the image: copy it into general.go", name)
+		}
+	}
+}
+
+func TestGeneralReload(t *testing.T) {
+	root := t.TempDir()
+	f := cmdrunnertest.NewFake()
+	for _, p := range [][]string{{"systemctl"}, {"systemd-confext"}, {"networkctl"}, {"nft"}, {"tailscale"}, {"ip"}} {
+		f.On(p...).Reply("")
+	}
+	a := &ImageApplier{Runner: f, Root: root}
+	ctx := context.Background()
+	s := snapshotOf(t)
+	a.Apply(ctx, s)
+	if len(f.CallsMatching("systemctl", "try-restart")) != 0 {
+		t.Fatalf("restarted with nothing set: %+v", f.Calls())
+	}
+	s.Time.NTP, s.Console.Keyboard, s.Keymap = []string{"router.lan"}, "se", "sv-latin1"
+	a.Apply(ctx, s)
+	for _, u := range []string{"systemd-timesyncd.service", "systemd-vconsole-setup.service", consoleUnit} {
+		if len(f.CallsMatching("systemctl", "try-restart", u)) != 1 {
+			t.Errorf("%s not restarted: %+v", u, f.Calls())
+		}
+	}
+	// Taken off again: the files go and the services restart on the image's.
+	s.Time.NTP, s.Console.Keyboard, s.Keymap = nil, "", ""
+	a.Apply(ctx, s)
+	if len(f.CallsMatching("systemctl", "try-restart", consoleUnit)) != 2 || len(f.CallsMatching("systemctl", "try-restart", "systemd-timesyncd.service")) != 2 {
+		t.Errorf("not restarted after removal: %+v", f.Calls())
+	}
+	if _, err := os.Stat(filepath.Join(root, "/var/lib/confexts/homelab-host", kmsconFile)); !errors.Is(err, os.ErrNotExist) {
+		t.Error("kmscon.conf left in the confext")
+	}
+}
+
+func TestReadTimeSync(t *testing.T) {
+	f := cmdrunnertest.NewFake()
+	f.On("timedatectl", "show", "--property=NTPSynchronized").Reply("yes\n")
+	f.On("timedatectl", "show-timesync").Reply("0.arch.pool.ntp.org\n")
+	if got := readTimeSync(context.Background(), f); got != (TimeSync{true, "0.arch.pool.ntp.org"}) {
+		t.Errorf("synced: %+v", got)
+	}
+	f = cmdrunnertest.NewFake()
+	f.On("timedatectl").Reply("no\n")
+	if got := readTimeSync(context.Background(), f); got != (TimeSync{}) {
+		t.Errorf("not synced: %+v", got)
+	}
+}

@@ -29,6 +29,9 @@ type wireguardIn struct{ Body WireGuard }
 type tunnelIn struct{ Body TunnelSet }
 type tailscaleIn struct{ Body Tailscale }
 type ddnsIn struct{ Body DDNSSet }
+type timeIn struct{ Body Time }
+type consoleIn struct{ Body Console }
+type layoutsOut struct{ Body KeyboardLayouts }
 type deviceIn struct{ Body DeviceAdd }
 type deviceOut struct{ Body AddedDevice }
 type publicAddressOut struct{ Body PublicAddress }
@@ -49,6 +52,12 @@ func (h *HTTP) Register(a httpx.APIs) {
 		}
 	}
 	httpx.Register(a, httpx.ScopeOperator, put("setHostBasics", "host", "Set the host name and time zone."), h.setHost)
+	httpx.Register(a, httpx.ScopeOperator, put("setHostTime", "time", "Set the clock's format and its time servers."), h.setTime)
+	httpx.Register(a, httpx.ScopeOperator, put("setHostConsole", "console", "Set the console's keyboard layout. The console restarts with it."), h.setConsole)
+	httpx.Register(a, httpx.ScopeRead, huma.Operation{
+		OperationID: "getKeyboardLayouts", Method: http.MethodGet, Path: "/host-settings/keyboard-layouts", Tags: tags,
+		Summary: "The keyboard layouts the console can use.",
+	}, h.keyboardLayouts)
 	httpx.Register(a, httpx.ScopeOperator, put("setHostSSH", "ssh", "Set root's authorized SSH keys."), h.setSSH)
 	httpx.Register(a, httpx.ScopeOperator, put("setHostDomain", "domain", "Set the private domain and its certificate."), h.setDomain)
 	httpx.Register(a, httpx.ScopeOperator, put("setHostNetwork", "network", "Set the LAN's subnets."), h.setNetwork)
@@ -199,6 +208,15 @@ func (h *HTTP) setSSH(ctx context.Context, in *sshIn) (*settingsOut, error) {
 }
 func (h *HTTP) setHost(ctx context.Context, in *hostIn) (*settingsOut, error) {
 	return out(h.s.SetHost(ctx, in.Body))
+}
+func (h *HTTP) setTime(ctx context.Context, in *timeIn) (*settingsOut, error) {
+	return out(h.s.SetTime(ctx, in.Body))
+}
+func (h *HTTP) setConsole(ctx context.Context, in *consoleIn) (*settingsOut, error) {
+	return out(h.s.SetConsole(ctx, in.Body))
+}
+func (h *HTTP) keyboardLayouts(_ context.Context, _ *struct{}) (*layoutsOut, error) {
+	return &layoutsOut{Body: h.s.KeyboardLayouts()}, nil
 }
 func (h *HTTP) setDomain(ctx context.Context, in *domainIn) (*settingsOut, error) {
 	return out(h.s.SetDomain(ctx, in.Body))
