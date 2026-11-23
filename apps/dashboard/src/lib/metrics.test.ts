@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   appendFrames,
+  cpuShort,
+  machineLine,
+  uptime,
   byScope,
   CORE_HUE,
   emptyFrames,
@@ -135,5 +138,26 @@ describe("mood", () => {
   });
   it("counts 80% CPU use as medium load", () => {
     expect(mood(withPressure(0, 0, 0, 90))).toEqual({ mood: "medium", share: 90 });
+  });
+});
+
+describe("the machine line", () => {
+  it("shortens processor names", () => {
+    expect(cpuShort("Intel(R) Core(TM) i5-8259U CPU @ 2.30GHz")).toBe("Intel Core i5-8259U");
+    expect(cpuShort("AMD Ryzen 7 5700G with Radeon Graphics")).toBe("AMD Ryzen 7 5700G");
+    expect(cpuShort("AMD Ryzen 5 3600 6-Core Processor")).toBe("AMD Ryzen 5 3600");
+    expect(cpuShort("Cortex-A76")).toBe("Cortex-A76");
+  });
+  it("counts uptime in its largest unit", () => {
+    expect(uptime(0, 6.5 * 86400 * 1000)).toBe("6 d");
+    expect(uptime(0, 3 * 3600 * 1000 + 5)).toBe("3 h");
+    expect(uptime(0, 12 * 60 * 1000)).toBe("12 min");
+  });
+  it("leaves out what the host does not say", () => {
+    const info = { cores: 16, memory_total: 32e9, booted_at: 0, model: "", cpu: "" };
+    expect(machineLine(info, 3600 * 1000)).toBe("16 threads · 32.0 GB");
+    expect(machineLine({ ...info, model: "ASRock B550M Pro4", cpu: "AMD Ryzen 7 5700G with Radeon Graphics", booted_at: 1 }, 2 * 86400 * 1000)).toBe(
+      "ASRock B550M Pro4 · AMD Ryzen 7 5700G, 16 threads · 32.0 GB · up 1 d",
+    );
   });
 });

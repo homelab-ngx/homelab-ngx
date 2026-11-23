@@ -13,6 +13,7 @@
   const id = $props.id();
   const stored = () => ({ ...settings.host });
   let draft = $state(untrack(stored));
+  const zones = Intl.supportedValuesOf("timeZone");
 </script>
 
 <HostCard
@@ -31,7 +32,10 @@
     </div>
     <div class="grid gap-1">
       <label for="{id}-tz" class="text-muted">Time zone</label>
-      <input id="{id}-tz" class="input" autocomplete="off" placeholder="UTC" bind:value={draft.timezone} />
+      <input id="{id}-tz" class="input" autocomplete="off" placeholder="UTC" list="{id}-zones" bind:value={draft.timezone} />
+      <datalist id="{id}-zones">
+        {#each zones as z (z)}<option value={z}></option>{/each}
+      </datalist>
     </div>
   </div>
 </HostCard>

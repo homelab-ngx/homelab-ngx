@@ -8,7 +8,7 @@
   import Pill, { type Tone } from "#lib/components/Pill.svelte";
   import { bytes } from "#lib/format.ts";
   import { LiveMetrics } from "#lib/live-metrics.svelte.ts";
-  import { byScope, CORE_HUE, latest, mood, PAIR_HUES, PARTS, stackHues, type Frames, type Line, type Mood, type Resource } from "#lib/metrics.ts";
+  import { byScope, CORE_HUE, latest, machineLine, mood, PAIR_HUES, PARTS, stackHues, type Frames, type Line, type Mood, type Resource } from "#lib/metrics.ts";
   import { stackTitles } from "#lib/stacks.ts";
   import { capacity } from "#lib/storage.ts";
 
@@ -65,6 +65,7 @@
 
   const cores = $derived(live.info?.cores ?? 0);
   const memTotal = $derived(live.info?.memory_total ?? 0);
+  const machine = $derived(live.info ? machineLine(live.info) : "");
   const cpuNow = $derived(latest(now.host.cpu));
   const memNow = $derived(latest(now.host.memory));
   const tempCpu = $derived(latest(now.temp_cpu));
@@ -127,6 +128,7 @@
       {/if}
     </div>
     {#if line}<p class="mt-0.5 text-muted">{line}</p>{/if}
+    {#if machine}<p class="mt-0.5 text-xs text-muted">{machine}</p>{/if}
   </div>
 </div>
 

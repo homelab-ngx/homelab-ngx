@@ -87,6 +87,13 @@
     <h2 id="host-h" class="label bg-sunken px-3 py-2">This host</h2>
     <ul class="divide-y divide-line border-t border-line">
       <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
+        {@render row("General", "/settings/general")}
+        <span class="min-w-0 grow truncate text-muted">
+          {#if host.data}{[host.data.host.hostname || "homelab", host.data.host.timezone || "UTC"].join(" · ")}{/if}
+        </span>
+        {@render go()}
+      </li>
+      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
         {@render row("Updates", "/settings/updates", true)}
         <span class="flex min-w-0 grow flex-wrap items-center gap-x-2">
           {#if updates}<Pill tone={updates.tone}>{updates.state}</Pill>{#if updates.detail}<span class="text-muted max-sm:hidden">{updates.detail}</span>{/if}{/if}

@@ -1,4 +1,4 @@
-/** Host settings (#96): the pure logic behind System Settings › Network. */
+/** Host settings (#96): the pure logic behind System Settings › General and › Network. */
 import { api, call, type Schema } from "./api/client.ts";
 
 export type HostSettings = Schema<"HostSettings">;
@@ -15,6 +15,7 @@ export const hostKeys = {
   settings: ["daemon", "host-settings"] as const,
   tailscale: ["daemon", "host-settings", "tailscale"] as const,
   tunnelLogin: ["daemon", "host-settings", "tunnel-login"] as const,
+  keyboardLayouts: ["daemon", "host-settings", "keyboard-layouts"] as const,
 };
 
 export const fetchHostSettings = () => call<HostSettings>(api.GET("/host-settings"));

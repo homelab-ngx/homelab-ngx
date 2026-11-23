@@ -4,6 +4,7 @@
  * chart lines, and the plain-words mood of the host.
  */
 import type { Schema } from "./api/client.ts";
+import { bytes } from "./format.ts";
 
 export type Frames = Schema<"MetricFrames">;
 export type Series = Schema<"MetricSeries">;
@@ -219,4 +220,30 @@ export function mood(f: Frames): { mood: Mood; waits?: Resource; share: number }
   if (mem >= 10 || io >= 25 || cpu >= 40) return { mood: "heavy", waits: worst, share };
   if (ratio >= 1) return { mood: "medium", waits: worst, share };
   return { mood: use >= 80 ? "medium" : use >= 10 ? "light" : "idle", share: use };
+}
+
+/** A processor's name without the maker's marks, clock speed and graphics. */
+export function cpuShort(name: string): string {
+  return name
+    .replace(/\((R|TM|tm)\)/g, "")
+    .replace(/\s+@\s*[\d.]+\s*GHz/i, "")
+    .replace(/\s+with\s+.*Graphics$/i, "")
+    .replace(/\s+\d+-Core Processor$/i, "")
+    .replace(/\s+CPU\b/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** How long since boot, in its largest unit: 6 d, 3 h, 12 min. */
+export function uptime(bootedAt: number, now = Date.now()): string {
+  const s = Math.max(0, now / 1000 - bootedAt);
+  if (s >= 86400) return `${Math.floor(s / 86400)} d`;
+  if (s >= 3600) return `${Math.floor(s / 3600)} h`;
+  return `${Math.floor(s / 60)} min`;
+}
+
+/** The machine in one line: model · processor, threads · memory · uptime. */
+export function machineLine(info: HostInfo, now = Date.now()): string {
+  const cpu = info.cpu ? `${cpuShort(info.cpu)}, ${info.cores} threads` : `${info.cores} threads`;
+  return [info.model, cpu, bytes(info.memory_total), info.booted_at ? `up ${uptime(info.booted_at, now)}` : ""].filter(Boolean).join(" · ");
 }
