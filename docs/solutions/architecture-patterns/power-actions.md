@@ -92,6 +92,18 @@ pool could be unmounted while a container still wrote to it.
   `expected_seconds` (120 before one was measured) with this boot's
   `boot_id`. The dashboard's power page counts down from it and knows the
   host is back when `boot_id` changes.
+- **An update that reboots now is one run on the power page.** The page
+  opens when the install starts. It follows the install through
+  `GET /system-updates/deploys`, then the shutdown. The install restarts
+  the core, so the daemon stops answering for a few seconds before the
+  reboot. That gap is not the host going down. The page starts the
+  countdown only after it has seen the install end `healthy` or the
+  shutdown begin (a phase other than `idle`). An install that goes back to
+  the version before starts no reboot, and the page says so.
+- **The power page opens before the daemon answers.** The request is sent
+  from outside the dialog that asked, and the page shows a refusal (a
+  409) itself. Once the host is back, the page loads the dashboard again in
+  full, so an update's new dashboard is the one that runs.
 
 ## Limits
 

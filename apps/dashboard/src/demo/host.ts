@@ -744,17 +744,27 @@ export function downloadImage(h: Host): Schema<"CoreDeploy"> {
   });
 }
 
-/** Flow 4, second half: the staged version goes into the free slot and waits for a reboot. */
-export function installImage(h: Host): Schema<"CoreDeploy"> {
+/**
+ * Flow 4, second half: the staged version goes into the free slot and waits
+ * for a reboot, or with reboot "now" the host reboots into it.
+ */
+export function installImage(h: Host, reboot = ""): Schema<"CoreDeploy"> {
   const v = h.image.available[0];
   if (!v) throw new DemoProblem(409, "nothing_staged", "No downloaded version is waiting.");
-  return deploy(h, "install", v, ["Update", "Restart", "Health check"], () => {
+  const d = deploy(h, "install", v, ["Update", "Restart", "Health check"], () => {
     h.image.available = [];
     h.image.core = { ...h.image.core, active: v, available: [], installed: [v, ...h.image.core.installed] };
     h.image.installed = [{ version: v, state: "pending", tries_left: 3 }, ...h.image.installed.filter((x) => x.state === "booted")];
     h.image.default = v;
     h.image.pending_reboot = true;
+    if (reboot !== "now") return;
+    d.phase = `Installed ${v}; rebooting`;
+    later(h, 500, () => power(h, "reboot", true, true));
   });
+  // The new core restarts the daemon: for a moment nothing answers.
+  const restart = h.now() + 1500;
+  later(h, 1500, () => (h.downUntil = Math.max(h.downUntil, restart + 2500)));
+  return d;
 }
 
 /** The demo's host restarts at once: the pending version is the booted one. */

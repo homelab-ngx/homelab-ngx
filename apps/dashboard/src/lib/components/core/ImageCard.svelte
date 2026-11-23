@@ -1,6 +1,8 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import { createMutation, useQueryClient } from "@tanstack/svelte-query";
+  import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { api, call, describe, type Schema } from "#lib/api/client.ts";
   import Help from "#lib/components/Help.svelte";
   import Modal from "#lib/components/Modal.svelte";
@@ -8,6 +10,8 @@
   import Disclosure from "#lib/components/Disclosure.svelte";
   import RowMenu from "#lib/components/RowMenu.svelte";
   import { ago } from "#lib/format.ts";
+  import { fetchPower, powerHref, powerKey } from "#lib/power.ts";
+  import { startInstall } from "#lib/power-start.svelte.ts";
   import { headline, runningVersion, updateOf, VERSION_STATE } from "./core.ts";
 
   interface Props {
@@ -37,9 +41,20 @@
   // Only a new image has a reboot to choose.
   const update = $derived(updateOf(image));
   const head = $derived(headline(image));
-  function install() {
+  async function install() {
     installing = false;
     const reboot = !update?.reboot || when === "later" ? "" : when === "now" ? "now" : at;
+    // Updating and rebooting now is one run, followed on the power page
+    // from the start. It needs the boot the run begins in.
+    if (reboot === "now" && update) {
+      const version = update.version;
+      const from = (await client.ensureQueryData({ queryKey: powerKey, queryFn: fetchPower }).catch(() => undefined))?.boot_id;
+      if (from) {
+        startInstall(from);
+        await goto(powerHref("reboot", from, page.url.pathname, { to: version, install: true, t: Date.now() }));
+        return;
+      }
+    }
     op.mutate(() => call(api.POST("/system-updates/image/release", { body: { reboot } })));
   }
   const boot = (version: string, mode: "once" | "default") => op.mutate(() => call(api.POST("/system-updates/image/boot", { body: { version, mode } })));

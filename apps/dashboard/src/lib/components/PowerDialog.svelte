@@ -2,16 +2,19 @@
   import { createQuery } from "@tanstack/svelte-query";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { api, call, describe } from "#lib/api/client.ts";
+  import { describe } from "#lib/api/client.ts";
   import { fetchStacks, keys } from "#lib/api/queries.ts";
   import Modal from "#lib/components/Modal.svelte";
   import { actionLabel, fetchPower, powerHref, powerKey, type PowerAction } from "#lib/power.ts";
+  import { startPower } from "#lib/power-start.svelte.ts";
 
   interface Props {
     action: PowerAction;
+    /** The version the host comes back on, when the reboot finishes an update. */
+    to?: string;
     onClose: () => void;
   }
-  let { action, onClose }: Props = $props();
+  let { action, to, onClose }: Props = $props();
 
   // Read when the dialog opens: what runs now is what a shutdown cuts off.
   const status = createQuery(() => ({ queryKey: powerKey, queryFn: fetchPower, staleTime: 0 }));
@@ -21,26 +24,20 @@
   /** Frozen stacks lose what they hold: they are thawed and stop cleanly, or killed. */
   const frozen = $derived(status.data?.frozen ?? []);
 
-  let error = $state("");
   let pending = $state(false);
 
+  // The page moves to the power page at once; that page shows the
+  // daemon's answer, a refusal included.
   /** thaw: frozen stacks stop cleanly; without it they are killed (force). */
-  async function confirm(thaw: boolean) {
+  function confirm(thaw: boolean) {
     const from = status.data?.boot_id;
-    if (!from) return;
+    if (!from || pending) return;
     // Built before onClose: closing unsets the action the parent passed.
-    const href = powerHref(action, from, page.url.pathname);
+    const href = powerHref(action, from, page.url.pathname, { to, t: Date.now() });
     pending = true;
-    error = "";
-    try {
-      const force = busy.length > 0 || (frozen.length > 0 && !thaw);
-      await call(api.POST("/system/power", { body: { action, force, thaw } }));
-      onClose();
-      await goto(href);
-    } catch (e) {
-      error = describe(e);
-      pending = false;
-    }
+    startPower(from, action, busy.length > 0 || (frozen.length > 0 && !thaw), thaw);
+    onClose();
+    void goto(href);
   }
 
   const label = $derived(actionLabel[action] + (busy.length > 0 ? " anyway" : ""));
@@ -74,7 +71,6 @@
           <p class="mt-1">Without a thaw they are killed and lose their memory.</p>
         </div>
       {/if}
-      {#if error}<p role="alert" class="rounded-md bg-bad-soft px-3 py-2 text-bad">{error}</p>{/if}
       {#if status.error}<p role="alert" class="rounded-md bg-bad-soft px-3 py-2 text-bad">{describe(status.error)}</p>{/if}
     </div>
   {/snippet}

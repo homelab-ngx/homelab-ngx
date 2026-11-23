@@ -72,6 +72,53 @@
   --color-bad-soft: var(--bad-soft);
 }
 
+/* The power page's motion (DESIGN.md, Power Screen). Each use is behind
+   motion-safe, so reduced motion keeps the page still. */
+@theme {
+  --animate-sheen: power-sheen 2.2s ease-in-out infinite;
+  --animate-run: power-run 1.4s ease-in-out infinite;
+  --animate-halo: power-halo 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
+  --animate-tick: power-tick 0.35s ease-out;
+
+  @keyframes power-sheen {
+    from {
+      transform: translateX(-100%);
+    }
+    to {
+      transform: translateX(300%);
+    }
+  }
+  @keyframes power-run {
+    from {
+      left: -40%;
+    }
+    to {
+      left: 100%;
+    }
+  }
+  @keyframes power-halo {
+    0% {
+      transform: scale(1);
+      opacity: 0.55;
+    }
+    80%,
+    100% {
+      transform: scale(2.4);
+      opacity: 0;
+    }
+  }
+  @keyframes power-tick {
+    from {
+      transform: scaleY(0.2);
+      opacity: 0;
+    }
+    to {
+      transform: none;
+      opacity: 1;
+    }
+  }
+}
+
 html,
 body {
   background: var(--bg);

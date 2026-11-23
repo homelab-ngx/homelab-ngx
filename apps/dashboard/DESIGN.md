@@ -280,8 +280,9 @@ A cool-gray neutral field with one teal accent, four semantic status hues each p
 - **Small** (400, 0.75rem, `text-xs`): pills, small buttons, timestamps, the one hint a section may have.
 - **Label** (500, 11px, 0.05em tracking, uppercase, muted, `.label`): table column headers, field labels and kind tags.
 - **Log** (mono, `font-mono text-xs` on a `pre`): log lines, build output, the stack editor. Nothing else.
+- **Display** (600, 2.25rem, tabular): the power screen's timer, and nothing else.
 
-Markup uses these names only: the body default, `text-xs`, `.label`, and `text-xl`, `text-lg` and `text-base` for the three heading roles. An arbitrary size (`text-[13px]`) fails the rules test. A row or a field shows at most two of these styles besides its pills; a name that needs weight is semibold, not another face.
+Markup uses these names only: the body default, `text-xs`, `.label`, and `text-xl`, `text-lg` and `text-base` for the three heading roles, plus `text-4xl` for the power screen's timer (the one Display figure). An arbitrary size (`text-[13px]`) fails the rules test. A row or a field shows at most two of these styles besides its pills; a name that needs weight is semibold, not another face.
 
 ### Named Rules
 **The One Family Rule.** Names, paths, revisions, addresses and field contents are set in Archivo like the words around them. `font-mono` is allowed on a `pre` element and in the log viewer and the stack editor; anywhere else it fails the rules test. (Decided with the operator on 2026-11-17, after Unraid's example: the mix of two faces on every row was the main source of visual noise.)
@@ -412,6 +413,18 @@ The Backups overview: one row per backup. The name is a link to the backup's pag
 
 ### Progress
 A running backup shows its progress where the state already is. In a ledger row it takes the place of the last-run line under the pill: a 6px, fully round bar (sunken track, accent fill that grows with the share copied) over one small muted tabular line ("media · 1.2 GB of 4.0 GB · 12 MB/s · 31%"; the folder name drops below 768px). On the backup's page the same bar sits in a bordered 6px box under the run's summary, led by a sentence naming the folder and the destination. Before the first folder starts there is no bar, only "Getting ready…". When the total is not known the fill is a quarter-width block that pulses. The block is a status region and the bar carries its value for a screen reader.
+
+### Power Screen (signature)
+The page a reboot, a poweroff, or an update that reboots goes to the moment it is confirmed, before the daemon answers. It stands alone: no header and no nav, since nothing else works while the host is away. One column at most 512px wide, set high on the page (48px down, 12% of the height from 640px), so it does not jump as rows arrive.
+
+- **Head:** the host name in small muted text, the headline in core ("Rebooting", "Updating", "Shutting down"), and for an update the versions ("0.2.5 → 0.2.6") in muted tabular figures.
+- **Timer:** the one Display figure in the dashboard (600, `text-4xl`, tabular, tight tracking) with a small muted label: "elapsed" while the daemon works, "left" while the host is away, "+0:20 over" past the countdown. The share in percent sits at the right in muted tabular text.
+- **Bar:** 8px, the one bar taller than 6px, because it carries the whole run. The fill only grows. It glides between readings and moves through each second of the countdown, so it never stands still. A soft light sheen crosses it while work is under way. It pulses when late, turns ok when the host is back and bad when the run stopped. The update, the stops, and the countdown each have a fixed share of it.
+- **Stage track:** the run's stages as 16px dots on a 2px line: a tick in accent (done), an accent ring around a dot with a halo that beats outward (under way), a hollow line-coloured ring (waiting), a cross in bad (failed). The line fills in accent up to each stage reached. Labels are one lowercase word in small text.
+- **Probe strip:** once a check has gone unanswered, one 4px tick per check, newest on the right: a full-height accent tick where the host answered, a low hollow tick where it did not, a full ok tick for the first answer from the new boot. It reads "no answer · 12 checks", then "answered".
+- **Steps:** a card below lists the update's steps, then the stacks and the mounts. Each row has the name, a 4px bar (empty, a block sliding across while it runs, full ok, full warn or bad), and the status pill. Rows slide in as the daemon reports them.
+
+Every animation is behind `motion-safe`; under reduced motion the bars jump, the halo, sheen and sliding blocks are gone, and a running step shows a half-tone full bar.
 
 ### Backup Page
 One backup, composed as a ledger row unfolded. A muted "Backups /" link line, then the name as h1 with the state pill, "Edit" and a primary "Run now" on the right. Then a card titled "Last 14 days" with the large run strip, the next run in 13px muted on the right, and a small "All runs" button that opens the full history in a wide dialog. Then the run on show, 20px down, headed "Latest run", "Run on 12 Nov" or "An earlier run": its pill and one muted summary line, an error alert when it failed, then a section for each destination with a table of folders (folder with its path in small mono, result pill, files sent, size sent, time taken; files and time drop below 640px), and a small "Show log lines" button that unfolds a sunken mono pane. Last, 32px down, "What this backup does" as two cards: what it copies, and where and when.

@@ -7,7 +7,7 @@
   import Shell from "#lib/components/Shell.svelte";
   import Installer from "#lib/components/installer/Installer.svelte";
   import SignIn from "#lib/components/SignIn.svelte";
-  import { api, call, type Schema } from "#lib/api/client.ts";
+  import { api, call, DEMO, type Schema } from "#lib/api/client.ts";
   import { session } from "#lib/auth.svelte.ts";
 
   let { children }: { children: Snippet } = $props();
@@ -48,6 +48,16 @@
     <!-- Not known yet. -->
   {:else if installer}
     <Installer initial={installer} />
+  {:else if ready && page.url.pathname === "/power"}
+    <!-- The power page stands alone: while the host is away no other page works. -->
+    <div class="flex min-h-dvh flex-col">
+      {#if DEMO}
+        <p class="bg-accent-soft px-4 py-1 text-center text-xs text-accent">Demo. Dummy data; reloading resets it.</p>
+      {/if}
+      <main class="mx-auto w-full max-w-lg flex-1 px-4 pt-12 pb-10 sm:pt-[12vh]">
+        {@render children()}
+      </main>
+    </div>
   {:else if ready}
     <Shell active={current(page.url.pathname)} nav={NAV} settings={SETTINGS} wide={wide(page.url.pathname)}>
       {@render children()}

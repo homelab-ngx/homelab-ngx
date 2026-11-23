@@ -159,6 +159,28 @@ describe("the demo's API", () => {
     expect([after.booted, after.pending_reboot]).toEqual(["0.2.6", false]);
   });
 
+  it("installs and reboots in one run, the daemon away for a moment as its core restarts", async () => {
+    const d = demo();
+    await d.post("/system-updates/image/download");
+    d.wait(7000);
+    const first = (await d.get<Schema<"PowerStatus">>("/system/power")).boot_id;
+    await d.post("/system-updates/image/release", { reboot: "now" });
+    d.wait(2000);
+    await expect(d.get("/system/power")).rejects.toThrow(TypeError);
+    d.wait(2100);
+    expect((await d.get<Schema<"CoreDeploy">[]>("/system-updates/deploys"))[0]!.result).toBe("running");
+    d.wait(500);
+    const done = (await d.get<Schema<"CoreDeploy">[]>("/system-updates/deploys"))[0]!;
+    expect([done.result, done.phase]).toEqual(["healthy", "Installed 0.2.6; rebooting"]);
+    d.wait(600);
+    expect((await d.get<Schema<"PowerStatus">>("/system/power")).phase).toBe("stopping_stacks");
+    d.wait(8000);
+    await expect(d.get("/system/power")).rejects.toThrow(TypeError);
+    d.wait(30_000);
+    expect((await d.get<Schema<"PowerStatus">>("/system/power")).boot_id).not.toBe(first);
+    expect((await d.get<Schema<"ImageStatus">>("/system-updates/image")).booted).toBe("0.2.6");
+  });
+
   it("asks to thaw a frozen stack before a reboot", async () => {
     const d = demo();
     const [first] = await d.get<Schema<"Stack">[]>("/stacks");

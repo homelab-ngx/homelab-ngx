@@ -7,6 +7,7 @@
   import { busyPoll, idlePoll } from "#lib/api/queries.ts";
   import DeployCard from "#lib/components/core/DeployCard.svelte";
   import ImageCard from "#lib/components/core/ImageCard.svelte";
+  import { pendingVersion } from "#lib/components/core/core.ts";
   import { fetchPower, powerKey } from "#lib/power.ts";
 
   const keys = {
@@ -92,4 +93,4 @@
   <p class="mt-5 text-muted">{describe(image.error)}</p>
 {/if}
 
-{#if confirmReboot}<PowerDialog action="reboot" onClose={() => (confirmReboot = false)} />{/if}
+{#if confirmReboot}<PowerDialog action="reboot" to={image.data ? pendingVersion(image.data) : undefined} onClose={() => (confirmReboot = false)} />{/if}
