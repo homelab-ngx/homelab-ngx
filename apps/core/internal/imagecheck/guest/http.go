@@ -12,6 +12,8 @@ import (
 	"net/http/cookiejar"
 	"strings"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 // DaemonSocket is the daemon's API socket in the guest.
@@ -52,6 +54,17 @@ func (g *Guest) API(ctx context.Context, method, path string, body any, header .
 	}
 	c := &http.Client{Transport: t, Timeout: g.Timeout}
 	return do(ctx, c, method, "http://daemon/api/"+strings.TrimPrefix(path, "/"), body, header)
+}
+
+// WebSocket opens a WebSocket to the daemon's /api/PATH over its socket.
+// The response is the refusal when the upgrade was refused.
+func (g *Guest) WebSocket(ctx context.Context, path string) (*websocket.Conn, *http.Response, error) {
+	t := &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			return g.Dial(ctx, "unix", DaemonSocket)
+		},
+	}
+	return websocket.Dial(ctx, "ws://daemon/api/"+strings.TrimPrefix(path, "/"), &websocket.DialOptions{HTTPClient: &http.Client{Transport: t}})
 }
 
 func do(ctx context.Context, c *http.Client, method, url string, body any, header []string) (Response, error) {

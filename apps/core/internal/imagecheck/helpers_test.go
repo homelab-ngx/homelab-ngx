@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -14,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/coder/websocket"
 
 	"homelab-ngx.com/core/internal/imagecheck/fixture"
 	"homelab-ngx.com/core/internal/imagecheck/guest"
@@ -1242,4 +1245,71 @@ func (s *S) diskID(path string) string {
 	t, err := fixture.ReadGPT(path)
 	s.dieIf(err, "read %s's partitions", filepath.Base(path))
 	return t.DiskID
+}
+
+// stackShell opens a root shell in stack site, from the CLI and over the
+// daemon's WebSocket, and checks that it runs in the container: /etc/NIXOS
+// is the stack's, never the host's.
+func (s *S) stackShell() bool {
+	s.t.Helper()
+	if !s.has("a stack shell", func() (bool, error) {
+		r, err := s.try(http.MethodGet, "stacks/site/shell", nil)
+		return err == nil && r.Status != http.StatusNotFound && r.Status != http.StatusMethodNotAllowed, err
+	}) {
+		return false
+	}
+	const probe = `test -e /etc/NIXOS && echo in-stack-$((6*7))`
+	if r := s.sh(`homelab stacks shell site -- sh -c '` + probe + `' </dev/null`); !strings.Contains(r.Stdout, "in-stack-42") {
+		s.die("homelab stacks shell did not run the command in the stack: exit %d, %q, %q", r.Code, r.Stdout, strings.TrimSpace(r.Stderr))
+	}
+
+	ctx, cancel := context.WithTimeout(bg(), 60*time.Second)
+	defer cancel()
+	conn, res, err := s.g.WebSocket(ctx, "stacks/site/shell")
+	if err != nil {
+		status := 0
+		if res != nil {
+			status = res.StatusCode
+		}
+		s.die("the stack shell's WebSocket did not open (HTTP %d): %v", status, err)
+	}
+	defer conn.CloseNow()
+	var seen strings.Builder
+	// until reads the terminal until want has been printed.
+	until := func(want string) {
+		s.t.Helper()
+		for !strings.Contains(seen.String(), want) {
+			_, b, err := conn.Read(ctx)
+			if err != nil {
+				s.die("the stack shell ended before it printed %q: %v; it printed %q", want, err, seen.String())
+			}
+			seen.Write(b)
+		}
+	}
+	send := func(typ websocket.MessageType, b string) {
+		s.t.Helper()
+		if err := conn.Write(ctx, typ, []byte(b)); err != nil {
+			s.die("write to the stack shell: %v", err)
+		}
+	}
+	send(websocket.MessageText, `{"type":"resize","cols":123,"rows":45}`)
+	// What is typed before the shell starts is lost, as it would be on a
+	// console: wait for the prompt (its title names user@host).
+	until("root@site")
+	send(websocket.MessageBinary, probe+"; stty size\r")
+	until("in-stack-42")
+	until("45 123")
+	send(websocket.MessageBinary, "exit\r")
+	for {
+		_, _, err := conn.Read(ctx)
+		if err == nil {
+			continue
+		}
+		var ce websocket.CloseError
+		if !errors.As(err, &ce) || ce.Reason != "The shell ended." {
+			s.die("the stack shell did not end with the shell: %v", err)
+		}
+		break
+	}
+	return true
 }

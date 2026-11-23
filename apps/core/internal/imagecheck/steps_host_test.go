@@ -315,6 +315,9 @@ func hostSteps(s *S) {
 		if s.stackFreeze() {
 			s.ok("stack site frozen with its processes kept, its route silent and the API answering; thawed, the same processes serve it")
 		}
+		if s.stackShell() {
+			s.ok("a root shell in stack site, from homelab stacks shell and over the daemon's WebSocket, follows a resize and ends with the shell")
+		}
 		s.stackLongName(pool)
 		s.poolLifecycle()
 	})
