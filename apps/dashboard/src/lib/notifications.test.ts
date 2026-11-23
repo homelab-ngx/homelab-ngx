@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { channelDraft, channelInput, channelProblem, channelState, channelWhere, type Channel } from "./notifications.ts";
+import { attention, channelDraft, channelInput, channelProblem, channelState, channelWhere, delivery, detail, failingOf, kindTone, openOf, type Channel, type Entry, type Snapshot } from "./notifications.ts";
 
 const ntfy: Channel = { id: 1, name: "Phone", kind: "ntfy", enabled: true, server: "https://ntfy.sh", topic: "homelab", has_token: false, created_at: "" };
 const hook: Channel = { id: 2, name: "Hub", kind: "webhook", enabled: false, url: "https://192.0.2.1:8788/homelab/notify", cert_sha256: "a".repeat(64), has_token: true, created_at: "" };
@@ -33,5 +33,40 @@ describe("channel rows", () => {
     expect(channelState(ntfy, true, undefined).label).toBe("failing");
     expect(channelState(hook, false, undefined).label).toBe("off");
     expect(channelState(hook, false, { ok: false, error: "x" }).label).toBe("test failed");
+  });
+});
+
+describe("the tray", () => {
+  const snap: Snapshot = {
+    history: [],
+    open: {
+      "backup:4": { count: 1, opened_at: "2026-11-23T10:00:00Z", title: "Backup failed" },
+      "disk:sdb:smart": { count: 2, opened_at: "2026-11-22T10:00:00Z", title: "sdb failing" },
+    },
+    failing_channels: { Phone: { since: "2026-11-23T09:00:00Z", error: "timeout" } },
+  } as Snapshot;
+
+  it("counts open problems and failing channels for the bell", () => {
+    expect(attention(snap)).toBe(3);
+    expect(attention(undefined)).toBe(0);
+  });
+  it("lists the oldest problem first", () => {
+    expect(openOf(snap).map((p) => p.key)).toEqual(["disk:sdb:smart", "backup:4"]);
+    expect(failingOf(snap).map((f) => f.name)).toEqual(["Phone"]);
+  });
+
+  const entry = (over: Partial<Entry>): Entry => ({ id: 1, at: "", body: "", deliveries: [], key: null, kind: "sent", severity: "info", title: "T", ...over });
+  it("marks a row by what happened", () => {
+    expect(kindTone(entry({ kind: "opened" }))).toBe("bad");
+    expect(kindTone(entry({ kind: "reminded" }))).toBe("warn");
+    expect(kindTone(entry({ kind: "resolved" }))).toBe("ok");
+    expect(kindTone(entry({ kind: "sent", severity: "alert" }))).toBe("warn");
+    expect(kindTone(entry({ kind: "sent" }))).toBe("idle");
+  });
+  it("says which channels failed and drops a repeated title", () => {
+    expect(delivery(entry({}))).toBe("not sent");
+    expect(delivery(entry({ deliveries: [{ channel: "Phone", ok: false }, { channel: "Hub", ok: true }] as Entry["deliveries"] }))).toBe("Phone failed");
+    expect(detail(entry({ title: "Disk", body: "Disk · 12 bad sectors\nmore" }))).toBe("12 bad sectors");
+    expect(detail(entry({ title: "Disk", body: "Disk" }))).toBe("");
   });
 });

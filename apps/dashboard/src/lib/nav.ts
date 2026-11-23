@@ -9,7 +9,6 @@ export const NAV: NavItem[] = [
   { label: "Stacks", href: "/stacks" },
   { label: "Storage", href: "/storage" },
   { label: "Backups", href: "/backups" },
-  { label: "Notifications", href: "/notifications" },
 ];
 
 export const SETTINGS: NavItem = { label: "System Settings", href: "/settings" };

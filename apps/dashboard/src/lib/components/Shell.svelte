@@ -1,15 +1,17 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
-  import { CircleQuestionMark, Settings } from "@lucide/svelte";
+  import { Bell, CircleQuestionMark, Settings } from "@lucide/svelte";
   import type { Snippet } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
-  import { DEMO } from "#lib/api/client.ts";
+  import { api, call, DEMO } from "#lib/api/client.ts";
   import { fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
   import { clock } from "#lib/clock.svelte.ts";
+  import NotificationsDialog from "#lib/components/NotificationsDialog.svelte";
   import { help, toggleHelp } from "#lib/help.svelte.ts";
   import { fetchHostSettings, hostKeys } from "#lib/host.ts";
   import type { NavItem } from "#lib/nav.ts";
+  import { attention, notificationKeys, type Snapshot } from "#lib/notifications.ts";
   import { fetchPower, powerHref, powerKey, underWay } from "#lib/power.ts";
 
   interface Props {
@@ -47,6 +49,15 @@
     toggleHelp();
   }
 
+  // The bell counts what needs attention on every page: open problems and failing channels.
+  const notes = createQuery(() => ({
+    queryKey: notificationKeys.snapshot,
+    queryFn: () => call<Snapshot>(api.GET("/notifications")),
+    refetchInterval: 30_000,
+  }));
+  const count = $derived(attention(notes.data));
+  let tray = $state(false);
+
   const pending = $derived((stacks.data ?? []).filter((s) => s.generation > 0 && s.update_state !== "up_to_date").length);
 </script>
 
@@ -78,6 +89,16 @@
       </div>
       <button
         type="button"
+        class="relative flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-accent aria-expanded:bg-accent-soft aria-expanded:text-accent"
+        aria-label={count > 0 ? `Notifications, ${count} need attention` : "Notifications"}
+        aria-expanded={tray}
+        onclick={() => (tray = !tray)}
+      >
+        <Bell class="size-4" aria-hidden="true" />
+        {#if count > 0}<span class="rounded-full bg-bad-soft px-1.5 text-xs text-bad" aria-hidden="true">{count}</span>{/if}
+      </button>
+      <button
+        type="button"
         class="relative flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-accent aria-pressed:bg-accent-soft aria-pressed:text-accent"
         aria-pressed={help.all}
         title="Show the help under every label (F1). A single label unfolds its own when clicked."
@@ -102,3 +123,5 @@
   </main>
   <footer class="px-4 py-4 text-center text-xs text-muted">homelab-ngx</footer>
 </div>
+
+{#if tray}<NotificationsDialog snapshot={notes.data} onClose={() => (tray = false)} />{/if}

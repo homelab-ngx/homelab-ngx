@@ -79,6 +79,17 @@
   --animate-run: power-run 1.4s ease-in-out infinite;
   --animate-halo: power-halo 1.8s cubic-bezier(0, 0, 0.2, 1) infinite;
   --animate-tick: power-tick 0.35s ease-out;
+  --animate-sheet-in: sheet-in 150ms ease-out;
+
+  /* The notification tray slides in from the right. */
+  @keyframes sheet-in {
+    from {
+      transform: translateX(100%);
+    }
+    to {
+      transform: translateX(0);
+    }
+  }
 
   @keyframes power-sheen {
     from {

@@ -204,3 +204,21 @@ func TestHTTPChannels(t *testing.T) {
 }
 
 func sha256Hex(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
+
+// A test message links to the channels' page in Settings.
+func TestChannelTestLinksToSettings(t *testing.T) {
+	t.Parallel()
+	ch, _ := newChannels(t)
+	ctx := context.Background()
+	hook, got := newHook(t, 200)
+	c, err := ch.Create(ctx, ChannelInput{Name: "hub", Kind: KindWebhook, URL: hook.URL, Token: testToken})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, err := ch.Test(ctx, c.ID, "https://homelab.example/"); err != nil || !res.OK {
+		t.Fatalf("test: %+v %v", res, err)
+	}
+	if len(*got) != 1 || (*got)[0].url != "https://homelab.example/settings/notifications" {
+		t.Fatalf("pushed %+v", *got)
+	}
+}

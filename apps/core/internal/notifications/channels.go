@@ -344,7 +344,7 @@ func (c *Channels) Test(ctx context.Context, id int64, linkBase string) (Channel
 	}
 	p := Payload{Title: "Test", Message: "A test from the homelab.", Severity: Info, SentAt: c.now().Unix()}
 	if linkBase != "" {
-		p.URL = strings.TrimRight(linkBase, "/") + "/notifications"
+		p.URL = strings.TrimRight(linkBase, "/") + "/settings/notifications"
 	}
 	if err := c.sender(row).Send(ctx, p); err != nil {
 		return ChannelTest{Error: err.Error()}, nil

@@ -78,3 +78,58 @@ export function channelState(c: Channel, failing: boolean, test: Schema<"Channel
   if (!c.enabled) return { tone: "idle", label: "off" };
   return failing ? { tone: "bad", label: "failing" } : { tone: "ok", label: "on" };
 }
+
+/** The snapshot: open problems and failing channels. The header's bell reads it on every page. */
+export type Snapshot = Schema<"NotificationsSnapshot">;
+export type Entry = Schema<"NotificationLogEntry">;
+
+export const notificationKeys = {
+  snapshot: ["daemon", "notifications"] as const,
+  log: ["daemon", "notifications", "log"] as const,
+};
+
+/** The history's page size. */
+export const LOG_PAGE = 50;
+
+/** The channels that fail to deliver, longest failing first. */
+export function failingOf(s: Snapshot | undefined) {
+  return Object.entries(s?.failing_channels ?? {})
+    .map(([name, f]) => ({ name, ...f }))
+    .sort((a, b) => a.since.localeCompare(b.since));
+}
+
+/** The open problems, oldest first. */
+export function openOf(s: Snapshot | undefined) {
+  return Object.entries(s?.open ?? {})
+    .map(([key, p]) => ({ key, ...p }))
+    .sort((a, b) => a.opened_at.localeCompare(b.opened_at));
+}
+
+/** What the bell counts: open problems and failing channels. */
+export function attention(s: Snapshot | undefined): number {
+  return Object.keys(s?.open ?? {}).length + Object.keys(s?.failing_channels ?? {}).length;
+}
+
+/** A history row's mark: a problem opening or coming back, its end, or a plain message. */
+export function kindTone(e: Entry): Tone {
+  if (e.kind === "resolved") return "ok";
+  if (e.kind === "sent") return e.severity === "alert" ? "warn" : "idle";
+  return e.kind === "reminded" ? "warn" : "bad";
+}
+
+/** What went wrong delivering an entry, or "" when every channel delivered. */
+export function delivery(e: Entry): string {
+  if (e.deliveries.length === 0) return "not sent";
+  return e.deliveries
+    .filter((d) => !d.ok)
+    .map((d) => `${d.channel} failed`)
+    .join(", ");
+}
+
+/** The body's first line, without a title it repeats. */
+export function detail(e: Entry): string {
+  const first = e.body.split("\n", 1)[0]?.trim() ?? "";
+  if (first === e.title) return "";
+  const prefix = `${e.title} · `;
+  return first.startsWith(prefix) ? first.slice(prefix.length) : first;
+}

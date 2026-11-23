@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { current, wide } from "./nav.ts";
+import { current, NAV, wide } from "./nav.ts";
 
 describe("current", () => {
   it("keeps the overview and the stacks apart", () => {
@@ -8,6 +8,10 @@ describe("current", () => {
     expect(current("/stacks/immich")).toBe("/stacks");
     expect(current("/stacks/immich/logs")).toBe("/stacks");
     expect(current("/settings/logs")).toBe("/settings");
+  });
+  it("has no Notifications page: the bell's tray and Settings hold it", () => {
+    expect(NAV.map((n) => n.href)).not.toContain("/notifications");
+    expect(current("/settings/notifications")).toBe("/settings");
   });
 });
 
