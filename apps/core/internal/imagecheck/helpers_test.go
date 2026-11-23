@@ -207,9 +207,10 @@ func (s *S) installedLogin(when string) {
 	if pw := s.out("getent shadow root | cut -d: -f2"); pw != "*" {
 		s.die("root has a password field of %q, not *", pw)
 	}
+	// sshd -T prints each setting once; OpenSSH 10 in CamelCase.
 	cfg := s.out("sshd -T")
-	for _, want := range []string{"authenticationmethods publickey", "passwordauthentication no", "kbdinteractiveauthentication no", "permitrootlogin without-password"} {
-		if !grep(`(?m)^`+want+`$`, cfg) {
+	for _, want := range []string{"AuthenticationMethods publickey", "PasswordAuthentication no", "KbdInteractiveAuthentication no", "PermitRootLogin (prohibit|without)-password"} {
+		if !grep(`(?mi)^`+want+`$`, cfg) {
 			s.die("sshd does not have %q", want)
 		}
 	}
