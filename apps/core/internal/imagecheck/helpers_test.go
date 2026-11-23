@@ -187,20 +187,35 @@ func (s *S) consoleUsers() (string, error) {
     echo "$(loginctl show-session "$s" -p Name --value) $(loginctl show-session "$s" -p TTY --value)"; done; true`)
 }
 
-// nologin: nobody is logged in on a console, as on an installed host.
-func (s *S) nologin(when string) {
+// installedLogin: an installed host logs root in on its screen and serial
+// port, as the stick does, and nothing else lets root in without a key: its
+// password matches nothing and sshd takes public keys only. A release from
+// before that asks for a login on the console, so nobody is logged in there.
+func (s *S) installedLogin(when string) {
 	s.t.Helper()
-	users, err := s.consoleUsers()
-	if err != nil {
-		s.die("could not list the logins on the consoles")
+	if !s.has("a console that logs root in on an installed host", s.probe("! grep -q /var/lib/homelab/installer /usr/lib/homelab/console-login")) {
+		users, err := s.consoleUsers()
+		if err != nil {
+			s.die("could not list the logins on the consoles")
+		}
+		if users != "" {
+			s.die("the installed host logs someone in on a console%s: %s", when, oneLine(users))
+		}
+		return
 	}
-	if users != "" {
-		s.die("the installed host logs someone in on a console%s: %s", when, oneLine(users))
+	s.autologin()
+	if pw := s.out("getent shadow root | cut -d: -f2"); pw != "*" {
+		s.die("root has a password field of %q, not *", pw)
+	}
+	cfg := s.out("sshd -T")
+	for _, want := range []string{"authenticationmethods publickey", "passwordauthentication no", "kbdinteractiveauthentication no", "permitrootlogin without-password"} {
+		if !grep(`(?m)^`+want+`$`, cfg) {
+			s.die("sshd does not have %q", want)
+		}
 	}
 }
 
-// autologin: root is logged in on the screen and on the serial port, as the
-// installer medium does.
+// autologin: root is logged in on the screen and on the serial port.
 func (s *S) autologin() {
 	s.t.Helper()
 	both := func() bool {

@@ -127,7 +127,10 @@ On Linux, step 2 with the stick at `/dev/sdX`:
 sudo dd if=homelab-ngx_VERSION.img of=/dev/sdX bs=4M conv=fsync status=progress
 ```
 
-`homelab auth reset` on the host removes a forgotten password.
+The host's own screen and keyboard give a root shell without a login. Root
+has no password, and SSH takes keys only: without a key there is no remote
+shell. `homelab auth reset` on the host removes a forgotten dashboard
+password.
 
 ## Coding agents on the host
 

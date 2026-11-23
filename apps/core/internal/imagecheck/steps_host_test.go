@@ -65,7 +65,7 @@ func hostSteps(s *S) {
 		if bAt(s.getJ("installer"), "active") {
 			s.die("the installed host runs the installer")
 		}
-		s.nologin("")
+		s.installedLogin("")
 		if h := s.out("cat /proc/sys/kernel/hostname"); h != "installed" {
 			s.die("the host name is %s, not the installer's", h)
 		}

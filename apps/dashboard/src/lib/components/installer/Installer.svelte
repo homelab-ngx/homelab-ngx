@@ -356,7 +356,7 @@
         </div>
         <div class="grid gap-1 sm:col-span-2">
           <label for="{id}-ssh" class="flex flex-wrap items-center gap-1 text-muted">
-            <Help label="SSH keys">Optional. Public keys that may log in as root over SSH, one per line; they can be changed later in Settings. Without one, the host has no shell login.</Help>
+            <Help label="SSH keys">Optional. Public keys that may log in as root over SSH, one per line; they can be changed later in Settings. Without one, only the host's own screen gives a shell.</Help>
           </label>
           <textarea id="{id}-ssh" class="input min-h-20" autocomplete="off" spellcheck="false" placeholder="ssh-ed25519 AAAA… user@laptop" bind:value={sshKeys}></textarea>
         </div>

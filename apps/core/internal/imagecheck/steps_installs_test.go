@@ -134,9 +134,9 @@ func underSteps(s *S) {
 		if b := s.out("ls /boot/EFI/Linux/ >/dev/null; findmnt -no SOURCE /boot"); !grep(`(?m)^/dev/vdb1$`, b) {
 			s.die("/boot is not the other disk's ESP: %s", s.out("findmnt -no SOURCE /boot"))
 		}
-		s.nologin(" with the stick in")
+		s.installedLogin(" with the stick in")
 		s.nofailed("")
-		s.ok("runs from its own disk and the other disk's ESP, the stick (%s) unused; nobody logged in on a console", s.stickName())
+		s.ok("runs from its own disk and the other disk's ESP, the stick (%s) unused", s.stickName())
 	})
 
 	s.Step(16, "the stick boots next to that install, installs over it and restarts into the new system", func() {
@@ -194,7 +194,7 @@ func underSteps(s *S) {
 		if h := s.out("cat /proc/sys/kernel/hostname"); h != "again" {
 			s.die("the host name is %s", h)
 		}
-		s.nologin(" with the stick in")
+		s.installedLogin(" with the stick in")
 		s.nofailed("")
 		s.ok("the stick (%s) ran from itself and offered the installed disk; after the install the page's restart brought up the new system from vda, the stick still in", name)
 	})
