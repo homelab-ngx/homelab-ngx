@@ -20,5 +20,5 @@ export function current(pathname: string): string {
   return [...NAV, SETTINGS].find((n) => n.href !== "/" && pathname.startsWith(n.href))?.href ?? "";
 }
 
-/** The pages that hold an editor take the whole width: a draft, and a stack's source code. */
-export const wide = (pathname: string) => /^\/stacks\/(drafts\/[^/]+|[^/]+\/source)\/?$/.test(pathname);
+/** The pages that hold an editor take the whole width: a draft, a stack's source code, and a host file. */
+export const wide = (pathname: string) => /^\/(stacks\/(drafts\/[^/]+|[^/]+\/source)|storage\/edit)\/?$/.test(pathname);

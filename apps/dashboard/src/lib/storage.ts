@@ -1,6 +1,7 @@
 /** The Storage page's logic: usable space, disk roles and health, folder use. */
 import type { Schema, Stack } from "./api/client.ts";
 import type { Tone } from "./components/Pill.svelte";
+import type { TreeRow } from "./drafts.ts";
 
 type Pool = Schema<"Pool">;
 type Disk = Schema<"Disk">;
@@ -141,6 +142,72 @@ export function measuredAt(folders: Subvolume[]): string | null {
 /** The file browser's address for a host folder. */
 export function browseHref(path: string): string {
   return `/storage/browse?path=${encodeURIComponent(path)}`;
+}
+
+/**
+ * The editor's address for a host file. root is the folder its file list
+ * starts at, when that is not the file's own folder.
+ */
+export function editHref(path: string, root?: string): string {
+  const q = new URLSearchParams({ path });
+  if (root && root !== parentOf(path)) q.set("root", root);
+  return `/storage/edit?${q}`;
+}
+
+/** The folder a host path is in. */
+export function parentOf(path: string): string {
+  const i = path.replace(/\/+$/, "").lastIndexOf("/");
+  return i <= 0 ? "/" : path.slice(0, i);
+}
+
+/** A host path inside dir; name may hold further folders. */
+export function joinPath(dir: string, name: string): string {
+  return `${dir === "/" ? "" : dir.replace(/\/+$/, "")}/${name}`;
+}
+
+/** path relative to dir, or null when it is not below dir. */
+export function relativeTo(dir: string, path: string): string | null {
+  const prefix = dir === "/" ? "/" : `${dir.replace(/\/+$/, "")}/`;
+  return path.startsWith(prefix) && path.length > prefix.length ? path.slice(prefix.length) : null;
+}
+
+/** The folders that lead to a relative path, outermost first: "a/b/c" gives "a" and "a/b". */
+export function ancestors(rel: string): string[] {
+  const parts = rel.split("/").slice(0, -1);
+  return parts.map((_, i) => parts.slice(0, i + 1).join("/"));
+}
+
+/**
+ * The host editor's file list: the folders read so far, under the one it
+ * starts at ("" in listings), folders first and each by name. An expanded
+ * folder that has been read shows what is in it. A symlink is listed as a
+ * file; a device or socket is left out.
+ */
+export function hostTree(listings: Record<string, Entry[]>, expanded: ReadonlySet<string>): TreeRow[] {
+  const rows: TreeRow[] = [];
+  const walk = (dir: string, depth: number) => {
+    const entries = (listings[dir] ?? []).filter((e) => e.type !== "other");
+    const byName = (a: Entry, b: Entry) => a.name.localeCompare(b.name);
+    const prefix = dir ? `${dir}/` : "";
+    for (const e of entries.filter((e) => e.type === "dir").sort(byName)) {
+      const path = prefix + e.name;
+      rows.push({ kind: "folder", path, name: e.name, depth });
+      if (expanded.has(path)) walk(path, depth + 1);
+    }
+    for (const e of entries.filter((e) => e.type !== "dir").sort(byName)) rows.push({ kind: "file", path: prefix + e.name, name: e.name, depth });
+  };
+  walk("", 0);
+  return rows;
+}
+
+/** Why a new file cannot be at rel in the host editor's folder; "" when it can. The daemon checks the rest. */
+export function hostPathProblem(rel: string, rows: TreeRow[]): string {
+  if (!rel) return "Give the file a name.";
+  if (rel.startsWith("/")) return "Leave out the leading /.";
+  const parts = rel.split("/");
+  if (parts.some((p) => p === "" || p === "." || p === "..")) return "No empty parts, ./ or ../.";
+  if (rows.some((r) => r.path === rel)) return `${rel} is already there.`;
+  return "";
 }
 
 export interface Crumb {

@@ -191,7 +191,7 @@ A file system that is not a pool, mounted by the daemon under `/var/mnt` by a na
 _Avoid_: volume, mount, drive
 
 **Browse root**:
-A folder the dashboard's file browser may list: a subvolume, a mounted partition, or a host folder bound into a stack. Above a browse root the browser shows only the folders that lead to one; nothing else on the host is listed.
+A folder the dashboard's file browser may list: a subvolume, a mounted partition, or a host folder bound into a stack. Above a browse root the browser shows only the folders that lead to one; nothing else on the host is listed. Inside one, a file can be edited and a file or folder deleted; a browse root itself is never deleted.
 _Avoid_: share, mount
 
 ### Alerting

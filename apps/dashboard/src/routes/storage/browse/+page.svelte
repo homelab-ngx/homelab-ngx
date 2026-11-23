@@ -4,8 +4,10 @@
   import { page } from "$app/state";
   import { api, call, describe, type Schema } from "#lib/api/client.ts";
   import Help from "#lib/components/Help.svelte";
+  import RowMenu from "#lib/components/RowMenu.svelte";
+  import DeleteEntryDialog from "#lib/components/storage/DeleteEntryDialog.svelte";
   import { ago, bytes, stamp } from "#lib/format.ts";
-  import { type BrowseKey, browseDefault, browseHref, browseRows, browseSort, crumbs } from "#lib/storage.ts";
+  import { type BrowseKey, type BrowseRow, browseDefault, browseHref, browseRows, browseSort, crumbs, editHref } from "#lib/storage.ts";
 
   type Listing = Schema<"Listing">;
   type FolderFigures = Schema<"FolderFigures">;
@@ -46,6 +48,8 @@
           : "No folder sizes on this disk",
   );
   const child = (name: string) => `${here === "/" ? "" : here}/${name}`;
+  /** The row whose delete dialog is open. */
+  let deleting = $state<BrowseRow | null>(null);
 </script>
 
 <svelte:head><title>{here} · Storage · Homelab-ngx</title></svelte:head>
@@ -53,7 +57,7 @@
 <a class="link text-xs" href="/storage">← Storage</a>
 <h1 class="mt-2 text-xl font-semibold">
   <Help label="Files">
-    A read-only look inside the subvolumes and the stacks' folders. Above those folders only the way down to them is listed.
+    The subvolumes and the stacks' folders. A file opens in the editor. Above those folders only the way down to them is listed.
   </Help>
 </h1>
 
@@ -100,6 +104,7 @@
             {/if}
             {@render th("modified", "Modified", "max-md:hidden")}
             {@render th("owner", "Owner", "max-lg:hidden")}
+            <th scope="col" class="w-0 px-3 py-2"><span class="sr-only">Actions</span></th>
           {/if}
         </tr>
       </thead>
@@ -119,7 +124,11 @@
                     <File class="mt-0.5 size-4 shrink-0 text-muted" aria-hidden="true" />
                   {/if}
                   <span class="[overflow-wrap:anywhere]">
-                    {r.name}
+                    {#if r.type === "file" && !above}
+                      <a class="link" href={editHref(child(r.name))}>{r.name}</a>
+                    {:else}
+                      {r.name}
+                    {/if}
                     {#if r.type === "symlink"}<span class="text-xs text-muted">link</span>{/if}
                   </span>
                 {/if}
@@ -147,16 +156,23 @@
                 <span class="whitespace-nowrap">{r.owner}:{r.group}</span>
                 <span class="ml-1 text-xs text-muted">{r.mode}</span>
               </td>
+              <td class="px-3 py-1 text-right">
+                <RowMenu name={r.name} items={[{ label: "Delete…", danger: true, onSelect: () => (deleting = r) }]} />
+              </td>
             {/if}
           </tr>
         {:else}
-          <tr><td colspan="6" class="px-3 py-3 text-muted">This folder is empty.</td></tr>
+          <tr><td colspan="7" class="px-3 py-3 text-muted">This folder is empty.</td></tr>
         {/each}
       </tbody>
     </table>
   </div>
 {:else}
   <p class="mt-4 text-muted">Reading the folder…</p>
+{/if}
+
+{#if deleting}
+  <DeleteEntryDialog path={child(deleting.name)} type={deleting.type} freed={deleting.usage?.exclusive ?? (deleting.type === "file" ? deleting.disk_bytes : null)} onClose={() => (deleting = null)} />
 {/if}
 
 {#snippet th(key: BrowseKey, label: string, cls = "")}

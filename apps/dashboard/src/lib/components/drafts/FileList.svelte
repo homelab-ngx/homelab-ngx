@@ -1,11 +1,23 @@
 <script lang="ts">
-  import { FilePlus } from "@lucide/svelte";
+  import { ChevronDown, ChevronRight, FilePlus } from "@lucide/svelte";
   import RowMenu from "#lib/components/RowMenu.svelte";
-  import { fileTree, pathProblem, REQUIRED, type Buffer } from "#lib/drafts.ts";
+  import { fileTree, pathProblem, REQUIRED, type Buffer, type TreeRow } from "#lib/drafts.ts";
 
   interface Props {
     /** The editor's files. */
-    buffer: Buffer;
+    buffer?: Buffer;
+    /**
+     * The rows to list instead of the buffer's: a tree read one folder at a
+     * time. Its folders open and close through onToggle.
+     */
+    rows?: TreeRow[];
+    /** The open folders of rows. */
+    expanded?: ReadonlySet<string>;
+    onToggle?: (folder: string) => void;
+    /** Why a new file cannot be at path; the buffer's checks by default. */
+    problemOf?: (path: string) => string;
+    /** Files without a Row Menu. */
+    required?: string[];
     /** The file the editor shows. */
     open: string;
     /** The paths with unsaved changes. */
@@ -18,9 +30,23 @@
     onRename?: (from: string, to: string) => void;
     onDelete?: (path: string) => void;
   }
-  let { buffer, open, changed, readonly = false, onOpen, onNew, onRename, onDelete }: Props = $props();
+  let {
+    buffer = {},
+    rows: given,
+    expanded,
+    onToggle,
+    problemOf,
+    required = REQUIRED,
+    open,
+    changed,
+    readonly = false,
+    onOpen,
+    onNew,
+    onRename,
+    onDelete,
+  }: Props = $props();
 
-  const rows = $derived(fileTree(Object.keys(buffer)));
+  const rows = $derived(given ?? fileTree(Object.keys(buffer)));
 
   /** The name being typed: a new file, or a file's new name. */
   let naming = $state<{ from: string | null; path: string } | null>(null);
@@ -29,7 +55,11 @@
     const { [naming.from]: _, ...rest } = buffer;
     return rest;
   });
-  const problem = $derived(naming && naming.path !== naming.from ? pathProblem(naming.path.trim(), others) : "");
+  const problem = $derived.by(() => {
+    if (!naming || naming.path === naming.from) return "";
+    const path = naming.path.trim();
+    return problemOf ? problemOf(path) : pathProblem(path, others);
+  });
 
   function startNew() {
     const dir = open.includes("/") ? open.slice(0, open.lastIndexOf("/") + 1) : "";
@@ -93,7 +123,26 @@
     {/if}
     {#each rows as row (row.kind + row.path)}
       <li>
-        {#if row.kind === "folder"}
+        {#if row.kind === "folder" && onToggle}
+          {@const on = expanded?.has(row.path) ?? false}
+          <div class="group flex items-center text-muted hover:bg-sunken hover:text-fg">
+            <button
+              type="button"
+              class="flex min-w-0 flex-1 items-center gap-1 py-0.5 pr-1 text-left"
+              style="padding-left: {0.75 + row.depth * 0.75}rem"
+              aria-expanded={on}
+              onclick={() => onToggle(row.path)}
+            >
+              {#if on}<ChevronDown class="size-3 shrink-0" aria-hidden="true" />{:else}<ChevronRight class="size-3 shrink-0" aria-hidden="true" />{/if}
+              <span class="truncate">{row.name}/</span>
+            </button>
+            {#if !readonly && onDelete}
+              <span class="shrink-0 pr-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+                <RowMenu name={row.path} items={[{ label: "Delete…", danger: true, onSelect: () => onDelete(row.path) }]} />
+              </span>
+            {/if}
+          </div>
+        {:else if row.kind === "folder"}
           <div class="truncate px-3 py-0.5 text-muted" style="padding-left: {0.75 + row.depth * 0.75}rem">{row.name}/</div>
         {:else if naming?.from === row.path}
           {@render nameField(`New path of ${row.path}`)}
@@ -102,19 +151,20 @@
             <button
               type="button"
               class="min-w-0 flex-1 truncate py-0.5 pr-1 text-left"
-              style="padding-left: {0.75 + row.depth * 0.75}rem"
+              style="padding-left: {0.75 + row.depth * 0.75 + (onToggle ? 1 : 0)}rem"
               aria-current={open === row.path ? "page" : undefined}
               onclick={() => onOpen(row.path)}
             >
               {row.name}{#if changed.includes(row.path)}<span class="ml-1 text-accent" aria-label="(changed)">•</span>{/if}
             </button>
-            {#if !readonly && !REQUIRED.includes(row.path)}
+            {#if !readonly && !required.includes(row.path)}
               <span class="shrink-0 pr-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
                 <RowMenu
                   name={row.path}
                   items={[
-                    ...(buffer[row.path] !== null ? [{ label: "Rename…", onSelect: () => (naming = { from: row.path, path: row.path }) }] : []),
-                    { label: "Delete", danger: true, onSelect: () => onDelete?.(row.path) },
+                    ...(onRename && buffer[row.path] !== null ? [{ label: "Rename…", onSelect: () => (naming = { from: row.path, path: row.path }) }] : []),
+                    // Without a buffer the file goes from disk, so a dialog asks first.
+                    { label: given ? "Delete…" : "Delete", danger: true, onSelect: () => onDelete?.(row.path) },
                   ]}
                 />
               </span>

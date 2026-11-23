@@ -15,6 +15,8 @@ describe("wide", () => {
   it("is a draft's editor and a stack's source code, nothing else", () => {
     expect(wide("/stacks/drafts/mine")).toBe(true);
     expect(wide("/stacks/immich/source")).toBe(true);
+    expect(wide("/storage/edit")).toBe(true);
+    expect(wide("/storage/browse")).toBe(false);
     expect(wide("/stacks/immich")).toBe(false);
     expect(wide("/stacks/immich/logs")).toBe(false);
     expect(wide("/stacks")).toBe(false);

@@ -112,6 +112,7 @@ const TREE: Record<string, [name: string, type: "dir" | "file", size: number][]>
     ["archive", "dir", 38 * GB],
     ["consume", "dir", 0],
     ["export-2026.zip", "file", 3 * GB],
+    ["paperless.conf", "file", 61],
   ],
   "/scratch": [["restore-test", "dir", 220 * GB]],
 };
@@ -297,6 +298,12 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
   "/stacks/{name}/files": (h, c) => filesOf(stackOf(h, c.path.name!)),
   "/storage": (h) => h.storage,
   "/storage/browse": (h, c) => listing(h, c.query.get("path") ?? "/"),
+  "/storage/file": (h, c) => {
+    const path = c.query.get("path") ?? "";
+    const content = "PAPERLESS_OCR_LANGUAGE=eng\nPAPERLESS_TIME_ZONE=Europe/Berlin\n";
+    const text = path.endsWith(".conf") || path.endsWith(".txt");
+    return { path, root: POOL, size: text ? content.length : 3 * GB, modified_at: iso(h.now() - 3 * DAY), version: "demo", binary: !text, content: text ? content : undefined };
+  },
   "/storage/browse/usage": (h, c) => ({
     available: true,
     measured_at: iso(h.now() - 60 * MIN),

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Schema, Stack } from "./api/client.ts";
-import { browseDefault, browseHref, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, folderName, folderSuggestions, foldersOf, pathParts, trimSlash, maxCopies, measuredAt, removal, removeBlocked, role, running, segments, systemDisk, tiering, usedBy, withContents } from "./storage.ts";
+import { ancestors, browseDefault, browseHref, editHref, hostPathProblem, hostTree, joinPath, parentOf, relativeTo, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, folderName, folderSuggestions, foldersOf, pathParts, trimSlash, maxCopies, measuredAt, removal, removeBlocked, role, running, segments, systemDisk, tiering, usedBy, withContents } from "./storage.ts";
 
 type Pool = Schema<"Pool">;
 type Disk = Schema<"Disk">;
@@ -264,5 +264,50 @@ describe("path completion", () => {
     expect(trimSlash("/var/mnt/pool")).toBe("/var/mnt/pool");
     expect(trimSlash("/")).toBe("/");
     expect(trimSlash("")).toBe("");
+  });
+});
+
+describe("the host editor", () => {
+  type Entry = Schema<"Entry">;
+  const entry = (name: string, type: Entry["type"]): Entry => ({ name, type, size: 0, disk_bytes: 0, modified_at: "2026-11-17T10:00:00Z", mode: "", owner: "root", group: "root" });
+
+  it("opens a file with its own folder as the list, or below a root it names", () => {
+    expect(editHref("/srv/app/conf/a.yml")).toBe("/storage/edit?path=%2Fsrv%2Fapp%2Fconf%2Fa.yml");
+    expect(editHref("/srv/app/conf/a.yml", "/srv/app/conf")).toBe("/storage/edit?path=%2Fsrv%2Fapp%2Fconf%2Fa.yml");
+    expect(editHref("/srv/app/conf/a.yml", "/srv/app")).toBe("/storage/edit?path=%2Fsrv%2Fapp%2Fconf%2Fa.yml&root=%2Fsrv%2Fapp");
+  });
+
+  it("walks host paths", () => {
+    expect(parentOf("/srv/app/a.yml")).toBe("/srv/app");
+    expect(parentOf("/a")).toBe("/");
+    expect(joinPath("/", "a")).toBe("/a");
+    expect(joinPath("/srv/", "a/b")).toBe("/srv/a/b");
+    expect(relativeTo("/srv", "/srv/a/b")).toBe("a/b");
+    expect(relativeTo("/srv", "/srv")).toBeNull();
+    expect(relativeTo("/srv", "/srvx/a")).toBeNull();
+    expect(relativeTo("/", "/a")).toBe("a");
+    expect(ancestors("a/b/c.txt")).toEqual(["a", "a/b"]);
+    expect(ancestors("c.txt")).toEqual([]);
+  });
+
+  it("lists folders first and shows only the open ones' insides", () => {
+    const listings = {
+      "": [entry("z.conf", "file"), entry("data", "dir"), entry("cache", "dir"), entry("sock", "other"), entry("link", "symlink")],
+      data: [entry("db.sqlite", "file")],
+      cache: [entry("x", "file")],
+    };
+    const rows = hostTree(listings, new Set(["data"]));
+    expect(rows.map((r) => `${r.kind}:${r.path}:${r.depth}`)).toEqual(["folder:cache:0", "folder:data:0", "file:data/db.sqlite:1", "file:link:0", "file:z.conf:0"]);
+    // An open folder not read yet shows nothing under it.
+    expect(hostTree({ "": [entry("data", "dir")] }, new Set(["data"])).length).toBe(1);
+  });
+
+  it("checks a new file's name", () => {
+    const rows = hostTree({ "": [entry("a.conf", "file"), entry("data", "dir")] }, new Set());
+    expect(hostPathProblem("", rows)).toBe("Give the file a name.");
+    expect(hostPathProblem("/etc/x", rows)).toBe("Leave out the leading /.");
+    expect(hostPathProblem("../x", rows)).toBe("No empty parts, ./ or ../.");
+    expect(hostPathProblem("a.conf", rows)).toBe("a.conf is already there.");
+    expect(hostPathProblem("data/new.conf", rows)).toBe("");
   });
 });
