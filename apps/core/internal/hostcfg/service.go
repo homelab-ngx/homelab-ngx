@@ -104,6 +104,11 @@ type Service struct {
 	tailscaleLogin loginJob
 	tunnelLogin    loginJob
 	ddns           *ddnsLoop
+
+	// addrs are the wired interfaces' IPv4 addresses, and inferEvery how
+	// often InferLAN looks for one; variables for tests.
+	addrs      func() []string
+	inferEvery time.Duration
 }
 
 // SetRunner gives the service the runner its logins use.
@@ -113,7 +118,7 @@ func (s *Service) SetRunner(r cmdrunner.Runner) { s.run = r }
 // managed is ManagedNixOS shows nix and refuses changes; apply may be nil
 // there.
 func New(st *store.Store, keyFile string, managed Managed, nix *config.Nix, apply Applier, log *slog.Logger) *Service {
-	return &Service{st: st, keyFile: keyFile, managed: managed, nix: nix, apply: apply, log: log, now: time.Now, tzdir: "/usr/share/zoneinfo", xkbRules: xkbRules, kbdMap: kbdModelMap, ddns: newDDNSLoop()}
+	return &Service{st: st, keyFile: keyFile, managed: managed, nix: nix, apply: apply, log: log, now: time.Now, tzdir: "/usr/share/zoneinfo", xkbRules: xkbRules, kbdMap: kbdModelMap, ddns: newDDNSLoop(), addrs: wiredAddrs, inferEvery: 5 * time.Second}
 }
 
 // Detect tells an image host from a NixOS one by its os-release.
@@ -871,7 +876,13 @@ func (s *Service) AdoptInstall(ctx context.Context, path string) bool {
 		return false
 	}
 	if in.IPv4.Mode == "static" {
-		if _, err := s.SetNetwork(ctx, Network{IPv4: in.IPv4}); err != nil {
+		// The LAN is the /24 of the static address, as InferLAN gives a
+		// host on DHCP.
+		var lan []string
+		if l, ok := lanOf(in.IPv4.Address); ok {
+			lan = []string{l}
+		}
+		if _, err := s.SetNetwork(ctx, Network{LAN: lan, IPv4: in.IPv4}); err != nil {
 			s.log.Warn("the installer's network was not taken", "error", err)
 		}
 	}

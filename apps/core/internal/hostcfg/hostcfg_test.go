@@ -11,8 +11,10 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 
@@ -598,5 +600,61 @@ func TestReadTimeSync(t *testing.T) {
 	f.On("timedatectl").Reply("no\n")
 	if got := readTimeSync(context.Background(), f); got != (TimeSync{}) {
 		t.Errorf("not synced: %+v", got)
+	}
+}
+
+func TestLANOf(t *testing.T) {
+	t.Parallel()
+	for in, want := range map[string]string{
+		"192.0.2.37": "192.0.2.0/24", "10.1.2.3/16": "10.1.2.0/24", "169.254.1.1": "", "127.0.0.1": "", "fd00::1": "", "x": "",
+	} {
+		if got, _ := lanOf(in); got != want {
+			t.Errorf("lanOf(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestAFreshHostTakesItsLANFromItsAddress(t *testing.T) {
+	t.Parallel()
+	s, _, rec := newService(t)
+	ctx := context.Background()
+	var mu sync.Mutex
+	addrs := []string{}
+	s.addrs = func() []string { mu.Lock(); defer mu.Unlock(); return slices.Clone(addrs) }
+	s.inferEvery = time.Millisecond
+	// DHCP has no address yet: the first tries wait, and a link-local
+	// address is no LAN.
+	done := make(chan struct{})
+	go func() { s.InferLAN(ctx); close(done) }()
+	time.Sleep(20 * time.Millisecond)
+	mu.Lock()
+	addrs = []string{"169.254.3.4", "192.168.1.20"}
+	mu.Unlock()
+	<-done
+	got, _ := s.Get(ctx)
+	if !slices.Equal(got.Network.LAN, []string{"192.168.1.0/24"}) || got.Network.IPv4.Mode != "dhcp" || len(rec.got) != 1 {
+		t.Fatalf("network = %+v, applied %d times", got.Network, len(rec.got))
+	}
+	// A LAN the operator cleared stays cleared.
+	if _, err := s.SetNetwork(ctx, Network{}); err != nil {
+		t.Fatal(err)
+	}
+	s.InferLAN(ctx)
+	if got, _ := s.Get(ctx); len(got.Network.LAN) != 0 {
+		t.Errorf("LAN set again: %v", got.Network.LAN)
+	}
+}
+
+func TestAStaticInstallTakesItsLANFromItsAddress(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newService(t)
+	ctx := context.Background()
+	file := filepath.Join(t.TempDir(), "install.json")
+	_ = os.WriteFile(file, []byte(`{"hostname":"box","ipv4":{"mode":"static","address":"10.0.5.9/16","gateway":"10.0.0.1"}}`), 0o644)
+	if !s.AdoptInstall(ctx, file) {
+		t.Fatal("not adopted")
+	}
+	if got, _ := s.Get(ctx); !slices.Equal(got.Network.LAN, []string{"10.0.5.0/24"}) {
+		t.Errorf("LAN = %v", got.Network.LAN)
 	}
 }

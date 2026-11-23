@@ -249,10 +249,12 @@ func run(configPath string) error {
 	// table and the transient host name are gone after a reboot.
 	// On an installed host's first start the installer's host name becomes
 	// its setting (and is applied); every start after, the settings apply.
+	// A host whose network was never set takes its LAN from its address.
 	g.Go(func() error {
 		if !hostSvc.AdoptInstall(gctx, installer.SetupFile) {
 			hostSvc.Apply(gctx)
 		}
+		hostSvc.InferLAN(gctx)
 		return nil
 	})
 	// Dynamic DNS, while it is on: the record follows the public address.

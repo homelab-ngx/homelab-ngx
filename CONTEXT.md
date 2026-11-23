@@ -57,7 +57,7 @@ The icon a version 9 manifest names for the stack (`icon`) or for one of its ser
 _Avoid_: logo, avatar
 
 **Address variable**:
-A stack variable of kind `address` (version 8): IPv4 addresses or CIDRs the operator gives, and the words `lan`, `vpn` and `tailnet` for the host's LAN, its VPN's subnet and the tailnet, resolved at each start. An egress destination or a port grant's client written `$NAME` opens to them, so the repo names no LAN address. Setting it is the approval.
+A stack variable of kind `address` (version 8): IPv4 addresses or CIDRs the operator gives, and the words `lan`, `vpn` and `tailnet` for the host's LAN, its VPN's subnet and the tailnet, resolved at each start and again when the host's networks change. An egress destination or a port grant's client written `$NAME` opens to them, so the repo names no LAN address. Setting it is the approval.
 _Avoid_: host variable, IP setting
 
 **Grant**:
