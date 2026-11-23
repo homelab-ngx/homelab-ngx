@@ -92,6 +92,10 @@ _Avoid_: extra grant, custom path, volume
 The daemon's second API, on TCP 7781, which a stack reaches at its host address (`10.99.N.1`), serving only read and control operations to a stack whose token, source address and scope check out.
 _Avoid_: public API, stack API server
 
+**Stack shell**:
+Root's login shell in a running stack's container, opened by `homelab stacks shell <stack>` or the stack page's Shell window. Root there is an unprivileged uid range on the host. Operator only: no grant reaches it, and a stopped or frozen stack refuses it.
+_Avoid_: console (the host's own screen), terminal, exec
+
 **Stack unit**:
 A service unit inside a stack, listed on the host as `<stack>-<unit>` (`players-plex`), with start, stop, restart and logs going into the stack.
 _Avoid_: managed service
