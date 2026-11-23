@@ -10,13 +10,14 @@ import (
 	"github.com/urfave/cli/v2"
 
 	"homelab-ngx.com/core/internal/power"
+	"homelab-ngx.com/core/internal/powerprofile"
 )
 
-// systemCmd reboots and powers off the host.
+// systemCmd reboots and powers off the host, and sets its power profile.
 func systemCmd() *cli.Command {
 	return &cli.Command{
 		Name:  "system",
-		Usage: "Reboot or power off the host",
+		Usage: "Reboot or power off the host, or set its power profile",
 		Subcommands: []*cli.Command{
 			powerCmd(power.Reboot, "Stop the stacks, unmount the pools, then reboot", nil),
 			powerCmd(power.PowerOff, "Stop the stacks, unmount the pools, then power off", []string{"shutdown"}),
@@ -35,6 +36,7 @@ func systemCmd() *cli.Command {
 					return nil
 				},
 			},
+			profileCmd(),
 			{
 				Name:  "cancel",
 				Usage: "Call off the scheduled reboot or poweroff",
@@ -211,4 +213,96 @@ func stepText(s power.PowerStep) string {
 		return "… " + doing + what
 	}
 	return "· " + what
+}
+
+// profileCmd shows and sets the power profile.
+func profileCmd() *cli.Command {
+	return &cli.Command{
+		Name:  "profile",
+		Usage: "Show the power profile, how deep the host idles and what keeps it awake",
+		Action: func(c *cli.Context) error {
+			st, err := call[powerprofile.PowerProfileStatus](c.Context, http.MethodGet, "/system/power-profile", nil)
+			if err != nil {
+				return err
+			}
+			if jsonFlag(c) {
+				return printJSON(st)
+			}
+			printProfile(*st)
+			return nil
+		},
+		Subcommands: []*cli.Command{{
+			Name:      "set",
+			Usage:     "Choose power-saver, balanced or performance (flags go before the profile)",
+			ArgsUsage: "<power-saver|balanced|performance>",
+			Flags: []cli.Flag{
+				&cli.StringFlag{Name: "governor", Usage: "a CPU governor of the driver's, or default for the profile's own"},
+			},
+			Action: func(c *cli.Context) error {
+				if c.NArg() != 1 {
+					return fmt.Errorf("usage: homelab system profile set [--governor NAME] <power-saver|balanced|performance>")
+				}
+				in := powerprofile.PowerProfileSettings{Profile: powerprofile.PowerProfile(c.Args().First())}
+				if g := c.String("governor"); g != "default" {
+					in.Governor = g
+				}
+				st, err := call[powerprofile.PowerProfileStatus](c.Context, http.MethodPut, "/system/power-profile", in)
+				if err != nil {
+					return err
+				}
+				if jsonFlag(c) {
+					return printJSON(st)
+				}
+				printProfile(*st)
+				return nil
+			},
+		}},
+	}
+}
+
+func printProfile(st powerprofile.PowerProfileStatus) {
+	gov := st.Governor
+	if gov == "" {
+		gov = "the profile's"
+	}
+	fmt.Printf("profile:  %s\n", st.Profile)
+	if st.Driver != "" {
+		fmt.Printf("governor: %s (%s; %s)\n", gov, st.Driver, strings.Join(st.Governors, ", "))
+	}
+	if st.ReadOnly {
+		fmt.Println("read only: the host is not on the image")
+	}
+	idle := st.Idle
+	line := fmt.Sprintf("idle:     %.0f%% over %.0f s", 100*(1-idle.Active), idle.WindowSeconds)
+	if idle.Deepest != "" {
+		line += ", deepest package state " + idle.Deepest
+	}
+	if idle.Watts != nil {
+		line += fmt.Sprintf(", %.1f W", *idle.Watts)
+	}
+	fmt.Println(line)
+	for _, s := range idle.CPUStates {
+		fmt.Printf("  %-10s %5.1f%%\n", s.Name, 100*s.Share)
+	}
+	for _, s := range idle.PackageStates {
+		fmt.Printf("  %-10s %5.1f%%\n", s.Name, 100*s.Share)
+	}
+	for _, t := range st.Tunables {
+		v := t.Value
+		if v == "" {
+			v = "boot value"
+		}
+		line := fmt.Sprintf("  %-16s %-11s %s", t.Name, t.State, v)
+		if t.Refused > 0 {
+			line += fmt.Sprintf(" (%d of %d refused)", t.Refused, t.Files)
+		}
+		if t.Detail != "" {
+			line += ": " + t.Detail
+		}
+		fmt.Println(line)
+	}
+	for _, b := range st.Blockers {
+		name := strings.TrimSpace(strings.Join([]string{b.ID, b.Driver, b.Name}, " "))
+		fmt.Printf("awake: %s %s (%s); %s turns it off\n", b.Device, name, b.Kind, b.Fix)
+	}
 }

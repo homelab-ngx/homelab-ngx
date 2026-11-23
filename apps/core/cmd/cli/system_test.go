@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"homelab-ngx.com/core/internal/power"
+	"homelab-ngx.com/core/internal/powerprofile"
 )
 
 func TestRebootAsksForConfirmation(t *testing.T) {
@@ -109,5 +110,31 @@ func TestStepText(t *testing.T) {
 		if got := stepText(tt.s); got != tt.want {
 			t.Errorf("stepText(%+v) = %q, want %q", tt.s, got, tt.want)
 		}
+	}
+}
+
+func TestProfileSetSendsTheProfileAndGovernor(t *testing.T) {
+	var asked []powerprofile.PowerProfileSettings
+	mux := http.NewServeMux()
+	mux.HandleFunc("PUT /api/system/power-profile", func(w http.ResponseWriter, r *http.Request) {
+		var in powerprofile.PowerProfileSettings
+		_ = json.NewDecoder(r.Body).Decode(&in)
+		asked = append(asked, in)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprintf(w, `{"profile":%q,"governor":%q,"read_only":false,"driver":"intel_pstate","governors":["performance","powersave"],"tunables":[],"idle":{"window_seconds":60,"active":0.1,"cpu_states":[],"package_states":[],"deepest":"PC6","watts":1.2},"blockers":[]}`, in.Profile, in.Governor)
+	})
+	serve(t, mux)
+	if err := runApp(t, "system", "profile", "set", "--governor", "performance", "power-saver"); err != nil {
+		t.Fatal(err)
+	}
+	if err := runApp(t, "system", "profile", "set", "--governor", "default", "balanced"); err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 2 || asked[0].Profile != powerprofile.PowerSaver || asked[0].Governor != "performance" ||
+		asked[1].Profile != powerprofile.Balanced || asked[1].Governor != "" {
+		t.Fatalf("asked %+v", asked)
+	}
+	if err := runApp(t, "system", "profile", "set"); err == nil {
+		t.Fatal("set without a profile went ahead")
 	}
 }

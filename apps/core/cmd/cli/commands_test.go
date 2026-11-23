@@ -26,7 +26,7 @@ func TestOperationalCommandsAreExposed(t *testing.T) {
 		{storageCmd(), []string{"mount", "unmount", "usage", "subvolume-create", "subvolume-delete",
 			"pool-create", "pool-add-disk", "pool-remove-disk", "pool-cancel", "pool-delete"}},
 		{hostCmd(), []string{"core-services", "version"}},
-		{systemCmd(), []string{"reboot", "poweroff", "status", "cancel"}},
+		{systemCmd(), []string{"reboot", "poweroff", "status", "cancel", "profile"}},
 		{stacksCmd(), []string{"shell"}},
 	}
 	for _, tt := range tests {
