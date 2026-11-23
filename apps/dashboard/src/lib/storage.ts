@@ -387,3 +387,27 @@ export function folderSuggestions(entries: Entry[], fragment: string, limit = 50
 
 /** A path without its trailing slash, which the daemon refuses; "/" stays. */
 export const trimSlash = (p: string): string => (p.length > 1 ? p.replace(/\/+$/, "") || "/" : p);
+
+/** A segment's colour on the capacity bar: the chart series in order, the rest muted. */
+export const segmentColor = (i: number, other?: boolean) => (other ? "var(--muted)" : `var(--series-${i + 1})`);
+
+/** A folder's swatch: its own segment's colour, the "other" colour when it is folded in, or null when it is not on the bar. */
+export function swatchOf(segs: Segment[], name: string, measured: boolean): string | null {
+  if (!measured) return null;
+  const i = segs.findIndex((s) => s.label === name && !s.other);
+  if (i >= 0) return segmentColor(i);
+  const other = segs.findIndex((s) => s.other);
+  return other >= 0 ? segmentColor(other, true) : null;
+}
+
+/** Each mounted pool with its folders, in the pools' order. */
+export function folderGroups(pools: Pool[], subvolumes: Subvolume[]): { pool: Pool; folders: Subvolume[] }[] {
+  return pools.filter((p) => p.state === "mounted" && p.mountdir).map((pool) => ({ pool, folders: foldersOf(pool, subvolumes) }));
+}
+
+/** Why a pool's disk and mount changes wait, or "": a disk is still leaving it. */
+export function poolBlocked(p: Pool): string {
+  if (!running(p.operation)) return "";
+  const disk = p.operation?.disk.replace(/^\/dev\//, "") || "A disk";
+  return `${disk} is leaving the pool; disk changes wait until it is out.`;
+}

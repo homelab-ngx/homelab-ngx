@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Schema, Stack } from "./api/client.ts";
-import { ancestors, browseDefault, browseHref, editHref, hostPathProblem, hostTree, joinPath, parentOf, relativeTo, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, folderName, folderSuggestions, foldersOf, pathParts, trimSlash, maxCopies, measuredAt, removal, removeBlocked, role, running, segments, systemDisk, tiering, usedBy, withContents } from "./storage.ts";
+import { ancestors, browseDefault, browseHref, editHref, hostPathProblem, hostTree, joinPath, parentOf, relativeTo, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, folderName, folderSuggestions, foldersOf, pathParts, trimSlash, maxCopies, measuredAt, folderGroups, poolBlocked, removal, removeBlocked, role, running, segmentColor, segments, swatchOf, systemDisk, tiering, usedBy, withContents } from "./storage.ts";
 
 type Pool = Schema<"Pool">;
 type Disk = Schema<"Disk">;
@@ -309,5 +309,35 @@ describe("the host editor", () => {
     expect(hostPathProblem("../x", rows)).toBe("No empty parts, ./ or ../.");
     expect(hostPathProblem("a.conf", rows)).toBe("a.conf is already there.");
     expect(hostPathProblem("data/new.conf", rows)).toBe("");
+  });
+});
+
+describe("the ledger", () => {
+  const sub = (path: string, used_bytes: number) => ({ path, used_bytes }) as Schema<"Subvolume">;
+
+  it("colours a folder like its segment, a small one like other, an unmeasured one not at all", () => {
+    const folders = [sub("/pool/a", 4 * TB), sub("/pool/b", 2 * TB), sub("/pool/c", 1 * TB), sub("/pool/d", TB / 2), sub("/pool/e", -1)];
+    const segs = segments(folders, 12 * TB, "/pool", 8 * TB);
+    expect(swatchOf(segs, "a", true)).toBe(segmentColor(0));
+    expect(swatchOf(segs, "c", true)).toBe(segmentColor(2));
+    expect(swatchOf(segs, "d", true)).toBe("var(--muted)");
+    expect(swatchOf(segs, "e", false)).toBeNull();
+  });
+
+  it("groups folders under their mounted pool", () => {
+    const tank = pool({ uuid: "t", mountdir: "/var/mnt/tank" });
+    const fast = pool({ uuid: "f", mountdir: "/var/mnt/fast" });
+    const away = pool({ uuid: "x", state: "unmounted", mountdir: "" });
+    const groups = folderGroups([tank, away, fast], [sub("/var/mnt/fast/db", 1), sub("/var/mnt/tank/media", 2), sub("/var/mnt/tank/photos", 3)]);
+    expect(groups.map((g) => [g.pool.uuid, g.folders.map((f) => f.path)])).toEqual([
+      ["t", ["/var/mnt/tank/media", "/var/mnt/tank/photos"]],
+      ["f", ["/var/mnt/fast/db"]],
+    ]);
+  });
+
+  it("holds a pool's changes while a disk leaves it", () => {
+    expect(poolBlocked(pool())).toBe("");
+    const leaving = pool({ operation: { kind: "remove", disk: "/dev/sdc", phase: "moving", left_bytes: 1, started_at: "" } as Pool["operation"] });
+    expect(poolBlocked(leaving)).toBe("sdc is leaving the pool; disk changes wait until it is out.");
   });
 });

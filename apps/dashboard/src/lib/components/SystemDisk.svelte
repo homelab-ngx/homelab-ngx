@@ -14,8 +14,8 @@
      installed before the store moved to /var has the store on a partition
      of its own, and the figures are that partition's. -->
 {#if disk && store.data}
-  <section class="mt-6" aria-labelledby="system-disk-h">
-    <h2 id="system-disk-h" class="mb-2 font-semibold">
+  <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="system-disk-h">
+    <h2 id="system-disk-h" class="border-b border-line bg-sunken px-3 py-2 font-semibold">
       <Help label={disk.own ? "Nix store" : "System disk"}>
         {#if disk.own}
           The partition the stacks are built into.
@@ -25,7 +25,7 @@
         A stack keeps the version it runs and two before it; older ones are deleted after an update, and when the disk runs low.
       </Help>
     </h2>
-    <div class="card">
+    <div class="px-3 py-3">
       <div class="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 tabular-nums">
         <p>
           <span class="text-lg">{bytes(disk.used)}</span>
