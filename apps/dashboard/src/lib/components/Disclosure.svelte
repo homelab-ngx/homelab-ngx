@@ -44,7 +44,7 @@
   }
 </script>
 
-<!-- The one way to fold content (DESIGN.md, Disclosure). -->
+<!-- The one way to fold content. -->
 <details {open} {ontoggle} class="group {boxed ? 'rounded-lg border border-line px-3 py-2' : ''} {cls}">
   <summary
     class="flex cursor-pointer list-none items-center gap-1.5 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [&::-webkit-details-marker]:hidden {section

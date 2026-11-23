@@ -17,7 +17,7 @@
 </script>
 
 <!-- The page stays bare: an explanation shows only when its label is clicked
-     or the header's Help switch is on (DESIGN.md, Help). The text is a span
+     or the header's Help switch is on. The text is a span
      so the label can sit in a heading; it takes a full row in a flex parent. -->
 <button
   type="button"

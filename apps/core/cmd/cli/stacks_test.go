@@ -170,10 +170,9 @@ func TestStackSourceSendsOnlyTheSource(t *testing.T) {
 }
 
 // TestStackVarSetReadsTheValueFromStdinOnly follows the --value-stdin
-// convention (docs/solutions/conventions/homelab-cli-automation.md): at most
-// one trailing LF or CRLF is dropped, every other byte is kept, and no TTY is
-// needed (stdin is a pipe here). qui would take a trailing newline as part of
-// its session secret.
+// convention: at most one trailing LF or CRLF is dropped, every other byte is
+// kept, and no TTY is needed (stdin is a pipe here). qui would take a trailing
+// newline as part of its session secret.
 func TestStackVarSetReadsTheValueFromStdinOnly(t *testing.T) {
 	before := []string{"stacks", "var", "set", "--secret", "--value-stdin", "immich", "API_KEY"}
 	// The documented form: urfave/cli stops at the first argument, so the

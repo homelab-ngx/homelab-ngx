@@ -81,7 +81,7 @@
   }}
 />
 
-<!-- A stack's files read from the commit it runs (DESIGN.md, Workbench: read
+<!-- A stack's files read from the commit it runs (read
      only). Typing is allowed; the banner says it cannot be saved here. -->
 <div class="flex flex-col overflow-hidden rounded-md border border-line bg-surface xl:h-[calc(100dvh-8.5rem)] xl:min-h-[36rem]">
   <div class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-sunken px-3 py-1.5">

@@ -52,8 +52,8 @@
   const toggle = (id: number) => (shown = shown === id ? null : id);
 </script>
 
-<!-- A stack's versions and the attempts that built none (DESIGN.md, Stack
-     Page: the History tab). -->
+<!-- A stack's versions and the attempts that built none (the stack page's
+     History tab). -->
 <div>
   <p class="mb-2">
     <Help label="Versions" class="label">

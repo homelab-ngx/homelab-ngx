@@ -15,9 +15,6 @@ import (
 	"syscall"
 )
 
-// What these commands do in bcachefs-tools 1.39 is written up in
-// docs/solutions/integration-issues/bcachefs-pool-commands.md.
-
 // MinTools is the oldest bcachefs-tools the pool commands are written for:
 // evacuate and the Leaving column of `fs usage` are different before it.
 var MinTools = [2]int{1, 39}

@@ -44,7 +44,7 @@
   }
 </script>
 
-<!-- One section of the host's settings: its fields and one Apply (DESIGN.md, Value List). -->
+<!-- One section of the host's settings: its fields and one Apply. -->
 <section id={anchor} class="card scroll-mt-16" aria-labelledby="{id}-h">
   <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
     <div class="min-w-0">

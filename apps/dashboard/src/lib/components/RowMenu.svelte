@@ -27,7 +27,7 @@
   const danger = $derived(items.filter((i) => i.danger));
 </script>
 
-<!-- A row's rarer actions (DESIGN.md, Row Menu): the row keeps at most one
+<!-- A row's rarer actions: the row keeps at most one
      button, the rest live here, the destructive ones last. -->
 {#if items.length}
   <DropdownMenu.Root>

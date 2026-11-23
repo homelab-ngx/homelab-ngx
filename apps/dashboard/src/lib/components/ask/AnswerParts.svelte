@@ -16,7 +16,7 @@
   let { summary, detail, lists = [], notes = "" }: Props = $props();
 </script>
 
-<!-- An assistant's answer in its parts (DESIGN.md, Ask): the summary, then
+<!-- An assistant's answer in its parts: the summary, then
      short labelled lists; anything else follows as plain text. -->
 <div class="flex flex-col gap-3 leading-relaxed">
   {#if summary}<p class="font-medium">{summary}</p>{/if}

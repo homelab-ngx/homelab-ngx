@@ -70,7 +70,7 @@
   function options(width: number): uPlot.Options {
     const muted = token("--muted");
     const grid = token("--line");
-    // The body face (DESIGN.md, The One Family Rule); figures are tabular in the legend.
+    // The body face, the dashboard's one font family; figures are tabular in the legend.
     const font = `11px ${token("--font-sans") || "system-ui, sans-serif"}`;
     const axis = { stroke: muted, font, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid, width: 1 } };
     return {

@@ -10,7 +10,7 @@
   const tones: Record<Tone, string> = { ok: "text-ok", warn: "text-warn", bad: "text-bad", info: "text-accent", idle: "text-muted" };
 </script>
 
-<!-- The shape says the state, so it reads without colour (DESIGN.md, Status):
+<!-- The shape says the state, so it reads without colour:
      circle ok, triangle warn, cross bad, diamond info, ring idle. -->
 <svg viewBox="0 0 10 10" class="size-2.5 shrink-0 {tones[tone]} {cls}" aria-hidden="true">
   {#if tone === "ok"}

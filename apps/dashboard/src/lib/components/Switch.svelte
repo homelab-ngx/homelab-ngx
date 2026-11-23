@@ -11,7 +11,7 @@
   let { checked, label, disabled = false, title, onChange }: Props = $props();
 </script>
 
-<!-- The drawn toggle (DESIGN.md, Dropdown Menu): 28 by 16px, accent when on. -->
+<!-- The drawn toggle: 28 by 16px, accent when on. -->
 <button
   type="button"
   role="switch"

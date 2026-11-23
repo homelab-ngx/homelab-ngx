@@ -15,7 +15,7 @@
 
 <!-- Status as Unraid draws it: one coloured mark whose shape says the state
      (circle, triangle, cross, diamond, ring), then one lowercase word in the
-     text colour. No background (DESIGN.md, Status). -->
+     text colour. No background. -->
 <span class="inline-flex items-center gap-1.5 text-sm font-normal whitespace-nowrap lowercase">
   <StatusMark {tone} />
   {@render children()}

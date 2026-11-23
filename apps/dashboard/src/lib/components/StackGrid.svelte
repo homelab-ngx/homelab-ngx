@@ -23,7 +23,7 @@
   );
 </script>
 
-<!-- The Stacks overview (DESIGN.md, App Grid): a card per stack, the whole
+<!-- The Stacks overview: a card per stack, the whole
      card a link to its page. Minimal shows the services as a strip of
      icons, Detailed as a row each. -->
 <ul class="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(18rem,1fr))]">

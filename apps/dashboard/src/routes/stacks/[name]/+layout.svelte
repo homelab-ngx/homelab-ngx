@@ -30,7 +30,7 @@
   const needsValues = $derived(stack.data ? !stack.data.variables_ready : false);
 </script>
 
-<!-- A stack's page is tabs, each its own address (DESIGN.md, Stack Page). -->
+<!-- A stack's page is tabs, each its own address. -->
 <nav aria-label="Stack" class="flex items-stretch overflow-x-auto border-b border-line">
   <a href="/stacks" class="flex shrink-0 items-center pr-3 text-muted hover:text-fg" aria-label="Back to Stacks">
     <ArrowLeft class="size-4" aria-hidden="true" />

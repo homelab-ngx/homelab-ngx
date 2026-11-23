@@ -1,7 +1,6 @@
 // @vitest-environment node
 /**
- * The mechanical half of DESIGN.md's "Copy and type" rules, checked over every
- * .svelte file. A failure here means a page grew text or type styles past what
+ * The dashboard's copy and type rules, checked over every .svelte file. A failure here means a page grew text or type styles past what
  * the design allows: cut the text or move it into a HelpTip. The limits are
  * part of the design; raise one only when the operator asks for it.
  *
@@ -186,7 +185,7 @@ function closure(route: string): string[] {
 const routes = [...scans.keys()].filter((f) => f.endsWith("+page.svelte"));
 const at = (s: Scan, r: Run) => `${s.file}:${r.line} (${r.words} words) ${r.text.slice(0, 90)}`;
 
-describe("copy and type rules (DESIGN.md)", () => {
+describe("copy and type rules", () => {
   if (process.env.COPY_REPORT) {
     const rows = routes.map((r) => ({ page: relative(SRC, r), words: sum(closure(r).flatMap((f) => scans.get(f)!.runs)) }));
     for (const [f, s] of scans) if (isDialog(f) || s.dialogRuns.length) rows.push({ page: `dialog ${s.file}`, words: sum([...s.dialogRuns, ...(isDialog(f) ? s.runs : [])]) });
@@ -223,7 +222,7 @@ describe("copy and type rules (DESIGN.md)", () => {
 
   it("font sizes come from the scale, not arbitrary values", () => {
     const found = [...scans.values()].flatMap((s) => s.sizes.map((r) => `${s.file}:${r.line} ${r.text}`));
-    expect(found, "use the body size, text-xs or .label (see DESIGN.md, Typography)").toEqual([]);
+    expect(found, "use the body size, text-xs or .label").toEqual([]);
   });
 
   it("mono is for logs and the stack editor only", () => {

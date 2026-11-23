@@ -78,7 +78,7 @@
   <p role="alert" class="mb-3 rounded-md bg-bad-soft px-3 py-2 text-bad">{actionError}</p>
 {/if}
 
-<!-- One stack's services (DESIGN.md, Stack Page). A row's actions are in its
+<!-- One stack's services. A row's actions are in its
      menu, Disable… last. Disk is what the service's user owns in the stack. -->
 <div class="relative overflow-x-auto">
   <table class="w-full border-collapse text-left tabular-nums">

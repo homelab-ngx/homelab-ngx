@@ -72,7 +72,7 @@
   --color-bad-soft: var(--bad-soft);
 }
 
-/* The power page's motion (DESIGN.md, Power Screen). Each use is behind
+/* The power page's motion. Each use is behind
    motion-safe, so reduced motion keeps the page still. */
 @theme {
   --animate-sheen: power-sheen 2.2s ease-in-out infinite;

@@ -191,10 +191,6 @@ make image-check   # boot the built image in a VM
 ## Documentation
 
 - [CONTRIBUTING.md](CONTRIBUTING.md): build, test, change and release it.
-- [STRATEGY.md](STRATEGY.md): what the project is for.
-- [CONTEXT.md](CONTEXT.md): the glossary.
-- [The stack contract](docs/solutions/architecture-patterns/stack-contract.md):
-  start here to write a stack.
 - [Issues](https://github.com/homelab-ngx/homelab-ngx/issues): report a
   problem or ask a question.
 

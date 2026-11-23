@@ -21,7 +21,7 @@ export function resizeFrame(cols: number, rows: number): string {
   return JSON.stringify({ type: "resize", cols, rows });
 }
 
-/** The terminal's font: the dashboard's mono face, as DESIGN.md sets it. */
+/** The terminal's font: the dashboard's mono face. */
 export const MONO = '"Azeret Mono Variable", ui-monospace, monospace';
 
 /**

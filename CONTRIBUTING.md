@@ -1,18 +1,16 @@
 # Contributing
 
 How to build, test and change homelab-ngx. `README.md` says what it is for
-users. `STRATEGY.md` gives the direction. `CONTEXT.md` is the domain glossary:
-use its terms in code, issues and docs.
+users.
 
 ## Layout
 
 ```
 apps/core/          # Go daemon + CLI: cmd/ internal/ db/; api/ holds the emitted openapi.json
 apps/backup-runner/ # the program a backup run starts: its own Go module, standard library only; runfile/ is its contract with the daemon
-apps/dashboard/     # Svelte dashboard (SvelteKit SPA); PRODUCT.md + DESIGN.md hold its design context
+apps/dashboard/     # Svelte dashboard (SvelteKit SPA)
 image/              # base/ is the mkosi definition (Arch), core/ the core extension's files
 nix/                # flake outputs, dev shells, pkgs/ (the packages and the core extension)
-docs/solutions/     # why things are shaped this way
 ```
 
 There are two Go modules:
@@ -61,8 +59,7 @@ x86_64 Linux and on Apple silicon Macs; the image builds only on Linux.
 - **After changing an operation or the SQL**, run `make gen` and commit its
   output with the change. `make gen-check` fails on drift.
 - The output is `api/openapi.json`, `schema.gen.ts` and the sqlc `*.gen.go`.
-- **Dashboard copy and type** follow `apps/dashboard/DESIGN.md` (Copy,
-  Help, Status, Row Menu, Disclosure):
+- **Dashboard copy and type** follow these rules:
   - labels and values instead of sentences;
   - explanations in the label's `Help`;
   - one font family.
@@ -77,21 +74,19 @@ x86_64 Linux and on Apple silicon Macs; the image builds only on Linux.
 - **CLI automation.** Put `--json` before the command, and treat `warnings`
   as a successful local operation.
 - Pipe secrets with `--value-stdin`; never put secret values in argv.
-  Details: `docs/solutions/conventions/homelab-cli-automation.md`.
 
 **A core runs on older images.** Image and core update apart, so a new core
 meets hosts whose image is older. When the daemon uses something of the
 image (a program, a unit, a file), it treats its absence as that feature
 being unavailable and still starts. When it cannot do without, raise
 `minImage` in `nix/pkgs/core-extension.nix` to the image version that brings
-it: hosts then apply that core only on such an image. Details:
-`docs/solutions/integration-issues/mkosi-sysupdate-sysext-image.md`.
+it: hosts then apply that core only on such an image.
 
 ## Writing
 
 This covers the README, the docs, issues and commit messages (the release
-notes are made from them). Dashboard copy has its own, stricter rules in
-`apps/dashboard/DESIGN.md`.
+notes are made from them). Dashboard copy has its own, stricter rules, under
+"Changing the code".
 
 The reader runs a home server and has never seen this repo. Write to them
 plainly:
@@ -104,8 +99,7 @@ plainly:
   there is no fact, the adjective goes.
 - **The limit next to the claim.** If a feature stops somewhere, the same
   paragraph says where.
-- **One word for one thing.** `CONTEXT.md` has the terms: a stack is always
-  a stack.
+- **One word for one thing.** A stack is always a stack.
 - **Say it once.** A paragraph ends when its last fact is stated.
 - **Headings name their subject** in a few words, in sentence case.
 - **A list item is 23 words at most**, in a bulleted or a numbered list.
@@ -256,19 +250,10 @@ the notes.
 
 ## Knowledge
 
-`docs/solutions/` explains:
-- the architecture: daemon feature packages, the code-first API, the SQLite
-  store, read-only config, doctor, the stack contract and its API grant;
-- the image;
-- CLI scripting;
-- solved problems.
+When a solved problem's reasoning can't be recovered from the code or the
+tests, write it as a comment at the code it explains, in the same change.
 
-Search it before changing an area it covers. When a solved problem's
-reasoning can't be recovered from the code, tests or existing docs, write it
-up there with the change.
-
-Docs live in `README.md`, `STRATEGY.md`, `CONTEXT.md`, this file and
-`docs/solutions/`.
+Docs live in `README.md` and this file.
 
 ## Agent tools
 
