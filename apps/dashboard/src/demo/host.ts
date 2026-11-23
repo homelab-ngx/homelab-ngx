@@ -421,6 +421,12 @@ export function newHost(now: () => number = Date.now): Host {
   // Raw figures: with two copies of each file, half of this is usable.
   const used = 9.6 * TB;
   const total = 21 * TB;
+  // A second pool of two fast disks, mirrored, for databases and app data.
+  const fast = [
+    disk("nvme2n1", "WD Black SN850X 2TB", 2 * TB, "nvme.a", { power_on_hours: 4200, temperature_c: 47 }, t),
+    disk("nvme3n1", "WD Black SN850X 2TB", 2 * TB, "nvme.b", { power_on_hours: 4200, temperature_c: 46 }, t),
+  ];
+  const fastUsed = 1.1 * TB;
 
   return {
     now,
@@ -466,12 +472,31 @@ export function newHost(now: () => number = Date.now): Host {
           disks,
           usage: { total_bytes: total, used_bytes: used, available_bytes: total - used, used_percent: (used / total) * 100 },
         },
+        {
+          name: "apps",
+          label: "apps",
+          uuid: "a3e9b7d4-1c2f-4e6a-8b5d-7f0c9e1a2b34",
+          state: "mounted",
+          mountdir: "/var/mnt/apps",
+          mount_name: "apps",
+          auto_mount: true,
+          data_replicas: 2,
+          metadata_replicas: 2,
+          foreground_target: "",
+          promote_target: "",
+          background_target: "",
+          metadata_target: "",
+          disks: fast,
+          usage: { total_bytes: 4 * TB, used_bytes: fastUsed, available_bytes: 4 * TB - fastUsed, used_percent: (fastUsed / (4 * TB)) * 100 },
+        },
       ],
       subvolumes: [
         { id: "256", path: "/var/mnt/tank/photos", used_bytes: 1.1 * TB, measured_at: iso(t - HOUR) },
         { id: "257", path: "/var/mnt/tank/media", used_bytes: 3.4 * TB, measured_at: iso(t - HOUR) },
         { id: "258", path: "/var/mnt/tank/documents", used_bytes: 41 * GB, measured_at: iso(t - HOUR) },
         { id: "259", path: "/var/mnt/tank/scratch", used_bytes: 220 * GB, measured_at: iso(t - HOUR) },
+        { id: "256", path: "/var/mnt/apps/databases", used_bytes: 310 * GB, measured_at: iso(t - HOUR) },
+        { id: "257", path: "/var/mnt/apps/appdata", used_bytes: 180 * GB, measured_at: iso(t - HOUR) },
       ],
       unassigned: [
         { ...disk("sdc", "ST8000VN004", 8 * TB, "", { power_on_hours: 120, temperature_c: 31 }, t), fstype: "", label: "", state: "", data_target: "", metadata_target: "" },
