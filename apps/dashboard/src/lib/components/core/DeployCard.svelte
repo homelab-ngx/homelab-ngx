@@ -3,16 +3,20 @@
   import Disclosure from "#lib/components/Disclosure.svelte";
   import Help from "#lib/components/Help.svelte";
   import Pill from "#lib/components/Pill.svelte";
-  import Steps from "#lib/components/Steps.svelte";
+  import ProgressBar from "#lib/components/ProgressBar.svelte";
+  import StepBars from "#lib/components/StepBars.svelte";
   import { duration, shortRev } from "#lib/format.ts";
-  import { type CoreDeploy, deployOutcome, deployStep, deployTitle, stepsOf } from "./core.ts";
+  import { clock } from "#lib/power.ts";
+  import { type CoreDeploy, deployOutcome, deployRows, deployShare, deployTitle } from "./core.ts";
 
   interface Props {
     deploy: CoreDeploy;
     /** The daemon is not answering, which is expected while the switch restarts it. */
     away?: boolean;
+    /** How long the last one of its kind took, in seconds: the bar's guide to the time left. */
+    typical?: number;
   }
-  let { deploy, away = false }: Props = $props();
+  let { deploy, away = false, typical }: Props = $props();
 
   const running = $derived(deploy.result === "running");
   const ok = $derived(deploy.result === "healthy");
@@ -25,6 +29,9 @@
     const tick = setInterval(() => (now = Date.now()), 1000);
     return () => clearInterval(tick);
   });
+
+  const share = $derived(deployShare(deploy, now, typical));
+  const left = $derived(running && typical ? typical - (now - Date.parse(deploy.started_at)) / 1000 : 0);
 </script>
 
 <section class="card" aria-live="polite" aria-label="{title} progress">
@@ -50,9 +57,13 @@
       {/if}
     </div>
   </div>
-  <div class="mt-3"><Steps steps={stepsOf(deploy)} current={deployStep(deploy)} failed={!running && !ok} /></div>
-  <p class="mt-3 text-xs text-muted">
-    {duration(deploy.started_at, deploy.finished_at, now)}{#if running && away}
+  <div class="mt-3">
+    <ProgressBar value={share} label={title} tone={running ? "accent" : ok ? "ok" : "bad"} moving={running} />
+  </div>
+  <div class="mt-2"><StepBars rows={deployRows(deploy, running && away)} /></div>
+  <p class="mt-2 text-xs text-muted tabular-nums">
+    {duration(deploy.started_at, deploy.finished_at, now)}{#if left >= 1}
+      · about {clock(left)} left{/if}{#if running && away}
       · the host is restarting, this page keeps checking{:else if !running}
       · {deployOutcome(deploy)}{/if}
   </p>

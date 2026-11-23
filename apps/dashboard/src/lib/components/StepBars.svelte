@@ -2,7 +2,7 @@
   import { slide } from "svelte/transition";
   import { prefersReducedMotion } from "svelte/motion";
   import Pill from "#lib/components/Pill.svelte";
-  import type { Bar, Row } from "#lib/power.ts";
+  import type { Bar, Row } from "#lib/steps.ts";
 
   interface Props {
     rows: Row[];

@@ -7,7 +7,7 @@
   import { busyPoll, idlePoll } from "#lib/api/queries.ts";
   import DeployCard from "#lib/components/core/DeployCard.svelte";
   import ImageCard from "#lib/components/core/ImageCard.svelte";
-  import { pendingVersion } from "#lib/components/core/core.ts";
+  import { pendingVersion, typicalSeconds } from "#lib/components/core/core.ts";
   import { fetchPower, powerKey } from "#lib/power.ts";
 
   const keys = {
@@ -84,7 +84,7 @@
 {/if}
 
 {#if showDeploy && latest}
-  <div class="mt-5"><DeployCard deploy={latest} {away} /></div>
+  <div class="mt-5"><DeployCard deploy={latest} {away} typical={typicalSeconds(latest, deploys.data ?? [])} /></div>
 {/if}
 
 {#if image.data}

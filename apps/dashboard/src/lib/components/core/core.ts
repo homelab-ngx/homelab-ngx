@@ -1,5 +1,7 @@
 /** Readings for the Updates page: versions and updates. */
 import type { Schema } from "#lib/api/client.ts";
+import type { Tone } from "#lib/components/Pill.svelte";
+import type { Bar, Row } from "#lib/steps.ts";
 
 export type CoreDeploy = Schema<"CoreDeploy">;
 
@@ -36,6 +38,51 @@ export function deployStep(d: CoreDeploy): number {
   // Going back to the version before happens because the health check failed.
   if (d.phase === "Roll back" || d.result === "rolled_back") return steps.indexOf("Health check");
   return Math.max(0, steps.indexOf(d.phase));
+}
+
+/**
+ * An operation's steps as rows with a bar each. `away`: the daemon does not
+ * answer, which while an operation runs is its restart.
+ */
+export function deployRows(d: CoreDeploy | undefined, away = false): Row[] {
+  const names = d ? stepsOf(d) : imageSteps.install!;
+  // A daemon that does not answer mid-install is in its restart, whatever
+  // step the last answer named.
+  const restart = names.indexOf("Restart");
+  const current = Math.max(d ? deployStep(d) : 0, away && restart >= 0 ? restart : 0);
+  const failed = !!d && d.result !== "running" && d.result !== "healthy";
+  return names.map((name, n) => {
+    const row = (tone: Tone, word: string, bar: Bar): Row => ({ key: `step-${name}`, name, tone, word, bar });
+    if (n < current) return row("ok", "done", "full");
+    if (n === current && failed) return row("bad", "failed", "bad");
+    if (n === current) return away && n === restart ? row("info", "restarting", "run") : row("info", "running", "run");
+    return row("idle", "waiting", "empty");
+  });
+}
+
+/** How long the last operation of this kind took that ended well, in seconds; undefined when none did. */
+export function typicalSeconds(d: CoreDeploy, all: CoreDeploy[]): number | undefined {
+  const prev = all.find((x) => x.id !== d.id && x.kind === d.kind && x.result === "healthy" && x.finished_at);
+  if (!prev?.finished_at) return undefined;
+  const s = (Date.parse(prev.finished_at) - Date.parse(prev.started_at)) / 1000;
+  return s > 0 ? s : undefined;
+}
+
+/**
+ * How far an operation is, 0 to 1. Each step has an equal share. With the
+ * time the last one of its kind took, the bar moves with the clock inside
+ * the step it is on, and never past it.
+ */
+export function deployShare(d: CoreDeploy, now: number, typical?: number): number {
+  const n = stepsOf(d).length || 1;
+  if (d.result === "healthy") return 1;
+  const step = Math.min(deployStep(d), n - 1);
+  const lo = step / n;
+  const hi = (step + 1) / n;
+  if (d.result !== "running") return lo;
+  if (!typical) return (step + 0.5) / n;
+  const t = (now - Date.parse(d.started_at)) / 1000 / typical;
+  return Math.min(hi - 0.02, Math.max(lo + 0.02, t));
 }
 
 /** One line for how an update ended. */

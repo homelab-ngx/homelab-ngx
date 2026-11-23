@@ -103,7 +103,10 @@ pool could be unmounted while a container still wrote to it.
 - **The power page opens before the daemon answers.** The request is sent
   from outside the dialog that asked, and the page shows a refusal (a
   409) itself. Once the host is back, the page loads the dashboard again in
-  full, so an update's new dashboard is the one that runs.
+  full, so an update's new dashboard is the one that runs. An update ends
+  on the overview (`/?updated=<version>`). Its dialog reads the version
+  from `GET /system-updates/image`, not from the address, so a host that
+  went back to the version before says so.
 
 ## Limits
 

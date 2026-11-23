@@ -7,6 +7,7 @@
 import { api, call, type Schema } from "#lib/api/client.ts";
 import type { Tone } from "#lib/components/Pill.svelte";
 import { deployOutcome, deployStep, stepsOf, type CoreDeploy } from "#lib/components/core/core.ts";
+import type { Bar, Row } from "#lib/steps.ts";
 
 export type PowerStatus = Schema<"PowerStatus">;
 export type PowerStep = Schema<"PowerStep">;
@@ -227,21 +228,6 @@ export function trackOf(action: PowerAction, stage: Stage, phase: PowerStatus["p
   return out;
 }
 
-/** How a step's own bar looks: empty, running, full, or full in a warning or failure colour. */
-export type Bar = "empty" | "run" | "full" | "warn" | "bad" | "unknown";
-
-/** One row of the step list: a stack, a mount, or a step of the install. */
-export interface Row {
-  key: string;
-  name: string;
-  tone: Tone;
-  word: string;
-  bar: Bar;
-  /** What it waits for, and when systemd kills it. */
-  wait?: { what: string; when: string };
-  detail?: string;
-}
-
 /**
  * A step's state as a status word and tone. Once the host is gone a step it
  * last reported unfinished is "not seen": it may have finished, but the page
@@ -275,26 +261,6 @@ export function powerRows(steps: PowerStep[], hostGone = false): Row[] {
       wait: holdup(s, hostGone),
       detail: s.detail || undefined,
     };
-  });
-}
-
-/**
- * The install's steps as rows. `away`: the daemon does not answer, which
- * during the install is its restart.
- */
-export function installRows(d: CoreDeploy | undefined, away: boolean): Row[] {
-  const names = d ? stepsOf(d) : ["Update", "Restart", "Health check"];
-  // A daemon that does not answer mid-install is in its restart, whatever
-  // step the last answer named.
-  const restart = names.indexOf("Restart");
-  const current = Math.max(d ? deployStep(d) : 0, away && restart >= 0 ? restart : 0);
-  const failed = !!d && d.result !== "running" && d.result !== "healthy";
-  return names.map((name, n) => {
-    const row = (tone: Tone, word: string, bar: Bar): Row => ({ key: `install-${name}`, name, tone, word, bar });
-    if (n < current) return row("ok", "done", "full");
-    if (n === current && failed) return row("bad", "failed", "bad");
-    if (n === current) return away && n === restart ? row("info", "restarting", "run") : row("info", "running", "run");
-    return row("idle", "waiting", "empty");
   });
 }
 

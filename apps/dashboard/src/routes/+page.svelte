@@ -6,6 +6,7 @@
   import Chart from "#lib/components/Chart.svelte";
   import Help from "#lib/components/Help.svelte";
   import Pill, { type Tone } from "#lib/components/Pill.svelte";
+  import UpdatedDialog from "#lib/components/core/UpdatedDialog.svelte";
   import { bytes } from "#lib/format.ts";
   import { LiveMetrics } from "#lib/live-metrics.svelte.ts";
   import { byScope, CORE_HUE, latest, machineLine, mood, PAIR_HUES, PARTS, stackHues, type Frames, type Line, type Mood, type Resource } from "#lib/metrics.ts";
@@ -113,6 +114,8 @@
 </script>
 
 <svelte:head><title>Overview · Homelab-ngx</title></svelte:head>
+
+<UpdatedDialog />
 
 <div class="flex flex-wrap items-end justify-between gap-3">
   <div>

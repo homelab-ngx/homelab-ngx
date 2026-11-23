@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { CoreDeploy } from "./components/core/core.ts";
-import { clock, holdup, installRows, powerHref, powerRows, powerView, probe, stepState, timer, trackOf, underWay, type PowerInput, type PowerStatus } from "./power.ts";
+import { deployRows, type CoreDeploy } from "./components/core/core.ts";
+import { clock, holdup, powerHref, powerRows, powerView, probe, stepState, timer, trackOf, underWay, type PowerInput, type PowerStatus } from "./power.ts";
 
 const status = (p: Partial<PowerStatus> = {}): PowerStatus => ({
   phase: "stopping_stacks",
@@ -184,7 +184,7 @@ describe("the request and the install", () => {
   });
 
   it("names the install's steps, the restart included", () => {
-    const words = (d: CoreDeploy | undefined, away: boolean) => installRows(d, away).map((r) => `${r.name}:${r.word}`);
+    const words = (d: CoreDeploy | undefined, away: boolean) => deployRows(d, away).map((r) => `${r.name}:${r.word}`);
     expect(words(install({ phase: "Restart" }), true)).toEqual(["Update:done", "Restart:restarting", "Health check:waiting"]);
     expect(words(install({ phase: "Update" }), true)).toEqual(["Update:done", "Restart:restarting", "Health check:waiting"]);
     expect(words(install({ result: "healthy", phase: "Installed 0.5.0; rebooting" }), false)).toEqual(["Update:done", "Restart:done", "Health check:done"]);

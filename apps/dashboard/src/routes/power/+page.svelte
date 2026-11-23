@@ -1,19 +1,18 @@
 <script lang="ts">
   import { createQuery } from "@tanstack/svelte-query";
-  import { prefersReducedMotion, Tween } from "svelte/motion";
   import { goto, replaceState } from "$app/navigation";
   import { page } from "$app/state";
   import { api, call, DEMO } from "#lib/api/client.ts";
   import { fetchHostSettings, hostKeys } from "#lib/host.ts";
-  import type { CoreDeploy } from "#lib/components/core/core.ts";
-  import PowerSteps from "#lib/components/power/PowerSteps.svelte";
+  import { deployRows, type CoreDeploy } from "#lib/components/core/core.ts";
+  import ProgressBar from "#lib/components/ProgressBar.svelte";
+  import StepBars from "#lib/components/StepBars.svelte";
   import PowerTrack from "#lib/components/power/PowerTrack.svelte";
   import ProbeStrip from "#lib/components/power/ProbeStrip.svelte";
   import { start } from "#lib/power-start.svelte.ts";
   import {
     fetchPower,
     gone,
-    installRows,
     powerRows,
     powerView,
     probe,
@@ -152,7 +151,7 @@
   // The steps stay on the page once the host is gone.
   const steps = $derived(view.stage === "back" || view.steps.length === 0 ? (last?.steps ?? []) : view.steps);
   const rows = $derived([
-    ...(installs ? installRows(deploy, !reachable && !past) : []),
+    ...(installs ? deployRows(deploy, !reachable && !past) : []),
     ...(view.stage === "installing" || view.stage === "install_failed" ? [] : powerRows(steps, hostGone)),
   ]);
   const marks = $derived(trackOf(action, view.stage, last?.phase, sawReady, installs ? { past } : undefined));
@@ -160,13 +159,9 @@
   const ended = $derived(stuck(view.stage));
   const settled = $derived(ended || view.stage === "back" || view.stage === "off");
 
-  // The overall bar glides and never goes back. While the countdown runs it
-  // moves for the whole second between two ticks, so it never stops.
-  const bar = new Tween(0);
-  $effect(() => {
-    const v = Math.max(bar.target, view.share);
-    if (v !== bar.target) void bar.set(v, { duration: prefersReducedMotion.current ? 0 : 1000 });
-  });
+  // The overall bar never goes back.
+  let top = 0;
+  const peak = $derived.by(() => (top = Math.max(top, view.share)));
 
   // The host's name and the version it runs now, from what the pages before
   // already read; and once it is back, the version it came back on.
@@ -189,10 +184,12 @@
   const landed = $derived(after.data?.booted ?? "");
 
   // Back: a full load, so an update's new dashboard is the one that runs.
-  // The demo keeps its made-up host only while the page is not reloaded.
+  // An update ends on the overview, which says the version it runs. The
+  // demo keeps its made-up host only while the page is not reloaded.
+  const next = to ? `/?updated=${encodeURIComponent(to)}` : back;
   $effect(() => {
     if (!isBack) return;
-    const t = setTimeout(() => (DEMO ? void goto(back, { replaceState: true }) : location.replace(back)), 2500);
+    const t = setTimeout(() => (DEMO ? void goto(next, { replaceState: true }) : location.replace(next)), 2500);
     return () => clearTimeout(t);
   });
 
@@ -228,27 +225,18 @@
       <span class="text-4xl font-semibold tracking-tight tabular-nums">{tm.value}</span>
       <span class="text-xs text-muted">{tm.label}</span>
     </p>
-    <p class="text-muted tabular-nums" aria-hidden="true">{Math.round(bar.current * 100)}%</p>
+    <p class="text-muted tabular-nums" aria-hidden="true">{Math.round(peak * 100)}%</p>
   </div>
 
-  <div
-    class="relative -mt-2 h-2 overflow-hidden rounded-full bg-sunken"
-    role="progressbar"
-    aria-label={title}
-    aria-valuemin={0}
-    aria-valuemax={100}
-    aria-valuenow={Math.round(view.share * 100)}
-  >
-    <div
-      class="relative h-full overflow-hidden rounded-full {ended ? 'bg-bad' : view.stage === 'back' ? 'bg-ok' : 'bg-accent'} {view.stage === 'late'
-        ? 'motion-safe:animate-pulse'
-        : ''} transition-colors"
-      style:width="{Math.max(bar.current, 0.02) * 100}%"
-    >
-      {#if !settled}
-        <span class="absolute inset-y-0 left-0 w-1/3 bg-linear-to-r from-transparent via-surface/45 to-transparent motion-safe:animate-sheen motion-reduce:hidden"></span>
-      {/if}
-    </div>
+  <div class="-mt-2">
+    <ProgressBar
+      value={peak}
+      label={title}
+      tall
+      tone={ended ? "bad" : view.stage === "back" ? "ok" : "accent"}
+      moving={!settled}
+      late={view.stage === "late"}
+    />
   </div>
 
   <PowerTrack {marks} />
@@ -272,6 +260,6 @@
 
 {#if rows.length > 0}
   <section class="card mt-4 py-1.5" aria-label="Steps">
-    <PowerSteps {rows} />
+    <StepBars {rows} />
   </section>
 {/if}

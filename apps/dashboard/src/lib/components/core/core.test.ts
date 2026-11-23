@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { type CoreDeploy, type ImageStatus, compareVersions, deployOutcome, deployStep, headline, runningVersion, stepsOf, updateOf } from "./core.ts";
+import {
+  type CoreDeploy,
+  type ImageStatus,
+  compareVersions,
+  deployOutcome,
+  deployRows,
+  deployShare,
+  deployStep,
+  headline,
+  runningVersion,
+  stepsOf,
+  typicalSeconds,
+  updateOf,
+} from "./core.ts";
 
 const d = (over: Partial<CoreDeploy>): CoreDeploy => ({
   id: 1,
@@ -77,5 +90,28 @@ describe("versions on an image host", () => {
     expect(headline(img({ core: { active: "0.2.2", installed: [], available: ["0.2.3"] } })).detail).toBe("0.2.3 · no reboot");
     const waiting = img({ pending_reboot: true, available: ["0.2.4"], installed: [{ version: "0.2.3", state: "pending" }, { version: "0.2.2", state: "booted" }] });
     expect(headline(waiting)).toEqual({ tone: "info", state: "reboot to finish", detail: "0.2.3" });
+  });
+});
+
+describe("an operation's bars", () => {
+  const start = "2026-11-23T10:00:00Z";
+  const t0 = Date.parse(start);
+  const build = (over: Partial<CoreDeploy> = {}) => d({ id: 9, kind: "build", phase: "Build", result: "running", started_at: start, finished_at: null, ...over });
+
+  it("gives each step a row with its own bar", () => {
+    expect(deployRows(build()).map((r) => `${r.name}:${r.bar}`)).toEqual(["Fetch:full", "Build:run", "Stage:empty"]);
+    expect(deployRows(build({ result: "build_failed" })).map((r) => r.word)).toEqual(["done", "failed", "waiting"]);
+  });
+
+  it("moves with the clock inside its step, using the last build's time", () => {
+    const last = build({ id: 8, result: "healthy", started_at: "2026-11-22T10:00:00Z", finished_at: "2026-11-22T10:10:00Z" });
+    expect(typicalSeconds(build(), [build(), last])).toBe(600);
+    // Five minutes into a ten-minute build, on its second step of three.
+    expect(deployShare(build(), t0 + 300_000, 600)).toBeCloseTo(0.5);
+    // Past the build's time, it stays inside the step it is on.
+    expect(deployShare(build(), t0 + 3_600_000, 600)).toBeCloseTo(2 / 3 - 0.02);
+    expect(deployShare(build(), t0, 600)).toBeCloseTo(1 / 3 + 0.02);
+    expect(deployShare(build(), t0)).toBeCloseTo(0.5);
+    expect(deployShare(build({ result: "healthy" }), t0)).toBe(1);
   });
 });

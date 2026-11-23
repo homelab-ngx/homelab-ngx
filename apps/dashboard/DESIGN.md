@@ -424,6 +424,8 @@ The page a reboot, a poweroff, or an update that reboots goes to the moment it i
 - **Probe strip:** once a check has gone unanswered, one 4px tick per check, newest on the right: a full-height accent tick where the host answered, a low hollow tick where it did not, a full ok tick for the first answer from the new boot. It reads "no answer · 12 checks", then "answered".
 - **Steps:** a card below lists the update's steps, then the stacks and the mounts. Each row has the name, a 4px bar (empty, a block sliding across while it runs, full ok, full warn or bad), and the status pill. Rows slide in as the daemon reports them.
 
+When the host is back the page loads the dashboard again in full. A plain reboot returns to the page it came from. An update goes to the Overview, which opens one small dialog: "Updated" over an ok mark, "running" and the version the host reports. If the host went back to the version before, the title is "Update went back", the mark is warn, and one muted line names the version that did not start.
+
 Every animation is behind `motion-safe`; under reduced motion the bars jump, the halo, sheen and sliding blocks are gone, and a running step shows a half-tone full bar.
 
 ### Backup Page
@@ -436,6 +438,9 @@ Selecting a mark changes the run shown in place: the run is in the address (`?ru
 
 ### Settings Ledger
 The System Settings index: a list in three bands (This host, Assistant, This browser), each band headed in the table-header style. A row is the page's name as a link (semibold, 9rem wide), the status mark and word with one muted value beside it (dropped below 640px), and a chevron. A row that is a setting, not a page (Sign-in, Theme), ends in its small buttons instead. The index answers "is anything waiting?" without opening a page.
+
+### Update Operation
+A build, a download or an install on the Updates page is a card with the same parts as the power screen's steps: a 6px bar for the whole operation, with the sheen while it runs, then a row per step with its own 4px bar and its status pill. Each step has an equal share of the bar. When an operation of the same kind has ended well before, the bar also moves with the time that one took, never past the step it is on, and the line under it reads "1 min 12 s · about 3:10 left".
 
 ### Update Card
 The Updates page (the core host) opens with one card, "Version". Its first line is the state: one mark and word (up to date, update ready, reboot to finish) and the version with what taking it means ("0.2.2 · needs a reboot"). The line ends in "Check now" and the one primary action for that state: "Update to X…" or "Reboot…". Under it, three values: Running, Newest release, Checked. A version that did not start is a warn line in the card, never folded. The card ends in "Update automatically": a time and a switch. One verb, update, covers the image and the core; the page shows one version, the newer of the two. Installed versions sit under it in a closed fold, "Versions on this host", with the words running, fallback, next boot and failed; "Development" (the build from main) is a second fold, shown only on a host with a source. "Reboot…" stays in the page header.
