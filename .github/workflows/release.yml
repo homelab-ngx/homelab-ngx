@@ -168,10 +168,23 @@ jobs:
         run: |
           b2=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#backblaze-b2)/bin/backblaze-b2
           $b2 account authorize >/dev/null
-          up() { $b2 file upload --no-progress "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
+          # B2 answers "503 too_busy" now and then, to a large file's parts
+          # most of all, and the CLI's own five tries last about a minute.
+          # So each file gets six tries over 15 minutes, four parts at a time
+          # instead of ten.
+          try() {
+            local wait
+            for wait in 30 60 120 240 480 0; do
+              "$@" && return 0
+              [ "$wait" != 0 ] || return 1
+              echo "upload failed; trying again in $wait s"
+              sleep "$wait"
+            done
+          }
+          up() { try "$b2" file upload --no-progress --threads 4 "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
           # The small text files are text, so a browser shows them instead of
           # saving them.
-          uptext() { $b2 file upload --no-progress --content-type "text/plain; charset=utf-8" "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
+          uptext() { try "$b2" file upload --no-progress --threads 4 --content-type "text/plain; charset=utf-8" "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
           cd "$RUNNER_TEMP/release/$VERSION"
           for f in homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw; do up "$f" "$VERSION/$f"; done
           up SHA256SUMS.gpg "$VERSION/SHA256SUMS.gpg"
