@@ -152,8 +152,9 @@ jobs:
           B2_APPLICATION_KEY: ${{ secrets.RELEASE_B2_KEY }}
         run: |
           b2=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#backblaze-b2)/bin/backblaze-b2
-          $b2 account authorize >/dev/null && echo "B2 key authorizes"
-          $b2 bucket get "$RELEASE_B2_BUCKET" >/dev/null && echo "bucket $RELEASE_B2_BUCKET is visible to the key"
+          retry=$GITHUB_WORKSPACE/.github/scripts/b2-retry
+          "$retry" "$b2" account authorize >/dev/null && echo "B2 key authorizes"
+          "$retry" "$b2" bucket get "$RELEASE_B2_BUCKET" >/dev/null && echo "bucket $RELEASE_B2_BUCKET is visible to the key"
           echo "image check: $VERSION built, checked and signed; nothing published" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The Nix store saves itself at the end of a green job (image-env).

@@ -167,24 +167,15 @@ jobs:
           B2_APPLICATION_KEY: ${{ secrets.RELEASE_B2_KEY }}
         run: |
           b2=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#backblaze-b2)/bin/backblaze-b2
-          $b2 account authorize >/dev/null
-          # B2 answers "503 too_busy" now and then, to a large file's parts
-          # most of all, and the CLI's own five tries last about a minute.
-          # So each file gets six tries over 15 minutes, four parts at a time
-          # instead of ten.
-          try() {
-            local wait
-            for wait in 30 60 120 240 480 0; do
-              "$@" && return 0
-              [ "$wait" != 0 ] || return 1
-              echo "upload failed; trying again in $wait s"
-              sleep "$wait"
-            done
-          }
-          up() { try "$b2" file upload --no-progress --threads 4 "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
+          # Every B2 call is tried again on a server error, over 15 minutes
+          # (.github/scripts/b2-retry). Four parts at a time instead of the
+          # CLI's ten: B2 turns a large file's parts away as too busy most.
+          retry=$GITHUB_WORKSPACE/.github/scripts/b2-retry
+          "$retry" "$b2" account authorize >/dev/null
+          up() { "$retry" "$b2" file upload --no-progress --threads 4 "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
           # The small text files are text, so a browser shows them instead of
           # saving them.
-          uptext() { try "$b2" file upload --no-progress --threads 4 --content-type "text/plain; charset=utf-8" "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
+          uptext() { "$retry" "$b2" file upload --no-progress --threads 4 --content-type "text/plain; charset=utf-8" "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
           cd "$RUNNER_TEMP/release/$VERSION"
           for f in homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw; do up "$f" "$VERSION/$f"; done
           up SHA256SUMS.gpg "$VERSION/SHA256SUMS.gpg"
@@ -239,8 +230,9 @@ jobs:
           B2_APPLICATION_KEY: ${{ secrets.RELEASE_B2_KEY }}
         run: |
           b2=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#backblaze-b2)/bin/backblaze-b2
-          $b2 account authorize >/dev/null
-          uptext() { $b2 file upload --no-progress --content-type "text/plain; charset=utf-8" "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
+          retry=$GITHUB_WORKSPACE/.github/scripts/b2-retry
+          "$retry" "$b2" account authorize >/dev/null
+          uptext() { "$retry" "$b2" file upload --no-progress --content-type "text/plain; charset=utf-8" "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
           # Only a 404 means no version is published yet: on any other
           # failure stop, or /versions would lose every earlier release.
           code=$(curl -sS --retry 5 --retry-all-errors --retry-delay 5 -o published -w '%{http_code}' "$RELEASE_URL/versions?t=$(date +%s)")

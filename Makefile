@@ -42,7 +42,7 @@ help:
 	make demo-serve        build the demo and serve it at http://localhost:3002
 	make demo-check        build the demo and load every page of it in a browser
 	make nix-check         nix fmt --fail-on-change, nix flake check --no-build
-	make sh-check          shellcheck on the image's scripts (image/*.sh)
+	make sh-check          shellcheck on the image's and CI's scripts
 	make image             build the image host (mkosi) and the core extension into image/out  [VERSION=]
 	make image-variant     a second version copied from a built one, for image-check's fall back  [FROM= VERSION=]
 	make image-check       boot the built image in VMs and check it end to end  [ONLY= RESUME=1 JOBS= KEEP=1 BUILD=1]
@@ -136,10 +136,10 @@ nix-check:
 	nix fmt -- --fail-on-change
 	nix flake check --no-build
 
-# The image's scripts run on Linux, in a VM or as root: this is the check of
-# them that runs anywhere.
+# The image's and CI's scripts run on Linux, in a VM, as root or on a runner:
+# this is the check of them that runs anywhere.
 sh-check:
-	shellcheck image/*.sh
+	shellcheck image/*.sh .github/scripts/*
 
 # Picks the checks from the files that differ from BASE (default HEAD: staged,
 # unstaged and untracked). A file no rule knows runs everything. The nix checks share one
@@ -157,7 +157,7 @@ verify-changed:
 			apps/core/*) add daemon-test ;;
 			apps/dashboard/*) add dashboard-test ;;
 			*.nix|flake.lock|nix/*) add nix-check ;;
-			image/*.sh) add sh-check ;;
+			image/*.sh|.github/scripts/*) add sh-check ;;
 			docs/*|*.md|scripts/run) ;;
 			*) add verify ;;
 		esac
