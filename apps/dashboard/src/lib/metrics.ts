@@ -83,6 +83,7 @@ export function appendFrames(a: Frames, b: Frames, keep = LIVE_SPAN): Frames {
     temp_cpu: [...a.temp_cpu, ...b.temp_cpu].slice(from),
     temp_disk: [...a.temp_disk, ...b.temp_disk].slice(from),
     power_cpu: [...a.power_cpu, ...b.power_cpu].slice(from),
+    power_wall: [...a.power_wall, ...b.power_wall].slice(from),
   };
 }
 
@@ -98,6 +99,7 @@ export function emptyFrames(): Frames {
     temp_cpu: [],
     temp_disk: [],
     power_cpu: [],
+    power_wall: [],
   };
 }
 

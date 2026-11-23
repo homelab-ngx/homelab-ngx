@@ -8,6 +8,7 @@
   import Pill, { type Tone } from "#lib/components/Pill.svelte";
   import UpdatedDialog from "#lib/components/core/UpdatedDialog.svelte";
   import { bytes } from "#lib/format.ts";
+  import { profileMarks } from "#lib/power-meter.ts";
   import { watts } from "#lib/power-profile.ts";
   import { LiveMetrics } from "#lib/live-metrics.svelte.ts";
   import { byScope, CORE_HUE, latest, machineLine, mood, PAIR_HUES, PARTS, stackHues, type Frames, type Line, type Mood, type Resource } from "#lib/metrics.ts";
@@ -72,6 +73,8 @@
   const memNow = $derived(latest(now.host.memory));
   const tempCpu = $derived(latest(now.temp_cpu));
   const powerCpu = $derived(latest(now.power_cpu));
+  const powerWall = $derived(latest(now.power_wall));
+  const hasPower = $derived(powerWall !== undefined || powerCpu !== undefined);
   const tempDisk = $derived(latest(now.temp_disk));
   const pool = $derived((storage.data?.pools ?? []).find((p) => p.usage && p.usage.total_bytes > 0));
   const poolCap = $derived(pool ? capacity(pool) : null);
@@ -98,6 +101,9 @@
     { label: a, hue: PAIR_HUES[0]!, values: av },
     { label: b, hue: PAIR_HUES[1]!, values: bv },
   ];
+  const any = (vs: (number | null)[]) => vs.some((v) => v !== null);
+  /** The meter's line and the CPU package's, each only where it has readings. */
+  const powerLines = (f: Frames) => two("Wall", f.power_wall, "CPU", f.power_cpu).filter((l) => any(l.values));
 
   /** Rows of the "who uses what" table, from the latest live point. */
   const rows = $derived(
@@ -137,11 +143,11 @@
   </div>
 </div>
 
-<section aria-label="Right now" class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+<section aria-label="Right now" class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 {hasPower ? 'lg:grid-cols-5' : ''}">
   <div class="card">
     <p class="text-muted">CPU usage</p>
     <p class="mt-1 text-lg tabular-nums">{cpuNow === undefined ? "–" : pct(cpuNow)}</p>
-    <p class="text-xs text-muted">{[cores ? `of ${cores} cores` : "", powerCpu === undefined ? "" : watts(powerCpu)].filter(Boolean).join(" · ")}</p>
+    <p class="text-xs text-muted">{cores ? `of ${cores} cores` : ""}</p>
   </div>
   <div class="card">
     <p class="text-muted">Memory</p>
@@ -153,6 +159,15 @@
     <p class="mt-1 text-lg tabular-nums">{tempCpu === undefined ? "–" : degrees(tempCpu)}</p>
     <p class="text-xs text-muted">CPU{tempDisk === undefined ? "" : ` · system disk ${degrees(tempDisk)}`}</p>
   </div>
+  {#if hasPower}
+    <a class="card block hover:bg-sunken" href="/settings/power-profile">
+      <p class="text-muted">Power</p>
+      <p class="mt-1 text-lg tabular-nums">{watts(powerWall ?? powerCpu)}</p>
+      <p class="text-xs text-muted">
+        {powerWall === undefined ? "CPU package" : powerCpu === undefined ? "at the wall" : `at the wall · CPU ${watts(powerCpu)}`}
+      </p>
+    </a>
+  {/if}
   <a class="card block hover:bg-sunken" href="/storage">
     <p class="text-muted">Storage</p>
     {#if pool && poolCap}
@@ -243,6 +258,21 @@
       <h2 class="font-semibold">Temperature</h2>
       <Chart at={shown.at} lines={two("CPU", shown.temp_cpu, "System disk", shown.temp_disk)} format={degrees} floor={60} label="Temperatures" />
     </section>
+    {#if powerLines(shown).length}
+      <section class="card min-w-0">
+        <h2 class="font-semibold">
+          <Help label="Power">Wall is the power meter's reading of the whole machine, CPU the processor alone. A dashed line marks a profile change.</Help>
+        </h2>
+        <Chart
+          at={shown.at}
+          lines={powerLines(shown)}
+          format={watts}
+          floor={10}
+          marks={range === "live" ? [] : profileMarks(history.data?.profile_changes)}
+          label="Power draw"
+        />
+      </section>
+    {/if}
   </div>
 {:else if range !== "live" && history.isPending}
   <p class="mt-4 text-muted">Loading…</p>

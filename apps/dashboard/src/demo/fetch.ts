@@ -6,7 +6,7 @@
  */
 import type { paths } from "#lib/api/schema.gen.ts";
 import type { Schema } from "#lib/api/client.ts";
-import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerProfile, powerStatus, freezeThaw, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
+import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerMeter, powerProfile, powerProfiles, powerStatus, freezeThaw, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
 import { history } from "./metrics.ts";
 
 /** A stack's files as the demo shows them: its manifest and a short flake. */
@@ -313,6 +313,8 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
   "/system-updates/image": (h) => h.image,
   "/system/power": (h) => powerStatus(h),
   "/system/power-profile": (h) => powerProfile(h),
+  "/system/power-meter": (h) => powerMeter(h),
+  "/metrics/power-profiles": (h, c) => powerProfiles(h, c.query.get("range") ?? "7d", c.query.get("idle_only") === "true"),
   "/version": (h) => ({ version: h.image.core.active, commit: "demo" }),
 };
 
@@ -338,6 +340,11 @@ const posts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknow
   },
   "/storage/pools": (h, c) => ({ status: 201, body: createPool(h, c.body) }),
   "/storage/pools/{uuid}/disks": (h, c) => (addPoolDisk(h, c.path.uuid!, c.body), { status: 204 }),
+  "/system/power-meter/test": (h, c) => {
+    const entity = String(c.body.entity ?? "");
+    if (entity !== "sensor.server_plug_power") return { status: 200, body: { ok: false, code: "entity_not_found", error: `Home Assistant has no ${entity}`, watts: null } };
+    return { status: 200, body: { ok: true, name: "Server plug Power", watts: powerMeter(h).watts ?? 23.4 } };
+  },
 };
 
 /** The puts it acts out: disabling a stack's service. */
@@ -348,6 +355,15 @@ const puts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknown
     if (p !== "power-saver" && p !== "balanced" && p !== "performance") throw new DemoProblem(400, "invalid_setting", "profile: power-saver, balanced or performance");
     h.profile = { profile: p, governor: String(c.body.governor ?? "") };
     return { status: 200, body: powerProfile(h) };
+  },
+  "/system/power-meter": (h, c) => {
+    const url = String(c.body.url ?? "").trim();
+    const entity = String(c.body.entity ?? "").trim();
+    const token = c.body.token === undefined ? undefined : String(c.body.token);
+    const has = url === "" ? false : token === undefined ? h.meter.has_token : token !== "";
+    if (url !== "" && !has) throw new DemoProblem(422, "token_required", "a long-lived access token from Home Assistant is needed");
+    h.meter = { url, entity, has_token: has, idle_only: c.body.idle_only === true };
+    return { status: 200, body: powerMeter(h) };
   },
 };
 

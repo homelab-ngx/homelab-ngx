@@ -29,8 +29,10 @@
     height?: number;
     /** What the chart shows, for screen readers. */
     label: string;
+    /** Moments to mark with a dashed line and a name, such as a setting changing. */
+    marks?: { at: number; label: string }[];
   };
-  let { at, lines, stacked = false, format, floor = 1, ceiling, height = 180, label }: Props = $props();
+  let { at, lines, stacked = false, format, floor = 1, ceiling, height = 180, label, marks = [] }: Props = $props();
 
   const isDark = () => document.documentElement.classList.contains("dark");
   let dark = $state(isDark());
@@ -47,11 +49,14 @@
   /** The plot is rebuilt only when this changes. */
   const shape = $derived(`${dark}|${stacked}|${height}|${lines.map((l) => `${l.label}:${l.hue.light}`).join(",")}`);
 
-  // The raw (not summed) values the legend reads, kept current with the data.
+  // The raw (not summed) values the legend reads, and the marks, kept
+  // current with the data.
   let raw: Line[] = [];
+  let shownMarks: { at: number; label: string }[] = [];
 
   function data(): uPlot.AlignedData {
     raw = lines;
+    shownMarks = marks;
     if (!stacked) return [at, ...lines.map((l) => l.values)];
     let sum: number[] = at.map(() => 0);
     const gap = at.map((_, i) => lines.every((l) => l.values[i] === null || l.values[i] === undefined));
@@ -116,7 +121,49 @@
       ],
       // Each line's fill reaches down to the line under it, not to zero.
       bands: stacked ? lines.slice(1).map((_, i) => ({ series: [i + 2, i + 1] as [number, number] })) : undefined,
+      hooks: { draw: [(u) => drawMarks(u, muted)] },
     };
+  }
+
+  /** A dashed line at each mark inside the plot, its name at the top. */
+  function drawMarks(u: uPlot, stroke: string) {
+    if (!shownMarks.length) return;
+    const { left, top, width, height: h } = u.bbox;
+    const ctx = u.ctx;
+    const px = devicePixelRatio;
+    const surface = token("--surface");
+    ctx.save();
+    ctx.strokeStyle = stroke;
+    ctx.fillStyle = stroke;
+    ctx.lineWidth = px;
+    ctx.setLineDash([4 * px, 3 * px]);
+    ctx.font = `${11 * px}px ${token("--font-sans") || "system-ui, sans-serif"}`;
+    ctx.textBaseline = "top";
+    ctx.textAlign = "left"; // uPlot leaves the y axis's right alignment set
+    // The right end of the last name on each line of names: a name that
+    // would overlap one goes a line lower.
+    const ends: number[] = [];
+    for (const m of shownMarks) {
+      const x = Math.round(u.valToPos(m.at, "x", true));
+      if (x < left || x > left + width) continue;
+      ctx.beginPath();
+      ctx.moveTo(x, top);
+      ctx.lineTo(x, top + h);
+      ctx.stroke();
+      const w = ctx.measureText(m.label).width;
+      // The name sits right of the line, or left of it near the right edge.
+      const tx = x + w + 6 * px > left + width ? x - w - 4 * px : x + 4 * px;
+      let row = ends.findIndex((end) => end + 6 * px < tx);
+      if (row < 0) row = ends.length;
+      ends[row] = tx + w;
+      const ty = top + 2 * px + row * 14 * px;
+      // On the card's colour, so a line under the name does not cross it.
+      ctx.fillStyle = surface;
+      ctx.fillRect(tx - 2 * px, ty - px, w + 4 * px, 13 * px);
+      ctx.fillStyle = stroke;
+      ctx.fillText(m.label, tx, ty);
+    }
+    ctx.restore();
   }
 
   /** A time axis label: the day across days and at midnight, else the time. */

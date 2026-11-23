@@ -49,7 +49,7 @@ export const info = (h: Host): Schema<"HostInfo"> => ({ cores: 8, memory_total: 
 
 /** The points from `from` to `to` (unix seconds), one every `step`. */
 export function frames(h: Host, from: number, to: number, step: number): Frames {
-  const f: Frames = { at: [], step, host: emptySeries(), kernel: emptySeries(), services: emptySeries(), sessions: emptySeries(), stacks: {}, temp_cpu: [], temp_disk: [], power_cpu: [] };
+  const f: Frames = { at: [], step, host: emptySeries(), kernel: emptySeries(), services: emptySeries(), sessions: emptySeries(), stacks: {}, temp_cpu: [], temp_disk: [], power_cpu: [], power_wall: [] };
   for (const s of h.stacks) f.stacks[s.name] = emptySeries();
   for (let t = Math.ceil(from / step) * step; t <= to; t += step) {
     f.at.push(t);
@@ -66,6 +66,8 @@ export function frames(h: Host, from: number, to: number, step: number): Frames 
     f.temp_cpu.push(Math.round(41 + (f.host.cpu[n] ?? 0) * 0.6));
     f.temp_disk.push(Math.round(wave(t, 104, 37, 0.04)));
     f.power_cpu.push(+(4 + (f.host.cpu[n] ?? 0) * 0.5).toFixed(1));
+    // The demo's plug sees the package plus about 18 W for the rest of the box.
+    f.power_wall.push(+(22 + (f.host.cpu[n] ?? 0) * 0.6).toFixed(1));
   }
   return f;
 }
@@ -75,7 +77,12 @@ const RANGES: Record<string, [span: number, step: number]> = { "24h": [86400, 30
 export function history(h: Host, range: string): Schema<"MetricsHistory"> {
   const [span, step] = RANGES[range] ?? RANGES["24h"]!;
   const now = Math.floor(h.now() / 1000);
-  return { frames: frames(h, now - span, now, step) };
+  // The demo tried power saver for a day, a day and a half ago.
+  const changes = [
+    { at: now - 36 * 3600, profile: "power-saver" },
+    { at: now - 12 * 3600, profile: h.profile.profile },
+  ].filter((c) => c.at >= now - span);
+  return { frames: frames(h, now - span, now, step), profile_changes: changes };
 }
 
 /** What the live page listens to in place of the daemon's event stream. */

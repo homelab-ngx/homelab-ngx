@@ -6,8 +6,10 @@
 
   interface Props {
     current: PowerProfileStatus;
+    /** The power meter's reading in W; null without one. */
+    wall?: number | null;
   }
-  let { current }: Props = $props();
+  let { current, wall = null }: Props = $props();
   const id = $props.id();
   const idle = $derived(current.idle);
   // "Active" first: the share of time no CPU idled, then each idle state.
@@ -37,7 +39,14 @@
       </h3>
       <p class="mt-0.5 text-xs text-muted">The last {Math.round(idle.window_seconds)} s</p>
     </div>
-    {#if idle.watts !== null}<p class="pt-0.5 text-lg tabular-nums">{watts(idle.watts)}</p>{/if}
+    {#if wall !== null || idle.watts !== null}
+      <div class="pt-0.5 text-right">
+        <p class="text-lg tabular-nums">{watts(wall ?? idle.watts)}</p>
+        <p class="text-xs text-muted">
+          {wall === null ? "CPU package" : idle.watts === null ? "at the wall" : `at the wall · CPU ${watts(idle.watts)}`}
+        </p>
+      </div>
+    {/if}
   </div>
 
   <div class="mt-3 grid gap-3">

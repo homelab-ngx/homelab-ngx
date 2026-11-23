@@ -41,6 +41,7 @@ export interface Host {
   storage: Schema<"StorageStatus">;
   power: Schema<"PowerStatus">;
   profile: Schema<"PowerProfileSettings">;
+  meter: { url: string; entity: string; has_token: boolean; idle_only: boolean };
   /** Until when the host is down (ms): every request fails, as when it reboots. */
   downUntil: number;
   pending: Pending[];
@@ -535,6 +536,7 @@ export function newHost(now: () => number = Date.now): Host {
     },
     power: idlePower("demo-boot-1"),
     profile: { profile: "balanced", governor: "" },
+    meter: { url: "http://homeassistant.local:8123", entity: "sensor.server_plug_power", has_token: true, idle_only: false },
     downUntil: 0,
     pending: [],
   };
@@ -968,5 +970,38 @@ export function powerProfile(h: Host): Schema<"PowerProfileStatus"> {
       watts: saver ? 6.8 : perf ? 14.2 : 8.9,
     },
     blockers,
+  };
+}
+
+/** The demo's smart plug in Home Assistant, reading what the profile draws. */
+export function powerMeter(h: Host): Schema<"PowerMeter"> {
+  const on = h.meter.url !== "" && h.meter.has_token;
+  const watts = { "power-saver": 19.6, balanced: 23.4, performance: 31.2 }[h.profile.profile];
+  return {
+    ...h.meter,
+    state: on ? "connected" : "off",
+    detail: "",
+    name: on ? "Server plug Power" : "",
+    watts: on ? watts : null,
+    at: on ? Math.floor(h.now() / 1000) - 4 : 0,
+  };
+}
+
+/** A week of balanced with a day of power saver, as the comparison reads it. */
+export function powerProfiles(h: Host, range: string, idleOnly: boolean): Schema<"MetricsPowerProfiles"> {
+  const days = range === "30d" ? 30 : range === "7d" ? 7 : 1;
+  const wall = h.meter.url !== "" && h.meter.has_token;
+  const row = (profile: string, minutes: number, w: number, cpu: number) => ({
+    profile, minutes, wall_minutes: wall ? minutes : 0, wall: wall ? w : null, cpu,
+  });
+  const saver = Math.min(days, 1) * 1440;
+  const k = idleOnly ? 0.8 : 1;
+  return {
+    range: range as Schema<"MetricsPowerProfiles">["range"],
+    idle_only: idleOnly,
+    profiles: [
+      row("balanced", Math.round((days * 1440 - saver) * k), idleOnly ? 22.1 : 24.3, idleOnly ? 7.9 : 9.4),
+      row("power-saver", Math.round(saver * k), idleOnly ? 18.4 : 19.9, idleOnly ? 6.1 : 6.9),
+    ].filter((r) => r.minutes > 0),
   };
 }

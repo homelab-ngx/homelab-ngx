@@ -40,6 +40,7 @@ const frames = (at: number[], stacks: Record<string, (number | null)[]> = {}): F
   temp_cpu: at.map(() => 40),
   temp_disk: at.map(() => 30),
   power_cpu: at.map(() => 5),
+  power_wall: at.map(() => 15),
 });
 
 describe("appendFrames", () => {
