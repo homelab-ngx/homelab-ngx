@@ -149,6 +149,17 @@ func (s *Service) Status(ctx context.Context) (PowerProfileStatus, error) {
 	}, nil
 }
 
+// Profile is the profile in force, for the metrics to record; empty on a
+// host the daemon does not tune.
+func (s *Service) Profile() string {
+	if !s.image {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return string(s.settings.Profile)
+}
+
 // Set saves and applies a profile and governor.
 func (s *Service) Set(ctx context.Context, in PowerProfileSettings) (PowerProfileStatus, error) {
 	if !s.image {

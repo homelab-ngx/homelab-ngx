@@ -22,6 +22,13 @@ type historyIn struct {
 
 type historyOut struct{ Body MetricsHistory }
 
+type profilesIn struct {
+	Range    MetricsRange `query:"range" required:"true" doc:"How far back."`
+	IdleOnly bool         `query:"idle_only" doc:"Count only the minutes the host's CPU was under 5%."`
+}
+
+type profilesOut struct{ Body MetricsPowerProfiles }
+
 // Register adds the metrics operations.
 func (h *HTTP) Register(a httpx.APIs) {
 	tags := []string{"metrics"}
@@ -36,7 +43,24 @@ func (h *HTTP) Register(a httpx.APIs) {
 		if err != nil {
 			return nil, httpx.Internal("metrics_history", "read the metrics history: %v", err)
 		}
-		return &historyOut{Body: MetricsHistory{Frames: f}}, nil
+		ch, err := h.m.ProfileChanges(ctx, in.Range)
+		if err != nil {
+			return nil, httpx.Internal("metrics_history", "read the power profile changes: %v", err)
+		}
+		return &historyOut{Body: MetricsHistory{Frames: f, ProfileChanges: ch}}, nil
+	})
+	httpx.Register(a, httpx.ScopeRead, huma.Operation{
+		OperationID: "getMetricsPowerProfiles", Method: http.MethodGet, Path: "/metrics/power-profiles", Tags: tags,
+		Summary: "The host's average power under each power profile.",
+		Description: "From the stored minutes, each of which records the power profile in force. `wall` is the power " +
+			"meter's reading, `cpu` the CPU package's. Minutes from before the profile was recorded are left out.",
+		Errors: []int{http.StatusBadRequest},
+	}, func(ctx context.Context, in *profilesIn) (*profilesOut, error) {
+		p, err := h.m.PowerProfiles(ctx, in.Range, in.IdleOnly)
+		if err != nil {
+			return nil, httpx.Internal("metrics_power_profiles", "read the power per profile: %v", err)
+		}
+		return &profilesOut{Body: p}, nil
 	})
 	httpx.RegisterSSE(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "streamMetrics", Method: http.MethodGet, Path: "/metrics/stream", Tags: tags,

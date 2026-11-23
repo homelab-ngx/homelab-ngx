@@ -82,6 +82,8 @@ type MetricFrames struct {
 	TempDisk []Num `json:"temp_disk" doc:"System disk temperature in °C."`
 	// PowerCPU is the CPU packages' draw in watts, from RAPL.
 	PowerCPU []Num `json:"power_cpu" doc:"CPU package power in W, from RAPL; null where the host has none."`
+	// PowerWall is the whole machine's draw from the power meter.
+	PowerWall []Num `json:"power_wall" doc:"The whole machine's power in W, from the power meter; null without one or while it is not connected."`
 }
 
 // Info are facts about the host that do not change while it runs.
@@ -122,4 +124,30 @@ func (MetricsRange) Schema(huma.Registry) *huma.Schema {
 // History is the stored past at the resolution its range is read at.
 type MetricsHistory struct {
 	Frames MetricFrames `json:"frames"`
+	// ProfileChanges are the minutes the power profile changed in the range.
+	ProfileChanges []MetricsProfileChange `json:"profile_changes" doc:"The minutes the power profile changed, oldest first."`
+}
+
+// MetricsProfileChange is a minute whose power profile differs from the
+// minute stored before it.
+type MetricsProfileChange struct {
+	At      int64  `json:"at" doc:"Unix seconds."`
+	Profile string `json:"profile"`
+}
+
+// MetricsPowerProfiles are the host's average power under each power
+// profile over a range.
+type MetricsPowerProfiles struct {
+	Range    MetricsRange          `json:"range"`
+	IdleOnly bool                  `json:"idle_only" doc:"Whether only the minutes the host's CPU was under 5% count."`
+	Profiles []MetricsProfilePower `json:"profiles"`
+}
+
+// MetricsProfilePower is one power profile's minutes and average power.
+type MetricsProfilePower struct {
+	Profile     string `json:"profile"`
+	Minutes     int    `json:"minutes" doc:"Stored minutes under the profile."`
+	WallMinutes int    `json:"wall_minutes" doc:"Of those, minutes with a power meter reading."`
+	Wall        Num    `json:"wall" doc:"Average power meter reading in W; null without readings."`
+	CPU         Num    `json:"cpu" doc:"Average CPU package power in W; null without readings."`
 }

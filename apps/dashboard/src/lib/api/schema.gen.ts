@@ -1079,6 +1079,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/metrics/power-profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The host's average power under each power profile.
+         * @description From the stored minutes, each of which records the power profile in force. `wall` is the power meter's reading, `cpu` the CPU package's. Minutes from before the profile was recorded are left out.
+         */
+        get: operations["getMetricsPowerProfiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/metrics/stream": {
         parameters: {
             query?: never;
@@ -2376,6 +2396,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system/power-meter": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The power meter: its Home Assistant connection and its last reading.
+         * @description The meter is a power sensor in Home Assistant, such as a smart plug the host is plugged into. The token is never returned.
+         */
+        get: operations["getPowerMeter"];
+        /**
+         * Set up, change or turn off the power meter.
+         * @description The daemon reconnects when the address, entity or token changed. An empty url and entity turn the meter off and remove the token.
+         */
+        put: operations["setPowerMeter"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/system/power-meter/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connect to Home Assistant once and read the entity, without saving.
+         * @description Without a token in the body the stored one is used. A failed connection is a 200 with ok false and a code.
+         */
+        post: operations["testPowerMeter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/power-profile": {
         parameters: {
             query?: never;
@@ -3663,6 +3727,8 @@ export interface components {
             kernel: components["schemas"]["MetricSeries"];
             /** @description CPU package power in W, from RAPL; null where the host has none. */
             power_cpu: (number | null)[];
+            /** @description The whole machine's power in W, from the power meter; null without one or while it is not connected. */
+            power_wall: (number | null)[];
             /** @description The host's services, the homelab daemon among them, and systemd itself. CPU, memory and disk only. */
             services: components["schemas"]["MetricSeries"];
             /** @description Login sessions and the user services they run (user.slice), such as coding agents. CPU, memory and disk only. */
@@ -3706,6 +3772,40 @@ export interface components {
         };
         MetricsHistory: {
             frames: components["schemas"]["MetricFrames"];
+            /** @description The minutes the power profile changed, oldest first. */
+            profile_changes: components["schemas"]["MetricsProfileChange"][];
+        };
+        MetricsPowerProfiles: {
+            /** @description Whether only the minutes the host's CPU was under 5% count. */
+            idle_only: boolean;
+            profiles: components["schemas"]["MetricsProfilePower"][];
+            /** @enum {string} */
+            range: "24h" | "7d" | "30d";
+        };
+        MetricsProfileChange: {
+            /**
+             * Format: int64
+             * @description Unix seconds.
+             */
+            at: number;
+            profile: string;
+        };
+        MetricsProfilePower: {
+            /** @description Average CPU package power in W; null without readings. */
+            cpu: number | null;
+            /**
+             * Format: int64
+             * @description Stored minutes under the profile.
+             */
+            minutes: number;
+            profile: string;
+            /** @description Average power meter reading in W; null without readings. */
+            wall: number | null;
+            /**
+             * Format: int64
+             * @description Of those, minutes with a power meter reading.
+             */
+            wall_minutes: number;
         };
         MetricsSample: {
             frames: components["schemas"]["MetricFrames"];
@@ -4019,6 +4119,55 @@ export interface components {
              * @description Its share of the window, 0 to 1.
              */
             share: number;
+        };
+        PowerMeter: {
+            /**
+             * Format: int64
+             * @description When the plug last reported, in unix seconds; 0 when never.
+             */
+            at: number;
+            /** @description Why the state is auth_failed or error. */
+            detail: string;
+            /** @description The power sensor's entity id, such as sensor.server_plug_power. */
+            entity: string;
+            /** @description Whether a long-lived access token is stored. */
+            has_token: boolean;
+            /** @description Whether the profile comparison shows only the minutes the host was idle. A display choice: what is stored is the same. */
+            idle_only: boolean;
+            /** @description The entity's friendly name in Home Assistant. */
+            name: string;
+            /** @enum {string} */
+            state: "off" | "connecting" | "connected" | "auth_failed" | "error";
+            /** @description Home Assistant's address, such as http://homeassistant.local:8123; empty when no meter is set up. */
+            url: string;
+            /**
+             * Format: double
+             * @description The last reading in W; null while not connected or when the plug reports none.
+             */
+            watts: number | null;
+        };
+        PowerMeterSet: {
+            entity: string;
+            idle_only: boolean;
+            /** @description Absent keeps the stored token; empty removes it. */
+            token?: string;
+            url: string;
+        };
+        PowerMeterTest: {
+            /**
+             * @description Why the test failed.
+             * @enum {string}
+             */
+            code?: "unreachable" | "auth_invalid" | "entity_not_found" | "not_power";
+            error?: string;
+            /** @description The entity's friendly name. */
+            name?: string;
+            ok: boolean;
+            /**
+             * Format: double
+             * @description The reading in W; null when the plug reports none.
+             */
+            watts: number | null;
         };
         PowerProfileSettings: {
             /** @description A name from governors, or empty for the profile's own. */
@@ -10357,6 +10506,88 @@ export interface operations {
             };
         };
     };
+    getMetricsPowerProfiles: {
+        parameters: {
+            query: {
+                /** @description How far back. */
+                range: "24h" | "7d" | "30d";
+                /** @description Count only the minutes the host's CPU was under 5%. */
+                idle_only?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MetricsPowerProfiles"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     streamMetrics: {
         parameters: {
             query?: never;
@@ -14902,6 +15133,169 @@ export interface operations {
                     } & {
                         [key: string]: unknown;
                     };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getPowerMeter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PowerMeter"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    setPowerMeter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PowerMeterSet"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PowerMeter"];
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    testPowerMeter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PowerMeterSet"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PowerMeterTest"];
                 };
             };
             /** @description Unprocessable Entity */

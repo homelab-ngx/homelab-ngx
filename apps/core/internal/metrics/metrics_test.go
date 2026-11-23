@@ -8,7 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
+	"slices"
 	"testing"
 	"time"
 )
@@ -139,6 +139,7 @@ func TestTickTurnsCountersIntoRates(t *testing.T) {
 	m := New(h.paths, oneStack{}, nil, nil)
 	now := time.Unix(1_700_000_000, 0)
 	m.now = func() time.Time { return now }
+	m.SetWall(func() (float64, bool) { return 14.5, true })
 	ctx := context.Background()
 
 	h.set(state{memAvailKB: 12000000, stackMem: 1000, unitMem: 100})
@@ -173,6 +174,7 @@ func TestTickTurnsCountersIntoRates(t *testing.T) {
 	near(t, "cpu temp", s.host[figTempCPU], 55)
 	near(t, "disk temp", s.host[figTempDisk], 41.85)
 	near(t, "cpu package power (its parts left out)", s.host[figPowerCPU], 2)
+	near(t, "the power meter", s.host[figPowerWall], 14.5)
 
 	st, ok := s.stacks["immich"]
 	if !ok {
@@ -243,7 +245,7 @@ func TestMinutesAreStoredAndReadBack(t *testing.T) {
 	// Rows of an older layout's parts are skipped.
 	old := emptyPoint()
 	old[figCPU] = 99
-	if err := db.write(ctx, start, map[string]point{"@core": old, "@daemon": old}); err != nil {
+	if err := db.write(ctx, start, map[string]point{"@core": old, "@daemon": old}, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -325,15 +327,21 @@ func TestRAPLWraps(t *testing.T) {
 	}
 }
 
-// TestOpenDBAddsPowerCPU opens a metrics.db made before power_cpu.
-func TestOpenDBAddsPowerCPU(t *testing.T) {
+// TestOpenDBAddsColumns opens a metrics.db made before power_cpu,
+// power_wall and profile.
+func TestOpenDBAddsColumns(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "metrics.db")
 	old, err := sql.Open("sqlite", "file:"+path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := old.ExecContext(ctx, strings.Replace(schema, " power_cpu REAL,", "", 1)); err != nil {
+	if _, err := old.ExecContext(ctx, `CREATE TABLE metrics_minute (
+  scope TEXT NOT NULL, ts INTEGER NOT NULL,
+  cpu REAL, memory REAL, pressure_cpu REAL, pressure_memory REAL, pressure_io REAL,
+  disk_read REAL, disk_write REAL, net_rx REAL, net_tx REAL, temp_cpu REAL, temp_disk REAL,
+  cpu_max REAL, memory_max REAL,
+  PRIMARY KEY (ts, scope)) WITHOUT ROWID`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := old.ExecContext(ctx, "INSERT INTO metrics_minute (scope, ts, cpu) VALUES (?, 60, 5)", hostScope); err != nil {
@@ -346,7 +354,72 @@ func TestOpenDBAddsPowerCPU(t *testing.T) {
 	}
 	defer db.Close()
 	got, err := db.samples(ctx, time.Unix(0, 0), 60)
-	if err != nil || len(got) != 1 || !math.IsNaN(got[0].host[figPowerCPU]) || got[0].host[figCPU] != 5 {
+	if err != nil || len(got) != 1 || !math.IsNaN(got[0].host[figPowerCPU]) || !math.IsNaN(got[0].host[figPowerWall]) || got[0].host[figCPU] != 5 {
 		t.Fatalf("samples: %+v %v", got, err)
+	}
+	if err := db.write(ctx, time.Unix(120, 0), map[string]point{hostScope: emptyPoint()}, "balanced"); err != nil {
+		t.Fatalf("write after the columns were added: %v", err)
+	}
+}
+
+func TestPowerPerProfile(t *testing.T) {
+	ctx := context.Background()
+	db, err := OpenDB(ctx, filepath.Join(t.TempDir(), "metrics.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	now := time.Now().Truncate(time.Minute)
+	m := New(DefaultPaths(), nil, db, nil)
+	m.now = func() time.Time { return now }
+
+	// Two balanced minutes before the range, then in the range: balanced
+	// (one busy), power saver, a minute with no profile, balanced again.
+	row := func(ago time.Duration, profile string, cpu, wall, pkg float64) {
+		t.Helper()
+		p := emptyPoint()
+		p[figCPU], p[figPowerCPU] = cpu, pkg
+		if wall > 0 {
+			p[figPowerWall] = wall
+		}
+		part := emptyPoint()
+		part[figCPU] = 1
+		if err := db.write(ctx, now.Add(-ago), map[string]point{hostScope: p, partScopes[partServices]: part}, profile); err != nil {
+			t.Fatal(err)
+		}
+	}
+	row(25*time.Hour, "balanced", 1, 20, 3)
+	row(10*time.Minute, "balanced", 1, 20, 3)
+	row(9*time.Minute, "balanced", 50, 40, 15)
+	row(8*time.Minute, "power-saver", 1, 14, 1)
+	row(7*time.Minute, "power-saver", 2, 0, 1)
+	row(6*time.Minute, "", 1, 30, 3)
+	row(5*time.Minute, "balanced", 1, 20, 3)
+
+	got, err := m.PowerProfiles(ctx, Range24h, false)
+	if err != nil || len(got.Profiles) != 2 {
+		t.Fatalf("%+v %v", got, err)
+	}
+	b, ps := got.Profiles[0], got.Profiles[1]
+	if b.Profile != "balanced" || b.Minutes != 3 || b.WallMinutes != 3 || ps.Profile != "power-saver" || ps.Minutes != 2 || ps.WallMinutes != 1 {
+		t.Errorf("minutes: %+v", got.Profiles)
+	}
+	near(t, "balanced wall", float64(b.Wall), 80.0/3)
+	near(t, "power saver wall (the minute without a reading left out)", float64(ps.Wall), 14)
+	near(t, "power saver cpu", float64(ps.CPU), 1)
+
+	idle, _ := m.PowerProfiles(ctx, Range24h, true)
+	near(t, "balanced wall, idle only", float64(idle.Profiles[0].Wall), 20)
+	if idle.Profiles[0].Minutes != 2 || !idle.IdleOnly {
+		t.Errorf("idle only: %+v", idle)
+	}
+
+	ch, err := m.ProfileChanges(ctx, Range24h)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []MetricsProfileChange{{now.Add(-8 * time.Minute).Unix(), "power-saver"}, {now.Add(-5 * time.Minute).Unix(), "balanced"}}
+	if !slices.Equal(ch, want) {
+		t.Errorf("changes = %v, want %v", ch, want)
 	}
 }

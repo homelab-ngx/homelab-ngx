@@ -61,6 +61,7 @@ const (
 	figCPUMax
 	figMemoryMax
 	figPowerCPU
+	figPowerWall
 	nFig
 )
 
@@ -137,6 +138,10 @@ type Metrics struct {
 	rapl     rapl
 	raplAt   time.Time
 
+	// Set before Run: the power meter's reading and the power profile.
+	wall    func() (float64, bool)
+	profile func() string
+
 	mu    sync.Mutex
 	ring  []sample
 	usage map[string]services.Usage // per stack and "<stack>/<unit>"
@@ -157,6 +162,14 @@ func New(paths Paths, stacks Stacks, db *DB, log *slog.Logger) *Metrics {
 	_, m.memTotal, _ = hostMemory(paths.Proc)
 	return m
 }
+
+// SetWall gives the sampler the power meter's reading: the whole machine's
+// draw in W, false when there is none. Call it before Run.
+func (m *Metrics) SetWall(f func() (float64, bool)) { m.wall = f }
+
+// SetProfile gives the sampler the power profile in force, stored with each
+// minute of the host so the profiles can be compared. Call it before Run.
+func (m *Metrics) SetProfile(f func() string) { m.profile = f }
 
 // Info returns the host's fixed facts.
 func (m *Metrics) Info() HostInfo {
@@ -233,6 +246,11 @@ func (m *Metrics) tick(ctx context.Context) {
 	r := readRAPL(m.paths.Powercap)
 	s.host[figPowerCPU] = watts(m.rapl, r, now.Sub(m.raplAt).Seconds())
 	m.rapl, m.raplAt = r, now
+	if m.wall != nil {
+		if w, ok := m.wall(); ok {
+			s.host[figPowerWall] = w
+		}
+	}
 
 	for _, sc := range m.currentScopes(ctx) {
 		dir := filepath.Join(m.paths.Machines, sc.Name+".scope")
@@ -449,7 +467,7 @@ func framesOf(ss []sample, step int, withMax bool) MetricFrames {
 		f.Stacks[n] = seriesOf(ps, withMax)
 	}
 	f.TempCPU, f.TempDisk = column(hosts, figTempCPU), column(hosts, figTempDisk)
-	f.PowerCPU = column(hosts, figPowerCPU)
+	f.PowerCPU, f.PowerWall = column(hosts, figPowerCPU), column(hosts, figPowerWall)
 	return f
 }
 
@@ -478,6 +496,8 @@ func seriesOf(ps []point, withMax bool) MetricSeries {
 type minuteAcc struct {
 	start  time.Time
 	scopes map[string]*acc
+	// profile is the power profile at the minute's last sample.
+	profile string
 }
 
 type acc struct {
@@ -534,6 +554,9 @@ func (m *Metrics) addToMinute(ctx context.Context, s sample) {
 		a.add(p)
 	}
 	add(hostScope, s.host)
+	if m.profile != nil {
+		m.minute.profile = m.profile()
+	}
 	for i, p := range s.parts {
 		add(partScopes[i], p)
 	}
@@ -557,7 +580,7 @@ func (m *Metrics) flushMinute(ctx context.Context) {
 	for scope, a := range m.minute.scopes {
 		rows[scope] = a.point()
 	}
-	if err := m.db.write(ctx, m.minute.start, rows); err != nil {
+	if err := m.db.write(ctx, m.minute.start, rows, m.minute.profile); err != nil {
 		m.log.Warn("metrics: store minute", "error", err)
 	}
 	m.minute.scopes = nil

@@ -39,6 +39,7 @@ import (
 	"homelab-ngx.com/core/internal/metrics"
 	"homelab-ngx.com/core/internal/notifications"
 	"homelab-ngx.com/core/internal/power"
+	"homelab-ngx.com/core/internal/powermeter"
 	"homelab-ngx.com/core/internal/powerprofile"
 	"homelab-ngx.com/core/internal/services"
 	"homelab-ngx.com/core/internal/stacks"
@@ -213,6 +214,11 @@ func run(configPath string) error {
 	// boot.
 	pp := powerprofile.New(powerprofile.DefaultPaths(), st,
 		hostcfg.Detect("/etc/os-release") == hostcfg.ManagedImage, logging.Logger("powerprofile"))
+	// The power meter's watts and the profile go into every sample, so the
+	// profiles can be compared at the wall.
+	pm := powermeter.New(st, stacks.DefaultHost(r).AgeKeyFile, logging.Logger("powermeter"))
+	met.SetWall(pm.Wall)
+	met.SetProfile(pp.Profile)
 
 	// Ask reads the same log viewer list the Logs page does.
 	logs := system.New(cfg, r, logSources{stackUnits{stacksSvc}, bk})
@@ -240,7 +246,7 @@ func run(configPath string) error {
 		services: svcs, backups: bk, storage: stor, stacks: stacksSvc,
 		sysupdates: sysMod, notifications: notify, channels: channels, hostcfg: hostSvc, config: cfg, runner: r, metrics: met,
 		drafts: draftsSvc, assistant: assistant, ask: askSvc, audit: auditSvc,
-		auth: auth.New(st, logging.Logger("auth")), power: pw, powerProfile: pp,
+		auth: auth.New(st, logging.Logger("auth")), power: pw, powerProfile: pp, powerMeter: pm,
 	})
 
 	// ── Run ─────────────────────────────────────────────────────────────
@@ -283,6 +289,7 @@ func run(configPath string) error {
 	// still mounting stops what started.
 	g.Go(func() error { pw.Run(gctx); return nil })
 	g.Go(func() error { pp.Run(gctx); return nil })
+	g.Go(func() error { pm.Run(gctx); return nil })
 	// Said only once the daemon has stayed up a while: a daemon that dies at
 	// every start would otherwise send one at each of systemd's restarts.
 	if crashed && notify.Enabled() {

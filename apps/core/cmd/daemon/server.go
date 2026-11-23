@@ -20,6 +20,7 @@ import (
 	"homelab-ngx.com/core/internal/metrics"
 	"homelab-ngx.com/core/internal/notifications"
 	"homelab-ngx.com/core/internal/power"
+	"homelab-ngx.com/core/internal/powermeter"
 	"homelab-ngx.com/core/internal/powerprofile"
 	"homelab-ngx.com/core/internal/services"
 	"homelab-ngx.com/core/internal/stacks"
@@ -54,6 +55,7 @@ type deps struct {
 	auth          *auth.Service
 	power         *power.Service
 	powerProfile  *powerprofile.Service
+	powerMeter    *powermeter.Service
 }
 
 func features(d deps) []feature {
@@ -75,6 +77,7 @@ func features(d deps) []feature {
 		auth.NewHTTP(d.auth),
 		power.NewHTTP(d.power),
 		powerprofile.NewHTTP(d.powerProfile),
+		powermeter.NewHTTP(d.powerMeter),
 	}
 }
 

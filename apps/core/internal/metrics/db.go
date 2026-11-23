@@ -26,15 +26,20 @@ type DB struct{ db *sql.DB }
 var columns = []string{
 	"cpu", "memory", "pressure_cpu", "pressure_memory", "pressure_io",
 	"disk_read", "disk_write", "net_rx", "net_tx", "temp_cpu", "temp_disk",
-	"cpu_max", "memory_max", "power_cpu",
+	"cpu_max", "memory_max", "power_cpu", "power_wall",
 }
+
+// idleCPU is the host CPU share in percent under which a minute counts as
+// idle in the profile comparison.
+const idleCPU = 5
 
 const schema = `CREATE TABLE IF NOT EXISTS metrics_minute (
   scope TEXT NOT NULL,
   ts INTEGER NOT NULL,
   cpu REAL, memory REAL, pressure_cpu REAL, pressure_memory REAL, pressure_io REAL,
   disk_read REAL, disk_write REAL, net_rx REAL, net_tx REAL, temp_cpu REAL, temp_disk REAL,
-  cpu_max REAL, memory_max REAL, power_cpu REAL,
+  cpu_max REAL, memory_max REAL, power_cpu REAL, power_wall REAL,
+  profile TEXT,
   PRIMARY KEY (ts, scope)
 ) WITHOUT ROWID`
 
@@ -57,41 +62,69 @@ func OpenDB(ctx context.Context, path string) (*DB, error) {
 		sdb.Close()
 		return nil, fmt.Errorf("metrics: open %s: %w", abs, err)
 	}
-	// A table from before power_cpu gains it; its old rows read as no
-	// reading.
-	var has int
-	if err := sdb.QueryRowContext(ctx, "SELECT count(*) FROM pragma_table_info('metrics_minute') WHERE name = 'power_cpu'").Scan(&has); err != nil {
+	// A table from before a column was added gains it; its old rows read as
+	// no reading.
+	if err := addColumns(ctx, sdb); err != nil {
 		sdb.Close()
 		return nil, fmt.Errorf("metrics: open %s: %w", abs, err)
 	}
-	if has == 0 {
-		if _, err := sdb.ExecContext(ctx, "ALTER TABLE metrics_minute ADD COLUMN power_cpu REAL"); err != nil {
-			sdb.Close()
-			return nil, fmt.Errorf("metrics: open %s: %w", abs, err)
+	return &DB{db: sdb}, nil
+}
+
+// addColumns adds the columns the table lacks.
+func addColumns(ctx context.Context, sdb *sql.DB) error {
+	want := map[string]string{"profile": "TEXT"}
+	for _, c := range columns {
+		want[c] = "REAL"
+	}
+	rows, err := sdb.QueryContext(ctx, "SELECT name FROM pragma_table_info('metrics_minute')")
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var n string
+		if err := rows.Scan(&n); err != nil {
+			rows.Close()
+			return err
+		}
+		delete(want, n)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for c, typ := range want {
+		if _, err := sdb.ExecContext(ctx, "ALTER TABLE metrics_minute ADD COLUMN "+c+" "+typ); err != nil {
+			return err
 		}
 	}
-	return &DB{db: sdb}, nil
+	return nil
 }
 
 // Close closes the database.
 func (d *DB) Close() error { return d.db.Close() }
 
-// write stores one minute's rows, one per scope, in one transaction.
-func (d *DB) write(ctx context.Context, minute time.Time, rows map[string]point) error {
+// write stores one minute's rows, one per scope, in one transaction. The
+// host's row carries the power profile; empty is none.
+func (d *DB) write(ctx context.Context, minute time.Time, rows map[string]point, profile string) error {
 	tx, err := d.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	q := "INSERT OR REPLACE INTO metrics_minute (scope, ts, " + strings.Join(columns, ", ") +
-		") VALUES (?, ?" + strings.Repeat(", ?", nFig) + ")"
+	q := "INSERT OR REPLACE INTO metrics_minute (scope, ts, profile, " + strings.Join(columns, ", ") +
+		") VALUES (?, ?, ?" + strings.Repeat(", ?", nFig) + ")"
 	stmt, err := tx.PrepareContext(ctx, q)
 	if err != nil {
 		return err
 	}
 	defer stmt.Close()
 	for scope, p := range rows {
-		args := []any{scope, minute.Unix()}
+		var prof any
+		if scope == hostScope && profile != "" {
+			prof = profile
+		}
+		args := []any{scope, minute.Unix(), prof}
 		for _, v := range p {
 			args = append(args, nullable(v))
 		}
@@ -193,4 +226,80 @@ func (m *Metrics) History(ctx context.Context, r MetricsRange) (MetricFrames, er
 		return MetricFrames{}, err
 	}
 	return framesOf(ss, bucket, true), nil
+}
+
+// ProfileChanges are the minutes of a range whose power profile differs
+// from the stored minute before. The first minute of the range counts when
+// the one before it differs too.
+func (m *Metrics) ProfileChanges(ctx context.Context, r MetricsRange) ([]MetricsProfileChange, error) {
+	span, _, ok := bucketOf(r)
+	if !ok {
+		return nil, fmt.Errorf("unknown range %q", r)
+	}
+	out := []MetricsProfileChange{}
+	if m.db == nil {
+		return out, nil
+	}
+	since := m.now().Add(-span).Unix()
+	rows, err := m.db.db.QueryContext(ctx, `SELECT ts, profile FROM metrics_minute
+		WHERE scope = ? AND profile IS NOT NULL AND ts >= (
+		  SELECT coalesce(max(ts), ?) FROM metrics_minute WHERE scope = ? AND profile IS NOT NULL AND ts < ?)
+		ORDER BY ts`, hostScope, since, hostScope, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	prev := ""
+	for rows.Next() {
+		var at int64
+		var p string
+		if err := rows.Scan(&at, &p); err != nil {
+			return nil, err
+		}
+		if prev != "" && p != prev && at >= since {
+			out = append(out, MetricsProfileChange{At: at, Profile: p})
+		}
+		prev = p
+	}
+	return out, rows.Err()
+}
+
+// PowerProfiles averages the host's power per power profile over a range;
+// idleOnly keeps the minutes whose CPU was under idleCPU percent. Minutes
+// with no profile, stored before profiles were recorded, are left out.
+func (m *Metrics) PowerProfiles(ctx context.Context, r MetricsRange, idleOnly bool) (MetricsPowerProfiles, error) {
+	span, _, ok := bucketOf(r)
+	if !ok {
+		return MetricsPowerProfiles{}, fmt.Errorf("unknown range %q", r)
+	}
+	out := MetricsPowerProfiles{Range: r, IdleOnly: idleOnly, Profiles: []MetricsProfilePower{}}
+	if m.db == nil {
+		return out, nil
+	}
+	q := `SELECT profile, count(*), count(power_wall), avg(power_wall), avg(power_cpu) FROM metrics_minute
+		WHERE scope = ? AND profile IS NOT NULL AND ts >= ?`
+	if idleOnly {
+		q += fmt.Sprintf(" AND cpu < %d", idleCPU)
+	}
+	rows, err := m.db.db.QueryContext(ctx, q+" GROUP BY profile ORDER BY profile", hostScope, m.now().Add(-span).Unix())
+	if err != nil {
+		return MetricsPowerProfiles{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p MetricsProfilePower
+		var wall, cpu sql.NullFloat64
+		if err := rows.Scan(&p.Profile, &p.Minutes, &p.WallMinutes, &wall, &cpu); err != nil {
+			return MetricsPowerProfiles{}, err
+		}
+		p.Wall, p.CPU = Num(nan), Num(nan)
+		if wall.Valid {
+			p.Wall = Num(wall.Float64)
+		}
+		if cpu.Valid {
+			p.CPU = Num(cpu.Float64)
+		}
+		out.Profiles = append(out.Profiles, p)
+	}
+	return out, rows.Err()
 }
