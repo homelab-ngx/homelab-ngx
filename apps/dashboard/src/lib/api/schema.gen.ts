@@ -2376,6 +2376,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system/power-profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The power profile, how deep the host idles, and what keeps it awake.
+         * @description idle covers the last minute (since boot just after the daemon starts). tunables say what the profile wrote on this host and what the kernel refused. blockers are the devices that keep the CPU package out of a deeper state, each with the profile that turns it off.
+         */
+        get: operations["getPowerProfile"];
+        /**
+         * Choose the power profile and the CPU governor.
+         * @description Applied at once and again at every start. power-saver turns on ASPM on every PCIe link and USB autosuspend on every device; balanced and performance put back what the host booted with. `409 managed_by_nixos` on a NixOS host.
+         */
+        put: operations["setPowerProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system/power/scheduled": {
         parameters: {
             query?: never;
@@ -3960,6 +3984,58 @@ export interface components {
             /** Format: double */
             used_percent: number;
         };
+        PowerBlocker: {
+            /** @description The PCI address or USB port, as in sysfs. */
+            device: string;
+            driver: string;
+            /** @enum {string} */
+            fix: "power-saver" | "balanced" | "performance";
+            /** @description vendor:device. */
+            id: string;
+            /** @enum {string} */
+            kind: "aspm" | "runtime_pm" | "usb_autosuspend";
+            /** @description The USB product name; empty for PCI. */
+            name: string;
+        };
+        PowerIdle: {
+            /** Format: double */
+            active: number;
+            cpu_states: components["schemas"]["PowerIdleState"][];
+            deepest: string;
+            package_states: components["schemas"]["PowerIdleState"][];
+            /** Format: double */
+            watts: number | null;
+            /** Format: double */
+            window_seconds: number;
+        };
+        PowerIdleState: {
+            /** Format: int64 */
+            latency_us: number;
+            name: string;
+            /**
+             * Format: double
+             * @description Its share of the window, 0 to 1.
+             */
+            share: number;
+        };
+        PowerProfileSettings: {
+            /** @description A name from governors, or empty for the profile's own. */
+            governor: string;
+            /** @enum {string} */
+            profile: "power-saver" | "balanced" | "performance";
+        };
+        PowerProfileStatus: {
+            blockers: components["schemas"]["PowerBlocker"][];
+            driver: string;
+            /** @description A name from governors, or empty for the profile's own. */
+            governor: string;
+            governors: string[];
+            idle: components["schemas"]["PowerIdle"];
+            /** @enum {string} */
+            profile: "power-saver" | "balanced" | "performance";
+            read_only: boolean;
+            tunables: components["schemas"]["PowerTunable"][];
+        };
         PowerRequest: {
             /** @enum {string} */
             action: "reboot" | "poweroff";
@@ -4013,6 +4089,23 @@ export interface components {
             state: "waiting" | "working" | "done" | "failed";
             /** @description A stack still stopping after 30 s: the unit it waits for and when systemd kills it. */
             waiting_on?: components["schemas"]["PowerWait"];
+        };
+        PowerTunable: {
+            /** @description Why a write was refused, from the first refusal. */
+            detail: string;
+            /**
+             * Format: int64
+             * @description How many files the tunable covers on this host.
+             */
+            files: number;
+            /** @enum {string} */
+            name: "governor" | "epp" | "aspm_policy" | "aspm_links" | "pci_runtime_pm" | "usb_autosuspend" | "sata_alpm" | "nmi_watchdog" | "dirty_writeback";
+            /** Format: int64 */
+            refused: number;
+            /** @enum {string} */
+            state: "set" | "boot" | "partial" | "refused" | "unsupported";
+            /** @description The value written, or empty when the profile leaves the boot value. */
+            value: string;
         };
         PowerWait: {
             description?: string;
@@ -14769,6 +14862,145 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PowerStatus"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getPowerProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PowerProfileStatus"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    setPowerProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PowerProfileSettings"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PowerProfileStatus"];
                 };
             };
             /** @description Bad Request */

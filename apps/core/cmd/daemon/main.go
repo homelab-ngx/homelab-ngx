@@ -39,6 +39,7 @@ import (
 	"homelab-ngx.com/core/internal/metrics"
 	"homelab-ngx.com/core/internal/notifications"
 	"homelab-ngx.com/core/internal/power"
+	"homelab-ngx.com/core/internal/powerprofile"
 	"homelab-ngx.com/core/internal/services"
 	"homelab-ngx.com/core/internal/stacks"
 	"homelab-ngx.com/core/internal/storage"
@@ -208,6 +209,10 @@ func run(configPath string) error {
 	pw := power.New(stacksSvc, stor, power.SystemLogind{}, st, r, logging.Logger("power"),
 		func(context.Context) []string { return stacksSvc.Busy() }, sysMod.Busy, bk.Busy)
 	sysMod.SetPower(pw)
+	// The power profile is written to sysfs at every start: /sys resets at
+	// boot.
+	pp := powerprofile.New(powerprofile.DefaultPaths(), st,
+		hostcfg.Detect("/etc/os-release") == hostcfg.ManagedImage, logging.Logger("powerprofile"))
 
 	// Ask reads the same log viewer list the Logs page does.
 	logs := system.New(cfg, r, logSources{stackUnits{stacksSvc}, bk})
@@ -235,7 +240,7 @@ func run(configPath string) error {
 		services: svcs, backups: bk, storage: stor, stacks: stacksSvc,
 		sysupdates: sysMod, notifications: notify, channels: channels, hostcfg: hostSvc, config: cfg, runner: r, metrics: met,
 		drafts: draftsSvc, assistant: assistant, ask: askSvc, audit: auditSvc,
-		auth: auth.New(st, logging.Logger("auth")), power: pw,
+		auth: auth.New(st, logging.Logger("auth")), power: pw, powerProfile: pp,
 	})
 
 	// ── Run ─────────────────────────────────────────────────────────────
@@ -277,6 +282,7 @@ func run(configPath string) error {
 	// The shutdown lock is taken at once: a shutdown while the pools are
 	// still mounting stops what started.
 	g.Go(func() error { pw.Run(gctx); return nil })
+	g.Go(func() error { pp.Run(gctx); return nil })
 	// Said only once the daemon has stayed up a while: a daemon that dies at
 	// every start would otherwise send one at each of systemd's restarts.
 	if crashed && notify.Enabled() {

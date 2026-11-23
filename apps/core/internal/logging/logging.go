@@ -30,7 +30,7 @@ var canonicalModules = map[string]struct{}{
 	"notifier": {}, "store": {}, "config": {}, "httpx": {},
 	"services": {}, "backups": {}, "systemd": {}, "sysupdates": {},
 	"system": {}, "notifications": {}, "doctor": {}, "stacks": {}, "drafts": {}, "llm": {}, "metrics": {},
-	"hostcfg": {}, "installer": {}, "auth": {}, "power": {},
+	"hostcfg": {}, "installer": {}, "auth": {}, "power": {}, "powerprofile": {},
 	// dash
 	"dash_server": {}, "dash_daemon": {}, "dash_storage": {}, "dash_bug": {},
 }
