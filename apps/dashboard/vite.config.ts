@@ -20,7 +20,7 @@ export default defineConfig({
     port: 3001,
     // Develop against the live daemon: /api goes to the real host.
     // The dev server sends /api to a running host: HOMELAB_URL, set by the dev shell.
-    proxy: { "/api": { target: process.env.HOMELAB_URL ?? "https://homelab.example.com", changeOrigin: true, secure: false } },
+    proxy: { "/api": { target: process.env.HOMELAB_URL ?? "https://homelab.example.com", changeOrigin: true, secure: false, ws: true } },
   },
   resolve: process.env.VITEST ? { conditions: ["browser"] } : undefined,
   test: { environment: "jsdom", include: ["src/**/*.test.ts"] },

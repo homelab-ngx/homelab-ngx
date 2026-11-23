@@ -58,6 +58,9 @@
         {@render children()}
       </main>
     </div>
+  {:else if ready && page.url.pathname.startsWith("/shell/")}
+    <!-- A stack shell's window holds the terminal and nothing else. -->
+    <div class="h-dvh bg-sunken">{@render children()}</div>
   {:else if ready}
     <Shell active={current(page.url.pathname)} nav={NAV} settings={SETTINGS} wide={wide(page.url.pathname)}>
       {@render children()}

@@ -50,6 +50,7 @@
     "@tanstack/svelte-query": "^6.4.1",
     "bits-ui": "^2.21.0",
     "codemirror": "^6.0.2",
+    "ghostty-web": "^0.4.0",
     "openapi-fetch": "^0.17.0",
     "uplot": "^1.6.32",
     "uqr": "^0.1.3"

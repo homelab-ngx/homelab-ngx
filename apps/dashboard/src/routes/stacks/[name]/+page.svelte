@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
-  import { ExternalLink, Play, RotateCcw, Snowflake, Square } from "@lucide/svelte";
+  import { ExternalLink, Play, RotateCcw, Snowflake, Square, SquareTerminal } from "@lucide/svelte";
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
@@ -33,6 +33,7 @@
     stateLabel,
     stateTone,
   } from "#lib/stacks.ts";
+  import { openShellWindow } from "#lib/shell.ts";
   import { missingVariables } from "#lib/variables.ts";
 
   const name = $derived(page.params.name ?? "");
@@ -282,6 +283,7 @@
           <button type="button" class="btn" disabled={working} onclick={restart}><RotateCcw class="size-3.5" aria-hidden="true" />Restart</button>
           <button type="button" class="btn" disabled={working} onclick={() => stop.mutate()}><Square class="size-3.5" aria-hidden="true" />Stop</button>
           <button type="button" class="btn" disabled={working} onclick={() => freeze.mutate()}><Snowflake class="size-3.5" aria-hidden="true" />Freeze</button>
+          <button type="button" class="btn" onclick={() => openShellWindow(name)}><SquareTerminal class="size-3.5" aria-hidden="true" />Shell</button>
         {:else}
           <button type="button" class="btn btn-primary" disabled={working || !s.approved} onclick={() => start.mutate()}><Play class="size-3.5" aria-hidden="true" />Start</button>
         {/if}
