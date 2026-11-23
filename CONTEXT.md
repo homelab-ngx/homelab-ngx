@@ -220,6 +220,10 @@ _Avoid_: firmware, appliance
 A reboot or poweroff of the host. Before any shutdown that goes through logind (the dashboard, the CLI, `shutdown -r`, the power button) the daemon stops the running stacks, then unmounts the pools and partitions. It records nothing: the next boot mounts the same pools and starts the stacks set to autostart. A frozen stack is thawed so it stops cleanly, unless the operator chose to reboot without thawing; then it is killed.
 _Avoid_: restart (that is a stack's or a unit's), shutdown sequence
 
+**Power profile**:
+How the host trades speed for power while it runs: Power saver, Balanced (the default) or Performance, with an optional CPU governor. The daemon writes it to sysfs at every start; Power saver also turns on PCIe link sleep on every link and USB autosuspend on every device. It does not spin disks down or suspend the host.
+_Avoid_: power plan, power mode, power action (that is a reboot or poweroff)
+
 **Core extension**:
 The daemon, CLI, dashboard and Caddy as one system extension (`homelab-core`) merged over the image's /usr; updated without a reboot.
 _Avoid_: core package, sysext (in prose)
