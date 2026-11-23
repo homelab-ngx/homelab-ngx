@@ -99,6 +99,7 @@
 </script>
 
 <HostCard
+  anchor="wireguard"
   title="WireGuard VPN"
   subtitle="A VPN server for devices away from home."
   help="A WireGuard server on the host. Each device has its own key and an address in the VPN, and reaches the host through the router from anywhere. Add a device makes its keys and shows its config once, as a QR code for the WireGuard app."

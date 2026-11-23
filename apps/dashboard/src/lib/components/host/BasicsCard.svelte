@@ -17,6 +17,7 @@
 </script>
 
 <HostCard
+  anchor="host"
   title="Host"
   subtitle="Its name on the network, and its time zone."
   help="The name the host answers to on the LAN (name.local) and on a tailnet, and the time zone for logs and schedules. A change applies at once."

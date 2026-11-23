@@ -18,6 +18,7 @@
 </script>
 
 <HostCard
+  anchor="firewall"
   title="Firewall"
   subtitle="Ports open to the outside, besides the built-in ones."
   help="Ports let in besides SSH, HTTP, HTTPS and the VPN, which are always open. Everything else from outside is dropped. A stack's own ports are its grants."

@@ -22,6 +22,7 @@
 </script>
 
 <HostCard
+  anchor="console"
   title="Console"
   subtitle="The keyboard plugged into the host."
   help="The layout the host's own keyboard types in at its screen. Applying restarts the console, which logs root in again."

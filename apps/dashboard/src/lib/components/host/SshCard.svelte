@@ -22,6 +22,7 @@
 </script>
 
 <HostCard
+  anchor="ssh"
   title="SSH"
   subtitle="Keys that may log in as root."
   help="Public keys that may log in as root over SSH, one per line. Passwords are never accepted. Without a key, only the host's own screen gives a shell."

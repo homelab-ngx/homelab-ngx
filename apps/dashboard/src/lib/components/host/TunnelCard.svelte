@@ -70,6 +70,7 @@
 </script>
 
 <HostCard
+  anchor="tunnel"
   title="Cloudflare Tunnel"
   subtitle="Publishes chosen routes on the internet, no open port."
   help="The host keeps a connection out to Cloudflare, and Cloudflare serves each route's public name through it, so nothing at home is opened. Connect logs in at Cloudflare, where one domain (zone) is approved; the host then makes the tunnel and each route's DNS record there."

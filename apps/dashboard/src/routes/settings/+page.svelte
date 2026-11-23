@@ -1,24 +1,65 @@
 <script lang="ts">
+  import {
+    Bell,
+    BrickWall,
+    Clock,
+    Cloud,
+    Globe,
+    House,
+    Keyboard,
+    KeyRound,
+    Lock,
+    LogOut,
+    Network,
+    Power,
+    RefreshCw,
+    RotateCcw,
+    ScrollText,
+    ShieldCheck,
+    ShieldHalf,
+    Sparkles,
+    SunMoon,
+    Waypoints,
+  } from "@lucide/svelte";
   import { createQuery } from "@tanstack/svelte-query";
-  import { ChevronRight } from "@lucide/svelte";
   import { api, call, describe } from "#lib/api/client.ts";
   import { fetchAssistant, keys } from "#lib/api/queries.ts";
-  import { headline } from "#lib/components/core/core.ts";
-  import Help from "#lib/components/Help.svelte";
-  import { clockTime } from "#lib/format.ts";
-  import PasswordForm from "#lib/components/PasswordForm.svelte";
-  import Pill from "#lib/components/Pill.svelte";
-  import { session } from "#lib/auth.svelte.ts";
   import { assistantLabel } from "#lib/assistant.ts";
-  import { fetchHostSettings, hostKeys } from "#lib/host.ts";
-  import { fetchAudits, POSTURE, RESULT, securityKeys } from "#lib/security.ts";
+  import { session } from "#lib/auth.svelte.ts";
+  import { headline } from "#lib/components/core/core.ts";
+  import PasswordForm from "#lib/components/PasswordForm.svelte";
   import PowerDialog from "#lib/components/PowerDialog.svelte";
+  import StatusMark from "#lib/components/StatusMark.svelte";
+  import { clockTime } from "#lib/format.ts";
+  import { fetchHostSettings, fetchTailscale, hostKeys } from "#lib/host.ts";
+  import { channelKeys, notificationKeys, type Channel, type Snapshot } from "#lib/notifications.ts";
   import { fetchPower, powerKey, type PowerAction } from "#lib/power.ts";
+  import { fetchAudits, securityKeys } from "#lib/security.ts";
+  import {
+    appliedStatus,
+    auditStatus,
+    clockStatus,
+    consoleLine,
+    domainLine,
+    firewallLine,
+    hostLine,
+    lanLine,
+    notificationsStatus,
+    sshLine,
+    tailscaleStatus,
+    tunnelStatus,
+    vpnStatus,
+    type TileStatus,
+  } from "#lib/settings.ts";
 
-  const assistant = createQuery(() => ({ queryKey: keys.assistant, queryFn: fetchAssistant }));
-  const assistantOn = $derived(!!assistant.data && assistant.data.provider !== "none");
-  const audits = createQuery(() => ({ queryKey: securityKeys.audits, queryFn: fetchAudits }));
-  const lastAudit = $derived(audits.data?.[0]);
+  const host = createQuery(() => ({ queryKey: hostKeys.settings, queryFn: fetchHostSettings }));
+  const s = $derived(host.data);
+  const tailscale = createQuery(() => ({ queryKey: hostKeys.tailscale, queryFn: fetchTailscale, enabled: !!s?.tailscale.enabled }));
+  const layouts = createQuery(() => ({
+    queryKey: hostKeys.keyboardLayouts,
+    queryFn: () => call(api.GET("/host-settings/keyboard-layouts")),
+    staleTime: Infinity,
+  }));
 
   // Only a host on the image answers this.
   const image = createQuery(() => ({
@@ -26,18 +67,28 @@
     queryFn: () => call(api.GET("/system-updates/image")),
     retry: false,
   }));
-  const updates = $derived(image.data ? headline(image.data) : undefined);
-
-  const host = createQuery(() => ({ queryKey: hostKeys.settings, queryFn: fetchHostSettings }));
-  const network = $derived.by(() => {
-    const s = host.data;
-    if (!s) return undefined;
-    if (s.applied.errors.length > 0) return { tone: "bad" as const, state: "not applied" };
-    return s.managed === "nixos" ? { tone: "info" as const, state: "nixos" } : { tone: "ok" as const, state: "applied" };
+  const updates = $derived.by((): TileStatus | undefined => {
+    if (!image.data) return undefined;
+    const h = headline(image.data);
+    return { tone: h.tone, text: h.state };
   });
+
+  const channels = createQuery(() => ({ queryKey: channelKeys.list, queryFn: () => call<Channel[]>(api.GET("/notification-channels")) }));
+  const notes = createQuery(() => ({
+    queryKey: notificationKeys.snapshot,
+    queryFn: () => call<Snapshot>(api.GET("/notifications")),
+    refetchInterval: 30_000,
+  }));
+
+  const assistant = createQuery(() => ({ queryKey: keys.assistant, queryFn: fetchAssistant }));
+  const assistantStatus = $derived<TileStatus | undefined>(
+    assistant.data && { tone: assistant.data.provider !== "none" ? "ok" : "idle", text: assistantLabel(assistant.data) },
+  );
+  const audits = createQuery(() => ({ queryKey: securityKeys.audits, queryFn: fetchAudits }));
 
   const power = createQuery(() => ({ queryKey: powerKey, queryFn: fetchPower }));
   const scheduled = $derived(power.data?.scheduled);
+  const when = (a: PowerAction): TileStatus | undefined => (scheduled?.action === a ? { tone: "info", text: `at ${clockTime(scheduled.at)}` } : undefined);
   let powerAction = $state<PowerAction | null>(null);
 
   let changing = $state(false);
@@ -71,112 +122,104 @@
     const dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
     document.documentElement.classList.toggle("dark", dark);
   }
+
+  type Icon = typeof House;
+
+  const tileClass =
+    "group flex min-h-24 flex-col items-center gap-1.5 rounded-lg px-2 pt-3.5 pb-3 text-center hover:bg-sunken focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 </script>
 
 <svelte:head><title>System Settings · Homelab-ngx</title></svelte:head>
 
 <h1 class="text-xl font-semibold">System Settings</h1>
 
-{#snippet row(name: string, href: string, core = false)}
-  <a class="w-36 shrink-0 rounded-sm font-semibold hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent {core ? 'text-core' : ''}" {href}>{name}</a>
+{#snippet status(st: TileStatus | undefined)}
+  <span class="flex max-w-full min-h-4 items-center justify-center gap-1.5 text-xs text-muted">
+    {#if st?.tone}<StatusMark tone={st.tone} />{/if}
+    {#if st}<span class="truncate">{st.text}</span>{/if}
+  </span>
 {/snippet}
-{#snippet go()}<ChevronRight class="size-4 shrink-0 text-muted" aria-hidden="true" />{/snippet}
 
-<div class="mt-5 grid max-w-3xl gap-4">
+{#snippet face(Icon: Icon, name: string, st: TileStatus | undefined, core: boolean)}
+  <Icon class="size-7 {core ? 'text-core' : 'text-fg'}" strokeWidth={1.5} aria-hidden="true" />
+  <span class="font-medium group-hover:underline {core ? 'text-core' : 'text-accent'}">{name}</span>
+  {@render status(st)}
+{/snippet}
+
+{#snippet tile(Icon: Icon, name: string, href: string, st: TileStatus | undefined, core = false)}
+  <a {href} class={tileClass}>{@render face(Icon, name, st, core)}</a>
+{/snippet}
+
+{#snippet action(Icon: Icon, name: string, onclick: () => void, st?: TileStatus)}
+  <button type="button" class={tileClass} {onclick}>{@render face(Icon, name, st, false)}</button>
+{/snippet}
+
+{#snippet band(id: string, title: string, st?: TileStatus)}
+  <h2 {id} class="flex items-center gap-3 border-b border-line bg-sunken px-3 py-2">
+    <span class="label">{title}</span>
+    {#if st}<span class="ml-auto">{@render status(st)}</span>{/if}
+  </h2>
+{/snippet}
+
+<div class="mt-5 grid gap-5">
   <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="host-h">
-    <h2 id="host-h" class="label bg-sunken px-3 py-2">This host</h2>
-    <ul class="divide-y divide-line border-t border-line">
-      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
-        {@render row("General", "/settings/general")}
-        <span class="min-w-0 grow truncate text-muted">
-          {#if host.data}{[host.data.host.hostname || "homelab", host.data.host.timezone || "UTC"].join(" · ")}{/if}
-        </span>
-        {@render go()}
-      </li>
-      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
-        {@render row("Updates", "/settings/updates", true)}
-        <span class="flex min-w-0 grow flex-wrap items-center gap-x-2">
-          {#if updates}<Pill tone={updates.tone}>{updates.state}</Pill>{#if updates.detail}<span class="text-muted max-sm:hidden">{updates.detail}</span>{/if}{/if}
-        </span>
-        {@render go()}
-      </li>
-      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
-        {@render row("Network", "/settings/network")}
-        <span class="flex min-w-0 grow flex-wrap items-center gap-x-2">
-          {#if network}<Pill tone={network.tone}>{network.state}</Pill>{/if}
-          {#if host.data?.domain.domain}<span class="truncate text-muted max-sm:hidden">{host.data.domain.domain}</span>{/if}
-        </span>
-        {@render go()}
-      </li>
-      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
-        {@render row("Logs", "/settings/logs")}
-        <span class="grow text-muted">Host, backups</span>
-        {@render go()}
-      </li>
-      <li class="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
-        <span class="flex grow flex-wrap items-center gap-x-3 font-semibold">
-          <Help label="Power">
-            Before the host goes down the stacks stop and the pools unmount. The next boot starts the same stacks and mounts the
-            same pools.
-          </Help>
-          {#if scheduled}
-            <span class="font-normal text-muted">{scheduled.action} at {clockTime(scheduled.at)}</span>
-          {/if}
-        </span>
-        <span class="flex flex-wrap gap-2">
-          <button type="button" class="btn btn-sm" onclick={() => (powerAction = "reboot")}>Reboot…</button>
-          <button type="button" class="btn btn-sm" onclick={() => (powerAction = "poweroff")}>Shut down…</button>
-        </span>
-      </li>
-    </ul>
+    {@render band("host-h", "This host")}
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-1 p-3">
+      {@render tile(House, "Host", "/settings/general#host", s && hostLine(s))}
+      {@render tile(Clock, "Clock", "/settings/general#clock", s && clockStatus(s))}
+      {@render tile(Keyboard, "Console", "/settings/general#console", s && consoleLine(s, layouts.data?.layouts))}
+      {@render tile(RefreshCw, "Updates", "/settings/updates", updates, true)}
+      {@render tile(Bell, "Notifications", "/settings/notifications", notificationsStatus(channels.data, notes.data))}
+      {@render tile(ScrollText, "Logs", "/settings/logs", { text: "host, backups" })}
+      {@render action(RotateCcw, "Reboot…", () => (powerAction = "reboot"), when("reboot"))}
+      {@render action(Power, "Shut down…", () => (powerAction = "poweroff"), when("poweroff"))}
+    </div>
   </section>
 
-  <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="assistant-h">
-    <h2 id="assistant-h" class="label bg-sunken px-3 py-2">Assistant</h2>
-    <ul class="divide-y divide-line border-t border-line">
-      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
-        {@render row("AI assistant", "/settings/assistant")}
-        <span class="grow">{#if assistant.data}<Pill tone={assistantOn ? "ok" : "idle"}>{assistantLabel(assistant.data)}</Pill>{/if}</span>
-        {@render go()}
-      </li>
-      <li class="flex min-h-11 items-center gap-x-3 px-3 py-2">
-        {@render row("Security audit", "/settings/security")}
-        <span class="grow">
-          {#if lastAudit?.posture}<Pill tone={POSTURE[lastAudit.posture]}>{lastAudit.posture}</Pill>
-          {:else if lastAudit}<Pill tone={RESULT[lastAudit.result].tone}>{RESULT[lastAudit.result].label}</Pill>
-          {:else if audits.data}<Pill tone="idle">never</Pill>{/if}
-        </span>
-        {@render go()}
-      </li>
-    </ul>
+  <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="net-h">
+    {@render band("net-h", "Network", s && appliedStatus(s))}
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-1 p-3">
+      {@render tile(Globe, "Domain", "/settings/network#domain", s && domainLine(s))}
+      {@render tile(Network, "LAN", "/settings/network#lan", s && lanLine(s))}
+      {@render tile(Waypoints, "Tailscale", "/settings/network#tailscale", s && tailscaleStatus(s, tailscale.data))}
+      {@render tile(ShieldHalf, "WireGuard VPN", "/settings/network#wireguard", s && vpnStatus(s))}
+      {@render tile(Cloud, "Cloudflare Tunnel", "/settings/network#tunnel", s && tunnelStatus(s))}
+      {@render tile(BrickWall, "Firewall", "/settings/network#firewall", s && firewallLine(s))}
+      {@render tile(KeyRound, "SSH", "/settings/network#ssh", s && sshLine(s))}
+    </div>
+  </section>
+
+  <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="ai-h">
+    {@render band("ai-h", "Assistant")}
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-1 p-3">
+      {@render tile(Sparkles, "AI assistant", "/settings/assistant", assistantStatus)}
+      {@render tile(ShieldCheck, "Security audit", "/settings/security", auditStatus(audits.data))}
+    </div>
   </section>
 
   <section class="overflow-hidden rounded-lg border border-line bg-surface" aria-labelledby="browser-h">
-    <h2 id="browser-h" class="label bg-sunken px-3 py-2">This browser</h2>
-    <ul class="divide-y divide-line border-t border-line">
-      <li class="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
-        <span class="flex grow flex-wrap font-semibold">
-          <Help label="Sign-in">
-            One password unlocks the dashboard. A forgotten one is removed on the host with homelab auth reset; the next visitor sets
-            a new one.
-          </Help>
-        </span>
-        <span class="flex flex-wrap gap-2">
-          <button type="button" class="btn btn-sm" onclick={() => (changing = true)}>Change password…</button>
-          <button type="button" class="btn btn-sm" onclick={signOut}>Sign out</button>
-        </span>
-      </li>
-      <li class="flex min-h-11 flex-wrap items-center gap-x-3 gap-y-2 px-3 py-2">
-        <span id="theme-h" class="grow font-semibold">Theme</span>
-        <span class="flex gap-2" role="radiogroup" aria-labelledby="theme-h">
+    {@render band("browser-h", "This browser")}
+    <div class="grid grid-cols-[repeat(auto-fill,minmax(8.5rem,1fr))] gap-1 p-3">
+      {@render action(Lock, "Change password…", () => (changing = true))}
+      {@render action(LogOut, "Sign out", signOut)}
+      <div class="flex min-h-24 flex-col items-center gap-1.5 px-2 pt-3.5 pb-3 text-center">
+        <SunMoon class="size-7 text-fg" strokeWidth={1.5} aria-hidden="true" />
+        <span id="theme-h" class="font-medium">Theme</span>
+        <span class="flex overflow-hidden rounded-md border border-line text-xs" role="radiogroup" aria-labelledby="theme-h">
           {#each ["system", "light", "dark"] as const as t (t)}
-            <button type="button" role="radio" aria-checked={theme === t} class="btn btn-sm aria-checked:border-accent aria-checked:text-accent" onclick={() => setTheme(t)}>
+            <button
+              type="button"
+              role="radio"
+              aria-checked={theme === t}
+              class="px-2 py-0.5 not-first:border-l not-first:border-line hover:bg-sunken focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent aria-checked:bg-accent-soft aria-checked:text-accent"
+              onclick={() => setTheme(t)}
+            >
               {t[0]!.toUpperCase() + t.slice(1)}
             </button>
           {/each}
         </span>
-      </li>
-    </ul>
+      </div>
+    </div>
   </section>
   {#if signOutError}<p role="alert" class="rounded-md bg-bad-soft px-3 py-2 text-bad">{signOutError}</p>{/if}
 </div>
