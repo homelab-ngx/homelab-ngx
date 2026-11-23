@@ -122,6 +122,8 @@ type Metrics struct {
 	cores    int
 	memTotal float64
 	bootedAt int64
+	model    string
+	cpu      string
 	disks    disks
 	sensors  sensors
 
@@ -145,7 +147,7 @@ func New(paths Paths, stacks Stacks, db *DB, log *slog.Logger) *Metrics {
 	}
 	m := &Metrics{
 		paths: paths, stacks: stacks, db: db, now: time.Now, log: log,
-		cores: cpuCount(paths.Proc), bootedAt: bootTime(paths.Proc),
+		cores: cpuCount(paths.Proc), bootedAt: bootTime(paths.Proc), model: machineModel(paths.DMI), cpu: cpuName(paths.Proc),
 		disks: disks{devBlock: paths.DevBlock}, sensors: findSensors(paths.Hwmon),
 		prev: map[string]reading{}, usage: map[string]services.Usage{}, subs: map[chan sample]struct{}{},
 	}
@@ -155,7 +157,7 @@ func New(paths Paths, stacks Stacks, db *DB, log *slog.Logger) *Metrics {
 
 // Info returns the host's fixed facts.
 func (m *Metrics) Info() HostInfo {
-	return HostInfo{Cores: m.cores, MemoryTotal: int64(m.memTotal), BootedAt: m.bootedAt}
+	return HostInfo{Cores: m.cores, MemoryTotal: int64(m.memTotal), BootedAt: m.bootedAt, Model: m.model, CPU: m.cpu}
 }
 
 // Run samples until ctx ends, then stores the minute in progress.

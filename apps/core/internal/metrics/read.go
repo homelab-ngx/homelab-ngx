@@ -21,6 +21,7 @@ type Paths struct {
 	Net      string // /sys/class/net
 	Hwmon    string // /sys/class/hwmon
 	DevBlock string // /sys/dev/block
+	DMI      string // /sys/class/dmi/id
 }
 
 // DefaultPaths is the layout on the homelab host.
@@ -29,6 +30,7 @@ func DefaultPaths() Paths {
 		Proc: "/proc", Cgroup: "/sys/fs/cgroup", Machines: "/sys/fs/cgroup/machine.slice",
 		Services: "/sys/fs/cgroup/system.slice", Init: "/sys/fs/cgroup/init.scope", Sessions: "/sys/fs/cgroup/user.slice",
 		Net: "/sys/class/net", Hwmon: "/sys/class/hwmon", DevBlock: "/sys/dev/block",
+		DMI: "/sys/class/dmi/id",
 	}
 }
 

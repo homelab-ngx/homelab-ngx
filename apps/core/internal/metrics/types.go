@@ -84,9 +84,11 @@ type MetricFrames struct {
 
 // Info are facts about the host that do not change while it runs.
 type HostInfo struct {
-	Cores       int   `json:"cores"`
-	MemoryTotal int64 `json:"memory_total" doc:"Bytes."`
-	BootedAt    int64 `json:"booted_at" doc:"Unix seconds."`
+	Cores       int    `json:"cores"`
+	MemoryTotal int64  `json:"memory_total" doc:"Bytes."`
+	BootedAt    int64  `json:"booted_at" doc:"Unix seconds."`
+	Model       string `json:"model" doc:"The machine's maker and model, or its motherboard's where the maker left the model unset; empty where the firmware says neither."`
+	CPU         string `json:"cpu" doc:"The processor's model name; empty where /proc/cpuinfo has none."`
 }
 
 // MetricsSnapshot is the first event of the stream: the host's facts and the

@@ -517,6 +517,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/host-settings/console": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set the console's keyboard layout. The console restarts with it.
+         * @description Applied at once on an image host. `409 managed_by_nixos` on a NixOS host.
+         */
+        put: operations["setHostConsole"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/host-settings/ddns": {
         parameters: {
             query?: never;
@@ -590,6 +610,23 @@ export interface paths {
          * @description Applied at once on an image host. `409 managed_by_nixos` on a NixOS host.
          */
         put: operations["setHostBasics"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/host-settings/keyboard-layouts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The keyboard layouts the console can use. */
+        get: operations["getKeyboardLayouts"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -704,6 +741,26 @@ export interface paths {
         /** The host on its tailnet: logged in or not, its link while a login waits, its addresses. */
         get: operations["getTailscaleStatus"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/host-settings/time": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set the clock's format and its time servers.
+         * @description Applied at once on an image host. `409 managed_by_nixos` on a NixOS host.
+         */
+        put: operations["setHostTime"];
         post?: never;
         delete?: never;
         options?: never;
@@ -2708,6 +2765,10 @@ export interface components {
             loaded_at: string;
             pools: components["schemas"]["PoolConfig"][];
         };
+        Console: {
+            /** @description The keyboard layout on the host's console: an XKB layout such as se or de, from GET /host-settings/keyboard-layouts. Empty is us. */
+            keyboard?: string;
+        };
         CoreDeploy: {
             /** @description Units that failed during the operation. They do not undo it. */
             failed_units: string[];
@@ -3183,14 +3244,19 @@ export interface components {
             booted_at: number;
             /** Format: int64 */
             cores: number;
+            /** @description The processor's model name; empty where /proc/cpuinfo has none. */
+            cpu: string;
             /**
              * Format: int64
              * @description Bytes.
              */
             memory_total: number;
+            /** @description The machine's maker and model, or its motherboard's where the maker left the model unset; empty where the firmware says neither. */
+            model: string;
         };
         HostSettings: {
             applied: components["schemas"]["Applied"];
+            console: components["schemas"]["Console"];
             ddns: components["schemas"]["DDNS"];
             domain: components["schemas"]["Domain"];
             firewall: components["schemas"]["Firewall"];
@@ -3202,6 +3268,8 @@ export interface components {
             managed: "image" | "nixos";
             network: components["schemas"]["Network"];
             tailscale: components["schemas"]["Tailscale"];
+            time: components["schemas"]["Time"];
+            readonly time_sync: components["schemas"]["TimeSync"];
             tunnel: components["schemas"]["Tunnel"];
             /** @description The host's wired network interfaces. Each wakes the host on a magic packet sent to its MAC address (Wake-on-LAN), where the firmware allows it. */
             readonly wired: components["schemas"]["Interface"][];
@@ -3401,6 +3469,16 @@ export interface components {
             weekly: number;
             /** Format: int64 */
             yearly: number;
+        };
+        KeyboardLayout: {
+            /** @description Its name, such as Swedish. */
+            description: string;
+            /** @description The XKB layout, such as se. */
+            name: string;
+        };
+        KeyboardLayouts: {
+            /** @description Sorted by description; empty where the host has no XKB data. */
+            layouts: components["schemas"]["KeyboardLayout"][];
         };
         Limit: {
             /**
@@ -4644,6 +4722,21 @@ export interface components {
         TakeOverInBody: {
             /** @description The six digits on the machine's own screen or serial console. */
             code: string;
+        };
+        Time: {
+            /**
+             * @description 12h, 24h, or empty to follow each browser's language.
+             * @enum {string}
+             */
+            clock?: "" | "12h" | "24h";
+            /** @description Up to four time servers (names or addresses) the host sets its clock from. Empty keeps the image's: Arch's pool. */
+            ntp?: string[];
+        };
+        TimeSync: {
+            /** @description The server it was set from. */
+            server?: string;
+            /** @description The clock was set from a time server. */
+            synced: boolean;
         };
         Tunnel: {
             /** @description The tunnel's credentials file is stored; it is never shown. */
@@ -7415,6 +7508,106 @@ export interface operations {
             };
         };
     };
+    setHostConsole: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Console"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSettings"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     setHostDDNS: {
         parameters: {
             query?: never;
@@ -7796,6 +7989,45 @@ export interface operations {
             };
             /** @description Internal Server Error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getKeyboardLayouts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KeyboardLayouts"];
+                };
+            };
+            /** @description Error */
+            default: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8289,6 +8521,106 @@ export interface operations {
             };
             /** @description Error */
             default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    setHostTime: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Time"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSettings"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };
