@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { deployRows, type CoreDeploy } from "./components/core/core.ts";
-import { clock, holdup, powerHref, powerRows, powerView, probe, stepState, timer, trackOf, underWay, type PowerInput, type PowerStatus } from "./power.ts";
+import { clock, holdup, phaseRows, powerHref, powerRows, powerView, stepState, timer, titleOf, underWay, type PhaseInput, type PowerInput, type PowerStatus } from "./power.ts";
 
 const status = (p: Partial<PowerStatus> = {}): PowerStatus => ({
   phase: "stopping_stacks",
@@ -109,40 +109,75 @@ describe("holdup", () => {
   });
 });
 
-describe("trackOf", () => {
-  const states = (m: ReturnType<typeof trackOf>) => m.map((x) => `${x.label}:${x.state}`);
+describe("phaseRows", () => {
+  const rows = (p: Partial<PhaseInput>) =>
+    phaseRows({ action: "reboot", stage: "stopping", phase: "stopping_stacks", sawReady: false, steps: [], ...p }).map((r) => `${r.indent ? "  " : ""}${r.name}:${r.word}`);
+  const stacks = (...states: ("waiting" | "working" | "done" | "failed")[]) => states.map((state, n) => ({ kind: "stack" as const, name: `s${n}`, state }));
 
-  it("marks the step under way", () => {
-    expect(states(trackOf("reboot", "stopping", "unmounting", false))).toEqual(["stacks:done", "pools:active", "reboot:waiting", "back:waiting"]);
+  it("lists every phase from the start", () => {
+    expect(rows({ stage: "starting", phase: undefined })).toEqual(["Stop stacks:starting", "Unmount pools:waiting", "Reboot:waiting", "Back online:waiting"]);
+    expect(rows({ stage: "starting", phase: undefined, install: { past: false, reachable: true }, to: "0.5.0" })).toEqual([
+      "Install:starting",
+      "Stop stacks:waiting",
+      "Unmount pools:waiting",
+      "Reboot:waiting",
+      "Back on 0.5.0:waiting",
+    ]);
   });
 
-  it("follows a reboot that was seen ready through to the host back", () => {
-    expect(states(trackOf("reboot", "ready", "going_down", true))).toEqual(["stacks:done", "pools:done", "reboot:active", "back:waiting"]);
-    expect(states(trackOf("reboot", "down", "going_down", true))).toEqual(["stacks:done", "pools:done", "reboot:active", "back:waiting"]);
-    expect(states(trackOf("reboot", "back", "going_down", true))).toEqual(["stacks:done", "pools:done", "reboot:done", "back:done"]);
+  it("counts the stacks stopped, and the pools once they unmount", () => {
+    expect(rows({ steps: stacks("done", "working", "waiting") })[0]).toBe("Stop stacks:1 of 3");
+    const mounts = [{ kind: "mount" as const, name: "/var/mnt/tank", state: "working" as const }];
+    expect(rows({ phase: "unmounting", steps: [...stacks("done", "done"), ...mounts] }).slice(0, 2)).toEqual(["Stop stacks:done", "Unmount pools:0 of 1"]);
   });
 
-  it("leaves what it did not see waiting", () => {
-    expect(states(trackOf("reboot", "down", "unmounting", false))).toEqual(["stacks:done", "pools:waiting", "reboot:active", "back:waiting"]);
-    expect(states(trackOf("reboot", "down", undefined, false))).toEqual(["stacks:waiting", "pools:waiting", "reboot:active", "back:waiting"]);
+  it("gives a stack slow to stop a row of its own, with the kill countdown", () => {
+    const slow = { kind: "stack" as const, name: "players", state: "working" as const, waiting_on: { unit: "plex.service", kill_in: 85 } };
+    const out = phaseRows({ action: "reboot", stage: "stopping", phase: "stopping_stacks", sawReady: false, steps: [...stacks("done", "working"), slow] });
+    expect(out[1]).toMatchObject({ name: "players", indent: true, word: "stopping", wait: { when: "killed in 1:25" } });
+    expect(out).toHaveLength(5);
+  });
+
+  it("keeps a stack that was killed under its group", () => {
+    expect(rows({ phase: "unmounting", steps: stacks("done", "failed") }).slice(0, 2)).toEqual(["Stop stacks:1 killed", "  s1:killed"]);
+  });
+
+  it("follows the reboot to the host back", () => {
+    expect(rows({ stage: "down", phase: "going_down", sawReady: true, steps: stacks("done") })).toEqual(["Stop stacks:done", "Unmount pools:done", "Reboot:rebooting", "Back online:waiting"]);
+    expect(rows({ stage: "late", phase: "going_down", sawReady: true }).at(-2)).toBe("Reboot:late");
+    expect(rows({ stage: "back", phase: "going_down", sawReady: true, to: "0.5.0" }).slice(-2)).toEqual(["Reboot:done", "Back on 0.5.0:back"]);
+  });
+
+  it("does not guess at a phase the host left unfinished", () => {
+    expect(rows({ stage: "down", phase: "unmounting", steps: stacks("done") }).slice(0, 2)).toEqual(["Stop stacks:done", "Unmount pools:not seen"]);
   });
 
   it("ends a poweroff at off", () => {
-    expect(states(trackOf("poweroff", "ready", "going_down", true))).toEqual(["stacks:done", "pools:done", "off:active"]);
-    expect(states(trackOf("poweroff", "off", "going_down", true))).toEqual(["stacks:done", "pools:done", "off:done"]);
+    expect(rows({ action: "poweroff", stage: "off", phase: "going_down", sawReady: true }).at(-1)).toBe("Power off:off");
   });
 
-  it("starts at the first stage, and crosses out the one that failed", () => {
-    expect(states(trackOf("reboot", "starting", undefined, false))[0]).toBe("stacks:active");
-    expect(states(trackOf("reboot", "refused", undefined, false))[0]).toBe("stacks:failed");
-    expect(states(trackOf("reboot", "failed", "unmounting", false)).slice(0, 2)).toEqual(["stacks:done", "pools:failed"]);
+  it("marks what failed", () => {
+    expect(rows({ stage: "failed", phase: "failed" })[1]).toBe("Unmount pools:failed");
+    expect(rows({ stage: "refused", phase: undefined })[0]).toBe("Stop stacks:failed");
+    expect(rows({ stage: "install_failed", install: { past: false, reachable: true } })[0]).toBe("Install:failed");
   });
 
-  it("puts an update's install first", () => {
-    expect(states(trackOf("reboot", "installing", undefined, false, { past: false }))).toEqual(["update:active", "stacks:waiting", "pools:waiting", "reboot:waiting", "back:waiting"]);
-    expect(states(trackOf("reboot", "install_failed", undefined, false, { past: false }))[0]).toBe("update:failed");
-    expect(states(trackOf("reboot", "starting", "idle", false, { past: true })).slice(0, 2)).toEqual(["update:done", "stacks:active"]);
-    expect(states(trackOf("reboot", "back", "going_down", true, { past: true }))).toEqual(["update:done", "stacks:done", "pools:done", "reboot:done", "back:done"]);
+  it("puts the install first, and keeps the rest waiting while it runs", () => {
+    const d = install();
+    expect(rows({ stage: "installing", phase: "idle", install: { deploy: d, past: false, reachable: true } }).slice(0, 2)).toEqual(["Install:installing", "Stop stacks:waiting"]);
+    expect(rows({ stage: "installing", phase: "idle", install: { deploy: d, past: false, reachable: false } })[0]).toBe("Install:restarting");
+    expect(rows({ stage: "stopping", install: { past: true, reachable: true }, steps: stacks("working") }).slice(0, 2)).toEqual(["Install:done", "Stop stacks:0 of 1"]);
+  });
+});
+
+describe("titleOf", () => {
+  it("says what the system is doing, and that it is away", () => {
+    expect(titleOf("installing", "reboot", true)).toBe("Updating");
+    expect(titleOf("stopping", "reboot", false)).toBe("Rebooting");
+    expect(titleOf("down", "reboot", false)).toBe("Rebooting");
+    expect(titleOf("late", "reboot", false)).toBe("Offline");
+    expect(titleOf("back", "reboot", false)).toBe("Back online");
+    expect(titleOf("stopping", "poweroff", false)).toBe("Shutting down");
   });
 });
 
@@ -215,7 +250,7 @@ describe("the overall bar", () => {
   });
 });
 
-describe("the timer and the checks", () => {
+describe("the timer and the rows", () => {
   const at = { since: 40_000, now: 100_000, expected: 90 };
   it("counts up, then down while the host is away, then the time over", () => {
     expect(timer(powerView(input()), at)).toEqual({ value: "1:00", label: "elapsed" });
@@ -223,12 +258,6 @@ describe("the timer and the checks", () => {
     expect(timer(down, { ...at, downSince: 70_000 })).toEqual({ value: "1:30", label: "left" });
     const late = powerView(input({ reachable: false, downSince: -40_000 }));
     expect(timer(late, { ...at, downSince: -40_000 })).toEqual({ value: "+0:20", label: "over" });
-  });
-
-  it("keeps the last checks", () => {
-    let list = probe([], "miss", 3);
-    list = probe(probe(probe(list, "miss", 3), "miss", 3), "back", 3);
-    expect(list).toEqual(["miss", "miss", "back"]);
   });
 
   it("shows a stack's holdup on its row, and nothing once the host is gone", () => {

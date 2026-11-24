@@ -578,17 +578,27 @@ export function power(h: Host, action: "reboot" | "poweroff", force: boolean, th
   const set = (kind: "stack" | "mount", state: "working" | "done") => {
     for (const st of h.power.steps) if (st.kind === kind) st.state = state;
   };
-  later(h, 3000, () => {
+  // The stacks stop one after another; the last is slow, so the page shows
+  // what it waits for and when it is killed.
+  const stacks = h.power.steps.filter((st) => st.kind === "stack");
+  stacks.slice(0, -1).forEach((st, n) => later(h, 500 * (n + 1), () => (st.state = "done")));
+  const slow = stacks.at(-1);
+  if (slow) {
+    for (let k = 0; k < 4; k++) later(h, 2000 + k * 1000, () => (slow.waiting_on = { unit: `${slow.name}.service`, description: "", kill_in: 4 - k }));
+  }
+  const stopped = slow ? 6000 : 1000;
+  later(h, stopped, () => {
+    if (slow) slow.waiting_on = undefined;
     set("stack", "done");
     h.power.phase = "unmounting";
     h.power.steps.push(...mounts.map((m) => ({ kind: "mount" as const, name: m, state: "working" as const })));
   });
-  later(h, 5000, () => {
+  later(h, stopped + 2000, () => {
     set("mount", "done");
     h.power.phase = "going_down";
   });
   // The daemon keeps the host up until a page has read that it is ready.
-  later(h, 7000, () => {
+  later(h, stopped + 4000, () => {
     if (action === "poweroff") {
       h.downUntil = Infinity;
       return;
@@ -784,7 +794,8 @@ export function downloadImage(h: Host): Schema<"CoreDeploy"> {
 export function installImage(h: Host, reboot = ""): Schema<"CoreDeploy"> {
   const v = h.image.available[0];
   if (!v) throw new DemoProblem(409, "nothing_staged", "No downloaded version is waiting.");
-  const d = deploy(h, "install", v, ["Update", "Restart", "Health check"], () => {
+  // With a reboot now, the core waits for the new image's boot: no restart first.
+  const d = deploy(h, "install", v, reboot === "now" ? ["Update"] : ["Update", "Restart", "Health check"], () => {
     h.image.available = [];
     h.image.core = { ...h.image.core, active: v, available: [], installed: [v, ...h.image.core.installed] };
     h.image.installed = [{ version: v, state: "pending", tries_left: 3 }, ...h.image.installed.filter((x) => x.state === "booted")];
@@ -794,9 +805,11 @@ export function installImage(h: Host, reboot = ""): Schema<"CoreDeploy"> {
     d.phase = `Installed ${v}; rebooting`;
     later(h, 500, () => power(h, "reboot", true, true));
   });
-  // The new core restarts the daemon: for a moment nothing answers.
-  const restart = h.now() + 1500;
-  later(h, 1500, () => (h.downUntil = Math.max(h.downUntil, restart + 2500)));
+  // Otherwise the new core restarts the daemon: for a moment nothing answers.
+  if (reboot !== "now") {
+    const restart = h.now() + 1500;
+    later(h, 1500, () => (h.downUntil = Math.max(h.downUntil, restart + 2500)));
+  }
   return d;
 }
 

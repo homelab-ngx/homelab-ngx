@@ -173,59 +173,114 @@ export function timer(view: PowerView, i: { since: number; downSince?: number; n
   return { value: clock((i.now - i.since) / 1000), label: "elapsed" };
 }
 
-export type MilestoneState = "done" | "active" | "waiting" | "failed";
-export interface Milestone {
-  label: string;
-  state: MilestoneState;
+/** The title: what the system is doing, and once it is away, that it is. */
+export function titleOf(stage: Stage, action: PowerAction, installing: boolean): string {
+  switch (stage) {
+    case "down":
+    case "ready":
+      return action === "reboot" ? "Rebooting" : "Shutting down";
+    case "late":
+      return "Offline";
+    case "back":
+      return "Back online";
+    case "off":
+      return "Off";
+  }
+  if (installing) return "Updating";
+  return action === "reboot" ? "Rebooting" : "Shutting down";
 }
 
 // How far the old boot got, by the last phase read from it.
 const reached: Partial<Record<PowerStatus["phase"], number>> = { stopping_stacks: 0, unmounting: 1, going_down: 2, failed: 2 };
 
+export interface PhaseInput {
+  action: PowerAction;
+  stage: Stage;
+  /** The last phase read from the old boot, and whether a read said it was ready. */
+  phase?: PowerStatus["phase"];
+  sawReady: boolean;
+  /** The steps the old boot last reported. */
+  steps: PowerStep[];
+  /** Set when the reboot finishes an install. */
+  install?: { deploy?: CoreDeploy; past: boolean; reachable: boolean };
+  /** The version the host should come back on. */
+  to?: string;
+}
+
+const row = (key: string, name: string, tone: Tone, word: string, bar: Bar, extra: Partial<Row> = {}): Row => ({ key, name, tone, word, bar, ...extra });
+
+// What the install is doing, by the phase it last named.
+const installWord: Record<string, string> = { Restart: "restarting", "Health check": "checking", "Roll back": "going back" };
+
 /**
- * The run's milestones for the stage track: the update installed (when the
- * reboot finishes one), the stacks stopped, the pools unmounted, then the
- * reboot and the host back (or the host off). `phase` is the last phase
- * read from the old boot; `sawReady` whether a read said it was ready. A
- * milestone the page did not see reached stays waiting.
+ * The whole run as rows, every one there from the start: the install (when
+ * the reboot finishes one), the stacks stopped, the pools unmounted, the
+ * reboot and the host back (or off). A stack slow to stop, a stack killed
+ * and a pool left busy get a row of their own under their group.
  */
-export function trackOf(action: PowerAction, stage: Stage, phase: PowerStatus["phase"] | undefined, sawReady: boolean, install?: { past: boolean }): Milestone[] {
-  const out: Milestone[] = [];
-  if (install) {
-    const state: MilestoneState = install.past
-      ? "done"
-      : stage === "install_failed" || stage === "refused"
-        ? "failed"
-        : stage === "starting" || stage === "installing"
-          ? "active"
-          : "done";
-    out.push({ label: "update", state });
-    if (state !== "done") {
-      out.push({ label: "stacks", state: "waiting" }, { label: "pools", state: "waiting" });
-      if (action === "poweroff") out.push({ label: "off", state: "waiting" });
-      else out.push({ label: "reboot", state: "waiting" }, { label: "back", state: "waiting" });
+export function phaseRows(i: PhaseInput): Row[] {
+  const out: Row[] = [];
+  const { stage } = i;
+  const away = gone(stage);
+  if (i.install) {
+    const d = i.install.deploy;
+    if (i.install.past || d?.result === "healthy" || !(stage === "starting" || stage === "installing" || stage === "install_failed" || stage === "refused")) {
+      out.push(row("install", "Install", "ok", "done", "full"));
+    } else if (stage === "install_failed" || stage === "refused") {
+      out.push(row("install", "Install", "bad", "failed", "bad"));
+    } else {
+      const word = !i.install.reachable ? "restarting" : (installWord[d?.phase ?? ""] ?? (stage === "starting" ? "starting" : "installing"));
+      out.push(row("install", "Install", "info", word, "run"));
+    }
+    if (out[0]!.word !== "done") {
+      out.push(...pending(i));
       return out;
     }
   }
-  const at = sawReady ? 2 : (reached[phase ?? "idle"] ?? -1);
-  const failedAt = stage === "failed" ? Math.min(at, 1) : -2;
-  const step = (n: number): MilestoneState => {
-    if (n === failedAt) return "failed";
-    if (at > n) return "done";
-    if (at === n && stage === "stopping") return "active";
-    if (n === 0 && !install && stage === "refused") return "failed";
-    if (n === 0 && (stage === "starting" || (stage === "stopping" && at < 0))) return "active";
-    return "waiting";
+  const at = i.sawReady ? 2 : (reached[i.phase ?? "idle"] ?? -1);
+  const group = (n: 0 | 1, kind: PowerStep["kind"], name: string, trouble: string) => {
+    const all = i.steps.filter((s) => s.kind === kind);
+    const over = all.filter((s) => s.state === "done" || s.state === "failed").length;
+    const bad = all.filter((s) => s.state === "failed").length;
+    const key = `group-${kind}`;
+    if (stage === "failed" && n === Math.min(at, 1)) return [row(key, name, "bad", "failed", "bad")];
+    if (at > n) return [row(key, name, bad ? "warn" : "ok", bad ? `${bad} ${trouble}` : "done", bad ? "warn" : "full"), ...troubled(all, away)];
+    if (at === n && away) return [row(key, name, "idle", "not seen", "unknown")];
+    if (at === n || (n === 0 && (stage === "stopping" || stage === "starting"))) {
+      return [row(key, name, "info", all.length ? `${over} of ${all.length}` : "starting", "run"), ...troubled(all, away)];
+    }
+    if (n === 0 && !i.install && stage === "refused") return [row(key, name, "bad", "failed", "bad")];
+    return [row(key, name, "idle", "waiting", "empty")];
   };
-  out.push({ label: "stacks", state: step(0) }, { label: "pools", state: step(1) });
-  if (action === "poweroff") {
-    out.push({ label: "off", state: stage === "off" ? "done" : stage === "ready" ? "active" : "waiting" });
-    return out;
-  }
-  const away = stage === "ready" || stage === "down" || stage === "late";
-  out.push({ label: "reboot", state: stage === "back" ? "done" : away ? "active" : "waiting" });
-  out.push({ label: "back", state: stage === "back" ? "done" : "waiting" });
+  out.push(...group(0, "stack", "Stop stacks", "killed"), ...group(1, "mount", "Unmount pools", "busy"));
+  out.push(...last(i));
   return out;
+}
+
+/** The rows after the install while it runs: all waiting. */
+function pending(i: PhaseInput): Row[] {
+  return [row("group-stack", "Stop stacks", "idle", "waiting", "empty"), row("group-mount", "Unmount pools", "idle", "waiting", "empty"), ...last({ ...i, stage: "starting" })];
+}
+
+/** The reboot and the host back, or the poweroff. */
+function last(i: PhaseInput): Row[] {
+  const { stage } = i;
+  if (i.action === "poweroff") {
+    if (stage === "off") return [row("off", "Power off", "ok", "off", "full")];
+    if (stage === "ready") return [row("off", "Power off", "info", "powering off", "run")];
+    return [row("off", "Power off", "idle", "waiting", "empty")];
+  }
+  const back = i.to ? `Back on ${i.to}` : "Back online";
+  if (stage === "back") return [row("reboot", "Reboot", "ok", "done", "full"), row("back", back, "ok", "back", "full")];
+  if (stage === "ready" || stage === "down") return [row("reboot", "Reboot", "info", "rebooting", "run"), row("back", back, "idle", "waiting", "empty")];
+  if (stage === "late") return [row("reboot", "Reboot", "warn", "late", "run"), row("back", back, "idle", "waiting", "empty")];
+  return [row("reboot", "Reboot", "idle", "waiting", "empty"), row("back", back, "idle", "waiting", "empty")];
+}
+
+/** The steps worth a row of their own: a stack slow to stop or killed, a pool left busy. */
+function troubled(steps: PowerStep[], hostGone: boolean): Row[] {
+  const worth = steps.filter((s) => s.state === "failed" || (!hostGone && s.state === "working" && s.waiting_on));
+  return powerRows(worth, hostGone).map((r) => ({ ...r, indent: true }));
 }
 
 /**
@@ -265,7 +320,7 @@ export function powerRows(steps: PowerStep[], hostGone = false): Row[] {
 }
 
 /**
- * What a stack still stopping after 30 s waits for, and when systemd kills
+ * What a stack still stopping after 5 s waits for, and when systemd kills
  * it. Nothing for a step that is not stopping, or once the host is gone.
  */
 export function holdup(s: PowerStep, hostGone = false): { what: string; when: string } | undefined {
@@ -273,13 +328,4 @@ export function holdup(s: PowerStep, hostGone = false): { what: string; when: st
   if (!w || hostGone || s.state !== "working") return undefined;
   const what = w.description && w.description !== w.unit ? `${w.description} (${w.unit})` : w.unit;
   return { what: `Waiting for ${what}`, when: w.kill_in > 0 ? `killed in ${clock(w.kill_in)}` : "killing" };
-}
-
-/** One check the page made: answered, no answer, or the first answer from the new boot. */
-export type Probe = "answer" | "miss" | "back";
-
-/** The last checks the page made, newest last. */
-export function probe(list: Probe[], p: Probe, keep = 36): Probe[] {
-  const out = [...list, p];
-  return out.length > keep ? out.slice(out.length - keep) : out;
 }

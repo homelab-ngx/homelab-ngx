@@ -4,24 +4,19 @@
   import { page } from "$app/state";
   import { api, call, DEMO } from "#lib/api/client.ts";
   import { fetchHostSettings, hostKeys } from "#lib/host.ts";
-  import { deployRows, type CoreDeploy } from "#lib/components/core/core.ts";
+  import type { CoreDeploy } from "#lib/components/core/core.ts";
   import ProgressBar from "#lib/components/ProgressBar.svelte";
   import StepBars from "#lib/components/StepBars.svelte";
-  import PowerTrack from "#lib/components/power/PowerTrack.svelte";
-  import ProbeStrip from "#lib/components/power/ProbeStrip.svelte";
   import { start } from "#lib/power-start.svelte.ts";
   import {
     fetchPower,
-    gone,
-    powerRows,
+    phaseRows,
     powerView,
-    probe,
     stuck,
     timer,
-    trackOf,
+    titleOf,
     type PowerAction,
     type PowerStatus,
-    type Probe,
   } from "#lib/power.ts";
 
   // The address holds what the page needs, so a reload during the reboot
@@ -91,22 +86,13 @@
   // Every read answers: a host that is down is a result, not an error.
   let last = $state<PowerStatus | undefined>();
   let deploy = $state<CoreDeploy | undefined>();
-  let probes = $state<Probe[]>([]);
-  let checks = $state(0);
-  /** Checks without an answer in a row, up to the last one. */
-  let misses = $state(0);
-  let missed = $state(false);
   const read = createQuery(() => ({
     queryKey: ["daemon", "system", "power", "follow"],
     queryFn: async () => {
       const following = installs && !past;
       const [p, d] = await Promise.allSettled([fetchPower(), following ? call(api.GET("/system-updates/deploys")) : Promise.resolve(undefined)]);
-      checks++;
       if (p.status === "rejected") {
         if (!following) wentDown();
-        misses++;
-        missed = true;
-        probes = probe(probes, "miss");
         return { reachable: false, status: undefined };
       }
       const s = p.value;
@@ -115,8 +101,6 @@
       if (ours && (deploy?.result === "healthy" || (s.phase !== "idle" && s.phase !== "failed"))) pastInstall();
       if (s.phase === "going_down" && ours) ready();
       if (ours) last = s;
-      probes = probe(probes, ours ? "answer" : "back");
-      misses = 0;
       return { reachable: true, status: s };
     },
     refetchInterval: 1000,
@@ -147,14 +131,8 @@
       install: installs ? { deploy, past } : undefined,
     }),
   );
-  const hostGone = $derived(gone(view.stage));
   // The steps stay on the page once the host is gone.
   const steps = $derived(view.stage === "back" || view.steps.length === 0 ? (last?.steps ?? []) : view.steps);
-  const rows = $derived([
-    ...(installs ? deployRows(deploy, !reachable && !past) : []),
-    ...(view.stage === "installing" || view.stage === "install_failed" ? [] : powerRows(steps, hostGone)),
-  ]);
-  const marks = $derived(trackOf(action, view.stage, last?.phase, sawReady, installs ? { past } : undefined));
   const tm = $derived(timer(view, { since, downSince, now, expected }));
   const ended = $derived(stuck(view.stage));
   const settled = $derived(ended || view.stage === "back" || view.stage === "off");
@@ -182,6 +160,17 @@
   }));
   const was = $derived(image.data && image.data.booted !== to ? image.data.booted : "");
   const landed = $derived(after.data?.booted ?? "");
+  const rows = $derived(
+    phaseRows({
+      action,
+      stage: view.stage,
+      phase: last?.phase,
+      sawReady,
+      steps,
+      install: installs ? { deploy, past, reachable } : undefined,
+      to: landed || to,
+    }),
+  );
 
   // Back: a full load, so an update's new dashboard is the one that runs.
   // An update ends on the overview, which says the version it runs. The
@@ -193,7 +182,7 @@
     return () => clearTimeout(t);
   });
 
-  const title = installs ? "Updating" : action === "reboot" ? "Rebooting" : "Shutting down";
+  const title = $derived(titleOf(view.stage, action, installs && !past));
   const line = $derived(
     {
       starting: "Starting.",
@@ -203,7 +192,7 @@
       stopping: "Stopping the stacks and unmounting the pools.",
       failed: view.error,
       ready: action === "reboot" ? "Ready. Rebooting now." : "Ready. Powering off now.",
-      down: "Away while it restarts.",
+      down: "Offline while it reboots.",
       late: "Taking longer than usual. Still checking.",
       back: landed && to && landed !== to ? `Back on ${landed}; ${to} did not start.` : landed ? `Back on ${landed}.` : "Back.",
       off: "Off. Start it again with its power button.",
@@ -215,7 +204,7 @@
 
 <header class="text-center">
   {#if host.data?.host.hostname}<p class="text-xs text-muted">{host.data.host.hostname}</p>{/if}
-  <h1 class="text-xl font-semibold text-core">{title}</h1>
+  <h1 class={["text-xl font-semibold", view.stage === "late" ? "text-warn" : "text-core"]}>{title}</h1>
   {#if to}<p class="mt-0.5 text-muted tabular-nums">{was ? `${was} → ` : ""}{to}</p>{/if}
 </header>
 
@@ -239,8 +228,6 @@
     />
   </div>
 
-  <PowerTrack {marks} />
-
   {#if ended}
     <div role="alert" class="grid gap-2 rounded-md bg-bad-soft px-3 py-2 text-bad">
       <p>{line}</p>
@@ -252,14 +239,8 @@
   {:else}
     <p role="status" class="text-center">{line}</p>
   {/if}
-
-  {#if missed && !ended}
-    <ProbeStrip {probes} total={checks} {misses} />
-  {/if}
 </section>
 
-{#if rows.length > 0}
-  <section class="card mt-4 py-1.5" aria-label="Steps">
-    <StepBars {rows} />
-  </section>
-{/if}
+<section class="card mt-4 py-1.5" aria-label="Steps">
+  <StepBars {rows} />
+</section>

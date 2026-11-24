@@ -17,4 +17,6 @@ export interface Row {
   /** What it waits for, and when systemd kills it. */
   wait?: { what: string; when: string };
   detail?: string;
+  /** A row under the one before: a stack or pool of its group. */
+  indent?: boolean;
 }

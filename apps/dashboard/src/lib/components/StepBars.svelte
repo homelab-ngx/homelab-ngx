@@ -21,7 +21,7 @@
 <ul class="divide-y divide-line">
   {#each rows as r (r.key)}
     <li class="flex min-h-9 items-center gap-3 py-1.5" title={r.detail} in:slide={{ duration: prefersReducedMotion.current ? 0 : 220 }}>
-      <div class="min-w-0 flex-1">
+      <div class={["min-w-0 flex-1", r.indent && "pl-4 text-sm"]}>
         <p class="truncate">{r.name}</p>
         {#if r.wait}<p class="truncate text-xs text-muted tabular-nums">{r.wait.what} · {r.wait.when}</p>{/if}
       </div>

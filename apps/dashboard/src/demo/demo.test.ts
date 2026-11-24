@@ -147,6 +147,9 @@ describe("the demo's API", () => {
     expect((await d.post<Schema<"PowerStatus">>("/system/power", { action: "reboot" })).status).toBe(202);
     const going = await d.get<Schema<"PowerStatus">>("/system/power");
     expect([going.phase, going.steps.every((s) => s.kind === "stack")]).toEqual(["stopping_stacks", true]);
+    d.wait(3000);
+    // The last stack is slow to stop: the page is told what it waits for.
+    expect((await d.get<Schema<"PowerStatus">>("/system/power")).steps.some((s) => s.waiting_on)).toBe(true);
     d.wait(4000);
     expect((await d.get<Schema<"PowerStatus">>("/system/power")).steps.some((s) => s.kind === "mount")).toBe(true);
     d.wait(3000);
@@ -159,22 +162,22 @@ describe("the demo's API", () => {
     expect([after.booted, after.pending_reboot]).toEqual(["0.2.6", false]);
   });
 
-  it("installs and reboots in one run, the daemon away for a moment as its core restarts", async () => {
+  it("installs and reboots in one run, the core left for the new boot", async () => {
     const d = demo();
     await d.post("/system-updates/image/download");
     d.wait(7000);
     const first = (await d.get<Schema<"PowerStatus">>("/system/power")).boot_id;
     await d.post("/system-updates/image/release", { reboot: "now" });
-    d.wait(2000);
-    await expect(d.get("/system/power")).rejects.toThrow(TypeError);
-    d.wait(2100);
+    d.wait(1000);
+    // No restart before the reboot: the daemon answers throughout the install.
+    expect((await d.get<Schema<"PowerStatus">>("/system/power")).phase).toBe("idle");
     expect((await d.get<Schema<"CoreDeploy">[]>("/system-updates/deploys"))[0]!.result).toBe("running");
-    d.wait(500);
+    d.wait(600);
     const done = (await d.get<Schema<"CoreDeploy">[]>("/system-updates/deploys"))[0]!;
     expect([done.result, done.phase]).toEqual(["healthy", "Installed 0.2.6; rebooting"]);
-    d.wait(600);
+    d.wait(500);
     expect((await d.get<Schema<"PowerStatus">>("/system/power")).phase).toBe("stopping_stacks");
-    d.wait(8000);
+    d.wait(10_000);
     await expect(d.get("/system/power")).rejects.toThrow(TypeError);
     d.wait(30_000);
     expect((await d.get<Schema<"PowerStatus">>("/system/power")).boot_id).not.toBe(first);
