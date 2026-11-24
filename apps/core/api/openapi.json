@@ -5775,6 +5775,22 @@
         ],
         "type": "object"
       },
+      "SettingsStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "tiles": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TileStatus"
+            },
+            "description": "Keyed by tile, such as wireguard or notifications. A tile that is absent has no badge.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "tiles"
+        ],
+        "type": "object"
+      },
       "Source": {
         "additionalProperties": false,
         "properties": {
@@ -7560,6 +7576,28 @@
         "required": [
           "code"
         ],
+        "type": "object"
+      },
+      "TileStatus": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "description": "A number on the badge, such as a VPN's devices.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "state": {
+            "description": "ok, warn, bad or info: the badge's tone. off: the feature is off, and the tile is dimmed. Absent: no tone.",
+            "enum": [
+              "ok",
+              "warn",
+              "bad",
+              "info",
+              "off"
+            ],
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "Time": {
@@ -20499,6 +20537,66 @@
         "summary": "Ask the model for one word, to prove the address, the key and the model.",
         "tags": [
           "assistant"
+        ]
+      }
+    },
+    "/settings/status": {
+      "get": {
+        "description": "Each feature reports its own tiles, in parallel and within a short deadline. A feature that fails or is too slow leaves its tiles without a badge; the call itself does not fail.",
+        "operationId": "getSettingsStatus",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SettingsStatus"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The System Settings tiles' badges.",
+        "tags": [
+          "system"
         ]
       }
     },

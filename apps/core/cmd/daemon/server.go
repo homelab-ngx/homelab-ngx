@@ -17,6 +17,7 @@ import (
 	"homelab-ngx.com/core/internal/httpx"
 	"homelab-ngx.com/core/internal/installer"
 	"homelab-ngx.com/core/internal/llm"
+	"homelab-ngx.com/core/internal/logging"
 	"homelab-ngx.com/core/internal/metrics"
 	"homelab-ngx.com/core/internal/notifications"
 	"homelab-ngx.com/core/internal/power"
@@ -27,6 +28,7 @@ import (
 	"homelab-ngx.com/core/internal/storage"
 	"homelab-ngx.com/core/internal/system"
 	"homelab-ngx.com/core/internal/sysupdates"
+	"homelab-ngx.com/core/internal/tilestatus"
 )
 
 // feature is one package's HTTP adapter: it registers its operations, each
@@ -78,7 +80,23 @@ func features(d deps) []feature {
 		power.NewHTTP(d.power),
 		powerprofile.NewHTTP(d.powerProfile),
 		powermeter.NewHTTP(d.powerMeter),
+		tilestatus.NewHTTP(tiles(d)),
 	}
+}
+
+// tiles is each feature's reporter for the System Settings grid's badges.
+// A tile with no reporter (host, console, logs, power profile, account) has
+// no badge. With the OpenAPI command's zero deps the reporters are never
+// called.
+func tiles(d deps) *tilestatus.Registry {
+	g := tilestatus.NewRegistry(logging.Logger("tilestatus"))
+	g.Add("hostcfg", d.hostcfg.Tiles)
+	g.Add("notifications", notifications.Tiles(d.notifications, d.channels))
+	g.Add("audit", d.audit.Tiles)
+	g.Add("llm", d.assistant.Tiles)
+	g.Add("sysupdates", d.sysupdates.Tiles)
+	g.Add("power", d.power.Tiles)
+	return g
 }
 
 // handlers builds the operator API, once as the CLI's socket serves it and

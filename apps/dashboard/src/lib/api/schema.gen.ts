@@ -1406,6 +1406,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/settings/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The System Settings tiles' badges.
+         * @description Each feature reports its own tiles, in parallel and within a short deadline. A feature that fails or is too slow leaves its tiles without a badge; the call itself does not fail.
+         */
+        get: operations["getSettingsStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stack-updates": {
         parameters: {
             query?: never;
@@ -4436,6 +4456,12 @@ export interface components {
             /** @description CPU and memory of a running stack unit. Absent otherwise. */
             usage?: components["schemas"]["Usage"];
         };
+        SettingsStatus: {
+            /** @description Keyed by tile, such as wireguard or notifications. A tile that is absent has no badge. */
+            tiles: {
+                [key: string]: components["schemas"]["TileStatus"];
+            };
+        };
         Source: {
             /** @description kind stack: the skip patterns the stack declares. */
             declared_excludes: components["schemas"]["Exclude"][];
@@ -5066,6 +5092,18 @@ export interface components {
         TakeOverInBody: {
             /** @description The six digits on the machine's own screen or serial console. */
             code: string;
+        };
+        TileStatus: {
+            /**
+             * Format: int64
+             * @description A number on the badge, such as a VPN's devices.
+             */
+            count?: number;
+            /**
+             * @description ok, warn, bad or info: the badge's tone. off: the feature is off, and the tile is dimmed. Absent: no tone.
+             * @enum {string}
+             */
+            state?: "ok" | "warn" | "bad" | "info" | "off";
         };
         Time: {
             /**
@@ -12084,6 +12122,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssistantTest"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getSettingsStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SettingsStatus"];
                 };
             };
             /** @description Error */
