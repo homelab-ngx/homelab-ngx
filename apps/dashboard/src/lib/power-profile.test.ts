@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { newHost, powerProfile } from "../demo/host.ts";
 import { appliedState, blockerRow, share, tunableRow, watts, type PowerProfileStatus } from "./power-profile.ts";
-import { powerProfileLine } from "./settings.ts";
 
 function status(over: Partial<PowerProfileStatus> = {}): PowerProfileStatus {
   const h = newHost(() => 0);
@@ -43,11 +42,4 @@ describe("power profile", () => {
     expect(blockerRow(ups!).name).toBe("Back-UPS ES 700");
   });
 
-  it("puts the profile, deepest state and watts on the tile", () => {
-    expect(powerProfileLine(status()).text).toBe("balanced · 8.9 W");
-    const st = status();
-    st.idle = { ...st.idle, deepest: "PC6", watts: 1.2 };
-    st.profile = "power-saver";
-    expect(powerProfileLine(st).text).toBe("power saver · PC6 · 1.2 W");
-  });
 });

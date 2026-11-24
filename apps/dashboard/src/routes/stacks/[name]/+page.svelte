@@ -253,7 +253,7 @@
             {/each}
           </ul>
           {#if s.idle_grants.some((g) => g.reason.includes("LAN subnet"))}
-            <p><a class="underline" href="/settings/network">Network settings</a></p>
+            <p><a class="underline" href="/settings/lan">LAN settings</a></p>
           {/if}
         </div>
       {/if}

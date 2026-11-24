@@ -279,6 +279,24 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
   "/services": (h) => h.services,
   "/settings/assistant": () => ({ provider: "none", model: "", audit_model: "", base_url: "", key_set: false }),
   "/settings/assistant/limits": () => ({ limits: [] }),
+  // What the daemon's reporters say about the demo host above.
+  "/settings/status": (h, c) => {
+    const s = gets["/host-settings"](h, c) as Schema<"HostSettings">;
+    const counted = (state: Schema<"TileStatus">["state"], count: number) => (count ? { state, count } : { state });
+    const tiles: Record<string, Schema<"TileStatus">> = {
+      tailscale: { state: s.tailscale.enabled ? "ok" : "off" },
+      wireguard: s.wireguard.enabled ? counted("ok", s.wireguard.peers.length) : { state: "off" },
+      tunnel: s.tunnel.enabled && s.tunnel.credentials_set ? counted("ok", s.tunnel.routes.length) : { state: "off" },
+      firewall: { count: s.firewall.openings.length },
+      ssh: { count: s.host.ssh_keys?.length ?? 0 },
+      notifications: { state: "ok", count: 2 },
+      assistant: { state: "off" },
+      security: { state: "off" },
+    };
+    if (h.image.pending_reboot || h.image.available.length || h.image.core.available.length) tiles.updates = { state: "info" };
+    if (h.power.scheduled) tiles.power = { state: "info" };
+    return { tiles };
+  },
   "/stack-updates": (h, c) => h.updates.filter((u) => !c.query.get("stack") || u.stack === c.query.get("stack")).slice(0, Number(c.query.get("limit")) || 50),
   "/stack-updates/{id}": (h, c) => {
     const u = h.updates.find((x) => x.id === Number(c.path.id));

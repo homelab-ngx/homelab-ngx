@@ -1,95 +1,99 @@
-/** System Settings' index: each tile's status line, from what the pages behind it read. */
-import type { Schema, SecurityAuditItem } from "./api/client.ts";
-import type { Tone } from "./components/Pill.svelte";
-import { tailscaleState, type HostSettings, type TailscaleStatus } from "./host.ts";
-import { failingOf, type Channel, type Snapshot } from "./notifications.ts";
-import { profileLabel, watts, type PowerProfileStatus } from "./power-profile.ts";
-import { POSTURE, RESULT } from "./security.ts";
-
 /**
- * A tile's status: a mark and a word, or plain muted text when tone is
- * absent. A count is drawn as a number on the tile's icon, not in the text.
+ * System Settings' index: its tiles, each a page of its own, and their
+ * badges, which the daemon reports in one answer (GET /settings/status).
  */
-export interface TileStatus {
-  tone?: Tone;
-  text: string;
-  count?: number;
+import { Bell, BrickWall, CircleUser, Clock, Cloud, Gauge, Globe, House, Keyboard, KeyRound, Network, Power, RefreshCw, ScrollText, ShieldCheck, ShieldHalf, Sparkles, Waypoints } from "@lucide/svelte";
+import { api, call, type Schema } from "./api/client.ts";
+
+/** A tile's badge: a tone, a count, both, or neither. */
+export type TileStatus = Schema<"TileStatus">;
+export type TileState = NonNullable<TileStatus["state"]>;
+
+export const settingsStatusKey = ["daemon", "settings", "status"] as const;
+export const fetchSettingsStatus = () => call<Schema<"SettingsStatus">>(api.GET("/settings/status"));
+
+type Icon = typeof House;
+
+export interface Tile {
+  /** The daemon's name for the tile in GET /settings/status. */
+  key: string;
+  name: string;
+  href: string;
+  icon: Icon;
+  /** The core host's own software, in core violet. */
+  core?: boolean;
+  /** The state in words, for the link's spoken name, where the default word does not fit. */
+  words?: Partial<Record<TileState, string>>;
+  /** What the count counts: one, and more than one. */
+  noun?: [string, string];
 }
 
-/** Host: its name and time zone. */
-export const hostLine = (s: HostSettings): TileStatus => ({ text: `${s.host.hostname || "homelab"} · ${s.host.timezone || "UTC"}` });
-
-/** Clock: whether the host's time is set from a server. */
-export const clockStatus = (s: HostSettings): TileStatus =>
-  s.time_sync.synced ? { tone: "ok", text: "synced" } : { tone: "warn", text: "not synced" };
-
-/** Console: the keyboard layout's name; none set is the image's US layout. */
-export function consoleLine(s: HostSettings, layouts: Schema<"KeyboardLayout">[] | undefined): TileStatus {
-  const k = s.console.keyboard;
-  if (!k || k === "us") return { text: "English (US)" };
-  return { text: layouts?.find((l) => l.name === k)?.description ?? k };
+export interface Section {
+  id: string;
+  title: string;
+  tiles: Tile[];
 }
 
-/** The Network band's state: whether the stored settings are in effect. */
-export function appliedStatus(s: HostSettings): TileStatus {
-  if (s.managed === "nixos") return { tone: "info", text: "nixos" };
-  if (s.applied.errors.length > 0) return { tone: "bad", text: "not applied" };
-  return { tone: "ok", text: "applied" };
+const notApplied = { bad: "not applied" };
+const tile = (key: string, name: string, icon: Icon, more: Partial<Tile> = {}): Tile => ({ key, name, icon, href: `/settings/${key}`, ...more });
+
+export const SECTIONS: Section[] = [
+  {
+    id: "host",
+    title: "This host",
+    tiles: [
+      tile("host", "Host", House, { words: notApplied }),
+      tile("clock", "Clock", Clock, { words: { warn: "not synced" } }),
+      tile("console", "Console", Keyboard),
+      tile("power-profile", "Power profile", Gauge),
+      tile("updates", "Updates", RefreshCw, { core: true, words: { info: "update waiting", bad: "fell back" } }),
+      tile("notifications", "Notifications", Bell, { words: { ok: "on", bad: "failing", off: "no channels" }, noun: ["channel", "channels"] }),
+      tile("logs", "Logs", ScrollText),
+      tile("power", "Power", Power, { words: { info: "scheduled" } }),
+    ],
+  },
+  {
+    id: "net",
+    title: "Network",
+    tiles: [
+      tile("domain", "Domain", Globe, { words: { off: "not set", ...notApplied } }),
+      tile("lan", "LAN", Network, { words: { off: "not set" } }),
+      tile("tailscale", "Tailscale", Waypoints, { words: { ok: "connected", warn: "needs login", info: "starting", ...notApplied } }),
+      tile("wireguard", "WireGuard VPN", ShieldHalf, { words: { ok: "on" }, noun: ["device", "devices"] }),
+      tile("tunnel", "Cloudflare Tunnel", Cloud, { words: { ok: "on", ...notApplied }, noun: ["route", "routes"] }),
+      tile("firewall", "Firewall", BrickWall, { words: notApplied, noun: ["opening", "openings"] }),
+      tile("ssh", "SSH", KeyRound, { words: { off: "no keys", ...notApplied }, noun: ["key", "keys"] }),
+    ],
+  },
+  {
+    id: "ai",
+    title: "Assistant",
+    tiles: [
+      tile("assistant", "AI assistant", Sparkles, { words: { ok: "on" } }),
+      tile("security", "Security audit", ShieldCheck, { words: { ok: "good", info: "fair", warn: "weak", bad: "poor", off: "never run" } }),
+    ],
+  },
+  { id: "browser", title: "This browser", tiles: [tile("account", "Account", CircleUser)] },
+];
+
+const WORDS: Record<TileState, string> = { ok: "ok", warn: "warning", bad: "failed", info: "pending", off: "off" };
+
+/** The tile link's spoken name: its name, then the badge in words ("WireGuard VPN, on, 2 devices"). */
+export function tileLabel(t: Tile, st: TileStatus | undefined): string {
+  const parts = [t.name];
+  if (st?.state) parts.push(t.words?.[st.state] ?? WORDS[st.state]);
+  if (st?.count !== undefined) {
+    const [one, many] = t.noun ?? ["item", "items"];
+    parts.push(`${st.count} ${st.count === 1 ? one : many}`);
+  }
+  return parts.join(", ");
 }
 
-/** Domain: the name the dashboard is served under. */
-export const domainLine = (s: HostSettings): TileStatus => (s.domain.domain ? { text: s.domain.domain } : { tone: "idle", text: "not set" });
+/** The tiles that were cards on the General and Network pages, by their old anchor. */
+const MOVED = new Set(["host", "clock", "console", "domain", "lan", "tailscale", "wireguard", "tunnel", "firewall", "ssh"]);
 
-/** LAN: the subnets taken as the home network. */
-export const lanLine = (s: HostSettings): TileStatus =>
-  s.network.lan.length > 0 ? { text: s.network.lan.join(", ") } : { tone: "idle", text: "not set" };
-
-/** Tailscale: off unless turned on, then the daemon's state of it. */
-export function tailscaleStatus(s: HostSettings, st: TailscaleStatus | undefined): TileStatus {
-  if (!s.tailscale.enabled) return { tone: "idle", text: "off" };
-  const m = tailscaleState(st);
-  return { tone: m.tone, text: m.word };
+/** Where an old /settings/general or /settings/network link goes: its anchor's own page, else the index. */
+export function movedTile(hash: string): string {
+  const key = hash.replace(/^#/, "");
+  return MOVED.has(key) ? `/settings/${key}` : "/settings";
 }
-
-/** WireGuard: on and how many devices, or off. */
-export const vpnStatus = (s: HostSettings): TileStatus =>
-  s.wireguard.enabled ? { tone: "ok", text: "on", count: s.wireguard.peers.length } : { tone: "idle", text: "off" };
-
-/** Cloudflare Tunnel: on once it has its credentials. */
-export const tunnelStatus = (s: HostSettings): TileStatus =>
-  s.tunnel.enabled && s.tunnel.credentials_set ? { tone: "ok", text: "on", count: s.tunnel.routes.length } : { tone: "idle", text: "off" };
-
-/** Firewall: the openings besides the built-in ones. */
-export function firewallLine(s: HostSettings): TileStatus {
-  const n = s.firewall.openings.length;
-  return n > 0 ? { text: n === 1 ? "opening" : "openings", count: n } : { text: "no openings" };
-}
-
-/** SSH: the keys that may log in as root. */
-export const sshLine = (s: HostSettings): TileStatus => {
-  const n = s.host.ssh_keys?.length ?? 0;
-  return n > 0 ? { text: n === 1 ? "key" : "keys", count: n } : { tone: "idle", text: "no keys" };
-};
-
-/** Notifications: failing channels first, else how many deliver. */
-export function notificationsStatus(channels: Channel[] | undefined, snapshot: Snapshot | undefined): TileStatus | undefined {
-  if (!channels) return undefined;
-  const failing = failingOf(snapshot).length;
-  if (failing > 0) return { tone: "bad", text: "failing", count: failing };
-  const on = channels.filter((c) => c.enabled).length;
-  return on > 0 ? { tone: "ok", text: "on", count: on } : { tone: "idle", text: "no channels" };
-}
-
-/** Security audit: the last one's posture, else its result, else never run. */
-export function auditStatus(audits: SecurityAuditItem[] | undefined): TileStatus | undefined {
-  if (!audits) return undefined;
-  const last = audits[0];
-  if (!last) return { tone: "idle", text: "never" };
-  if (last.posture) return { tone: POSTURE[last.posture], text: last.posture };
-  return { tone: RESULT[last.result].tone, text: RESULT[last.result].label };
-}
-
-/** Power profile: the profile, the deepest package state of the last minute, the package's watts. */
-export const powerProfileLine = (st: PowerProfileStatus): TileStatus => ({
-  text: [profileLabel(st.profile).toLowerCase(), st.idle.deepest, watts(st.idle.watts)].filter(Boolean).join(" · "),
-});

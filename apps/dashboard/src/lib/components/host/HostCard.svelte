@@ -4,13 +4,14 @@
   import Help from "#lib/components/Help.svelte";
 
   interface Props {
-    /** The section's id, so System Settings' tiles can link to it. */
+    /** The section's id, so a link can point at it. */
     anchor?: string;
-    title: string;
+    /** Left out when the card is alone on its page, whose heading names it. */
+    title?: string;
     /** What the section is for, in a few words: the one hint it shows. */
     subtitle: string;
     /** The title's help. */
-    help: string;
+    help?: string;
     /** The section's state, as a status mark and word beside the title. */
     status?: Snippet;
     /** Values from the NixOS configuration: shown, not changed. */
@@ -45,11 +46,11 @@
 </script>
 
 <!-- One section of the host's settings: its fields and one Apply. -->
-<section id={anchor} class="card scroll-mt-16" aria-labelledby="{id}-h">
+<section id={anchor} class="card scroll-mt-16" aria-labelledby={title ? `${id}-h` : undefined}>
   <div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
     <div class="min-w-0">
-      <h3 id="{id}-h" class="font-semibold"><Help label={title}>{help}</Help></h3>
-      <p class="mt-0.5 text-xs text-muted">{subtitle}</p>
+      {#if title}<h3 id="{id}-h" class="mb-0.5 font-semibold"><Help label={title}>{help}</Help></h3>{/if}
+      <p class="text-xs text-muted">{subtitle}</p>
     </div>
     {#if status}<div class="pt-0.5">{@render status()}</div>{/if}
   </div>

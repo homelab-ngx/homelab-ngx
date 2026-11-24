@@ -49,10 +49,7 @@
 </script>
 
 <HostCard
-  anchor="tailscale"
-  title="Tailscale"
   subtitle="Reach the host from devices on a tailnet."
-  help="Puts the host on a Tailscale network (a tailnet), so its devices reach the host by name with no port opened at home. Log in opens Tailscale's page, where the host is approved from any device. Offered subnets let the tailnet reach the LAN through the host, once approved in the tailnet's admin console."
   {readOnly}
   dirty={changed(draft, stored())}
   apply={async () =>

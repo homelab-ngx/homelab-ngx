@@ -27,10 +27,7 @@
 </script>
 
 <HostCard
-  anchor="clock"
-  title="Clock"
   subtitle="How times read, and where the host gets the time."
-  help="The format of every time the dashboard shows; Automatic follows each browser's language. The host sets its clock from the time servers: Arch's public pool unless others are named, such as the router for a host without internet."
   {readOnly}
   dirty={format !== (settings.time.clock ?? "") || changed(splitList(ntp), settings.time.ntp ?? [])}
   apply={async () => onSaved(await call(api.PUT("/host-settings/time", { body: { clock: format, ntp: splitList(ntp) } })))}
