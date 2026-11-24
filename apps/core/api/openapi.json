@@ -5202,7 +5202,7 @@
           },
           "waiting_on": {
             "$ref": "#/components/schemas/PowerWait",
-            "description": "A stack still stopping after 30 s: the unit it waits for and when systemd kills it."
+            "description": "A stack still stopping after 5 s: the unit it waits for and when systemd kills it."
           }
         },
         "required": [

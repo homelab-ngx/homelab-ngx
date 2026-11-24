@@ -4258,7 +4258,7 @@ export interface components {
             name: string;
             /** @enum {string} */
             state: "waiting" | "working" | "done" | "failed";
-            /** @description A stack still stopping after 30 s: the unit it waits for and when systemd kills it. */
+            /** @description A stack still stopping after 5 s: the unit it waits for and when systemd kills it. */
             waiting_on?: components["schemas"]["PowerWait"];
         };
         PowerTunable: {

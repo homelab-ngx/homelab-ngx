@@ -160,7 +160,8 @@ func TestAutoInstall(t *testing.T) {
 	}
 }
 
-// The image goes in first, then the core, then the reboot.
+// The image goes in first, then the core, then the reboot. A reboot now
+// leaves the core for the new image's boot.
 func TestInstallRelease(t *testing.T) {
 	imageHost(t, "1")
 	touch(t, filepath.Join(imageESPs[0], "homelab_1.efi"), filepath.Join(coreExtDir, "homelab-core_1.raw"))
@@ -192,15 +193,31 @@ func TestInstallRelease(t *testing.T) {
 	if err := x.run(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if d := record(t, x); d.Result != DeployHealthy || d.Version != "2" || activeCore() != "2" || strings.Join(order, " ") != "image core reboot" {
+	if d := record(t, x); d.Result != DeployHealthy || d.Version != "2" || activeCore() != "1" || strings.Join(order, " ") != "image reboot" {
 		t.Fatalf("record = %+v, core %s, order %v", d, activeCore(), order)
 	}
 	if len(f.CallsMatching("bootctl", "set-default", "")) != 1 {
 		t.Fatal("a default set by hand was not cleared for the new image")
 	}
+	if n := len(f.CallsMatching("systemctl", "restart")); n != 0 {
+		t.Fatalf("the daemon restarted %d times before the reboot", n)
+	}
 
-	// A core that does not start goes back, and the host does not reboot
-	// into the new image on its own.
+	// Without a reboot the core is applied now, and checked.
+	imageHost(t, "1")
+	touch(t, filepath.Join(imageESPs[0], "homelab_1.efi"), filepath.Join(coreExtDir, "homelab-core_1.raw"))
+	useCore(t, "1")
+	order = nil
+	x = newRun(t, f, KindInstall, func() error { return nil })
+	if err := x.run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if d := record(t, x); d.Result != DeployHealthy || d.Version != "2" || activeCore() != "2" || strings.Join(order, " ") != "image core" {
+		t.Fatalf("record = %+v, core %s, order %v", d, activeCore(), order)
+	}
+
+	// A core that does not start goes back, and the host is not rebooted
+	// into the new image at the time asked for.
 	imageHost(t, "1")
 	touch(t, filepath.Join(imageESPs[0], "homelab_1.efi"), filepath.Join(coreExtDir, "homelab-core_1.raw"))
 	useCore(t, "1")
@@ -211,11 +228,11 @@ func TestInstallRelease(t *testing.T) {
 		}
 		return nil
 	})
-	x.o.Reboot = "now"
+	x.o.Reboot = "23:00"
 	if err := x.run(context.Background()); err == nil {
 		t.Fatal("an install whose core went back reported success")
 	}
-	if d := record(t, x); d.Result != DeployRolledBack || activeCore() != "1" || !strings.Contains(d.Reason, "image 2 is installed") || strings.Contains(strings.Join(order, " "), "reboot") {
+	if d := record(t, x); d.Result != DeployRolledBack || activeCore() != "1" || !strings.Contains(d.Reason, "image 2 is installed") || len(f.CallsMatching("shutdown")) != 0 {
 		t.Fatalf("record = %+v, core %s, order %v", d, activeCore(), order)
 	}
 }

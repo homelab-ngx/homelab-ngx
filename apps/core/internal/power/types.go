@@ -46,7 +46,7 @@ type PowerStep struct {
 	State  PowerStepState `json:"state" enum:"waiting,working,done,failed"`
 	Detail string         `json:"detail,omitempty" doc:"Why a step failed. A stack that did not halt was killed; a mount still in use is unmounted last, as the host goes down."`
 	// WaitingOn is set once a stack has been stopping for a while.
-	WaitingOn *PowerWait `json:"waiting_on,omitempty" doc:"A stack still stopping after 30 s: the unit it waits for and when systemd kills it."`
+	WaitingOn *PowerWait `json:"waiting_on,omitempty" doc:"A stack still stopping after 5 s: the unit it waits for and when systemd kills it."`
 }
 
 // PowerWait is the unit a stopping stack waits for.

@@ -114,7 +114,7 @@ func New(stacks Stacks, mounts Mounts, logind Logind, meta Meta, r cmdrunner.Run
 		now: time.Now, bootID: readBootID(), st: PowerStatus{Phase: PhaseIdle, Steps: []PowerStep{}},
 		expected: defaultReboot, ctx: context.Background(),
 		watchWindow: 3 * time.Second, lingerMax: 3 * time.Second,
-		holdupAfter: 30 * time.Second, holdupEvery: 2 * time.Second,
+		holdupAfter: 5 * time.Second, holdupEvery: 2 * time.Second,
 	}
 }
 

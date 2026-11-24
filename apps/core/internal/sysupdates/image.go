@@ -602,10 +602,19 @@ func (x *deployRun) imageUpdate(ctx context.Context) (string, string) {
 // the core extension, which is checked and put back when it does not start,
 // and only then the reboot into the new image. A core that needs the new
 // image is left for that image's first boot, which applies it.
+//
+// When the host reboots into the new image now, the staged core is left
+// for that boot as well: restarting the daemon on it first would only add a
+// restart before the reboot. The boot applies it (core-at-boot) and goes
+// back to the core before when the daemon does not answer (boot-check).
 func (x *deployRun) install(ctx context.Context) (string, string) {
 	image, why := x.installImage(ctx)
 	if why != "" {
 		return DeployFailed, why
+	}
+	if image != "" && x.o.Reboot == "now" {
+		x.logf("the core is applied when image %s starts", image)
+		return x.rebootChoice(ctx)
 	}
 	if v, min := x.coreWaits(ctx); image != "" && v != "" && compareVersions(min, image) <= 0 {
 		x.logf("core %s needs image %s or newer: it is applied when image %s starts", v, min, image)
