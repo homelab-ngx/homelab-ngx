@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # builder: run a make target on the build machine instead of this host.
-# Wakes it (Wake-on-LAN) when it does not answer, puts this checkout's HEAD
-# in its own checkout (uncommitted changes stay here) and runs make there:
+# Wakes it (via wake command or Wake-on-LAN) when it does not answer, puts this
+# checkout's HEAD in its own checkout (uncommitted changes stay here) and runs
+# make there:
 #   scripts/builder image VERSION=1
 #   scripts/builder image-check BUILD=1 KEEP=1
 #   scripts/builder daemon-test PKG=./internal/x
@@ -12,32 +13,42 @@
 # Its output (image/out) stays there.
 #
 # Set in the environment or in ~/.config/homelab/builder.env:
-#   HOMELAB_BUILDER      SSH destination (a host alias from ~/.ssh/config)
-#   HOMELAB_BUILDER_MAC  MAC address to wake it by; empty: never wake it
-#   HOMELAB_BUILDER_DIR  its checkout (default .cache/homelab-builder in its home)
-#   HOMELAB_BUILDER_ARGS make variables for every run there, e.g. the VM size
-#                        image-check gets: "CPUS=10 MEM=8192"
+#   HOMELAB_BUILDER          SSH destination (a host alias from ~/.ssh/config)
+#   HOMELAB_BUILDER_WAKE_CMD shell command to start the build machine when it
+#                            does not answer (takes precedence over MAC)
+#   HOMELAB_BUILDER_MAC      MAC address to wake it via WoL; empty: never wake
+#   HOMELAB_BUILDER_DIR      its checkout (default .cache/homelab-builder in its home)
+#   HOMELAB_BUILDER_ARGS     make variables for every run there, e.g. the VM size
+#                            image-check gets: "CPUS=10 MEM=8192"
 set -euo pipefail
 
 conf=${XDG_CONFIG_HOME:-$HOME/.config}/homelab/builder.env
 # shellcheck disable=SC1090
 [ -f "$conf" ] && . "$conf"
 host=${HOMELAB_BUILDER:?set HOMELAB_BUILDER (or $conf)}
+wake_cmd=${HOMELAB_BUILDER_WAKE_CMD:-}
 mac=${HOMELAB_BUILDER_MAC:-}
 dir=${HOMELAB_BUILDER_DIR:-.cache/homelab-builder}
 
 reach() { ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" true 2>/dev/null; }
 
 if ! reach; then
-  [ -n "$mac" ] || { echo "builder: $host does not answer" >&2; exit 1; }
-  echo "builder: waking $host"
-  python3 - "$mac" <<'EOF'
+  if [ -n "$wake_cmd" ]; then
+    echo "builder: waking $host"
+    sh -c "$wake_cmd"
+  elif [ -n "$mac" ]; then
+    echo "builder: waking $host"
+    python3 - "$mac" <<'EOF'
 import socket, sys
 mac = bytes.fromhex(sys.argv[1].replace(":", "").replace("-", ""))
 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 s.sendto(b"\xff" * 6 + mac * 16, ("255.255.255.255", 9))
 EOF
+  else
+    echo "builder: $host does not answer" >&2
+    exit 1
+  fi
   for _ in $(seq 1 36); do reach && break; sleep 5; done
   reach || { echo "builder: $host did not come up in 3 minutes" >&2; exit 1; }
 fi
@@ -50,6 +61,7 @@ git push -q -f "$host:$dir" HEAD:refs/heads/build 'refs/tags/*:refs/tags/*'
 # The Makefile enters the dev shell itself; it only needs make, from nixpkgs
 # when the build machine has none.
 args="$(printf '%q ' "$@") ${HOMELAB_BUILDER_ARGS:-}"
-# An image host's Nix has no flakes turned on in its config; the dev shells need them.
-ssh "$host" "export NIX_CONFIG='experimental-features = nix-command flakes'; cd $dir && git checkout -qf --detach build &&
+# Non-interactive SSH on multi-user Nix installs may not source /etc/profile.d,
+# and an image host's Nix has no flakes turned on in its config.
+ssh "$host" "export PATH=\"\$HOME/.nix-profile/bin:/nix/var/nix/profiles/default/bin:\$PATH\" NIX_CONFIG='experimental-features = nix-command flakes'; cd $dir && git checkout -qf --detach build &&
   if command -v make >/dev/null; then exec make $args; else exec nix shell nixpkgs#gnumake -c make $args; fi"
