@@ -46,6 +46,7 @@ func realMain(args []string, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	specPath := fs.String("spec", "", "path of the run's spec file (deleted once read)")
 	statePath := fs.String("state", "", "path of the state file to write")
+	preview := fs.Bool("preview", false, "compare the folders with their destinations and change nothing there")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -63,6 +64,12 @@ func realMain(args []string, stderr io.Writer) int {
 		return exitUsage
 	}
 
+	// Both the spec and the argument must ask for a preview. A runner older
+	// than the mode fails on the argument, and never copies a preview's spec.
+	if spec.Preview != *preview || (spec.Preview && spec.CheckOnly) {
+		fmt.Fprintln(stderr, "the spec and --preview do not agree")
+		return exitUsage
+	}
 	if spec.CheckOnly {
 		spec.Folders = nil
 	}
@@ -108,7 +115,7 @@ type runner struct {
 // initialState lists every item as pending, a destination followed by its
 // folders, so a reader sees the whole plan from the first write.
 func initialState(spec *runfile.Spec, now time.Time) *runfile.State {
-	st := &runfile.State{Version: runfile.Version, RunID: spec.RunID, StartedAt: now, UpdatedAt: now, Items: []runfile.Item{}}
+	st := &runfile.State{Version: runfile.Version, RunID: spec.RunID, Preview: spec.Preview, StartedAt: now, UpdatedAt: now, Items: []runfile.Item{}}
 	for _, d := range spec.Destinations {
 		st.Items = append(st.Items, runfile.Item{
 			Kind: runfile.ItemDestination, DestinationID: d.ID, Destination: d.Name, Result: runfile.ResultPending,
@@ -157,12 +164,18 @@ func (r *runner) finish(ctx context.Context, forced string) string {
 			it := &st.Items[i]
 			if it.Result == runfile.ResultPending || it.Result == runfile.ResultRunning {
 				it.Result = runfile.ResultSkipped
+				if cancelled && forced == "" {
+					it.Result = runfile.ResultCancelled
+				}
 				if it.Error == "" {
 					it.Error = "the run stopped before this was done"
 				}
 				if it.StartedAt != nil {
 					it.FinishedAt = &now
 				}
+			}
+			if it.Result == runfile.ResultSkipped && it.Error == "" {
+				continue // left out on purpose (a preview's restic destination)
 			}
 			total++
 			switch it.Result {
@@ -236,6 +249,18 @@ func (r *runner) destination(ctx context.Context, d int) {
 	di := r.item(d, -1)
 	r.start(di)
 
+	if r.spec.Preview && dest.Kind == runfile.KindRestic {
+		const note = "restic destinations are not previewed"
+		r.track.do(func(st *runfile.State) {
+			st.Items[di].Result, st.Items[di].Note = runfile.ResultSkipped, note
+			for f := range r.spec.Folders {
+				it := &st.Items[r.item(d, f)]
+				it.Result, it.Note = runfile.ResultSkipped, note
+			}
+		})
+		return
+	}
+
 	var tool tool
 	switch dest.Kind {
 	case runfile.KindRclone:
@@ -296,6 +321,8 @@ type outcome struct {
 	bytes  int64
 	err    string
 	note   string
+	// preview is what a run would do; a preview's folders only.
+	preview *runfile.Preview
 }
 
 func failed(format string, a ...any) outcome {
@@ -322,6 +349,13 @@ func (r *runner) folder(ctx context.Context, t tool, dest runfile.Destination, f
 	r.track.progress(func(st *runfile.State) {
 		st.Progress = &runfile.Progress{Destination: dest.Name, Folder: f.Label}
 	})
+	if r.spec.Preview {
+		rt, ok := t.(*rcloneTool)
+		if !ok {
+			return failed("this destination kind cannot be previewed")
+		}
+		return rt.preview(ctx, f)
+	}
 	return t.copy(ctx, f)
 }
 
@@ -338,6 +372,7 @@ func (r *runner) end(i int, out outcome) {
 	r.track.do(func(st *runfile.State) {
 		it := &st.Items[i]
 		it.Result, it.Files, it.Bytes, it.Error = out.result, out.files, out.bytes, out.err
+		it.Preview = out.preview
 		if out.note != "" {
 			it.Note = out.note
 		}

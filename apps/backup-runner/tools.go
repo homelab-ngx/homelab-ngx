@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"homelab-ngx.com/core/backup-runner/runfile"
@@ -148,6 +149,8 @@ type rcloneLine struct {
 	Level string       `json:"level"`
 	Msg   string       `json:"msg"`
 	Stats *rcloneStats `json:"stats"`
+	// Skipped names what a dry run did not do to one file ("copy", "delete").
+	Skipped string `json:"skipped"`
 }
 
 type rcloneStats struct {
@@ -157,6 +160,8 @@ type rcloneStats struct {
 	TotalTransfers int64   `json:"totalTransfers"`
 	Speed          float64 `json:"speed"`
 	Errors         int64   `json:"errors"`
+	Checks         int64   `json:"checks"`
+	TotalChecks    int64   `json:"totalChecks"`
 }
 
 func rcloneTarget(remote, sub string) string {
@@ -242,6 +247,125 @@ func (t *rcloneTool) copy(ctx context.Context, f runfile.Folder) outcome {
 	})
 	mu.Lock()
 	out := outcome{result: runfile.ResultSuccess, files: stats.Transfers, bytes: stats.Bytes}
+	mu.Unlock()
+	if err != nil {
+		out.result, out.err = runfile.ResultFailure, err.Error()
+	} else if code != 0 {
+		out.result, out.err = runfile.ResultFailure, exitError("rclone", code, last.get())
+	}
+	return out
+}
+
+// preview runs the copy as a dry run and counts what it would do. The
+// arguments are the copy's own, so the folder, the skip patterns, the size
+// comparison and the deletes are decided exactly as a run decides them.
+//
+// rclone writes one line per file ("+ path" new, "* path" changed, "= path"
+// unchanged, "- path" only at the destination, "! path" error) to a named
+// pipe: its log shares one pipe for stdout and stderr, where a long line
+// could be cut in two by another.
+func (t *rcloneTool) preview(ctx context.Context, f runfile.Folder) outcome {
+	pipe := filepath.Join(t.r.spec.WorkDir, fmt.Sprintf("dest-%d.combined", t.dest.ID))
+	os.Remove(pipe)
+	if err := syscall.Mkfifo(pipe, 0o600); err != nil {
+		return failed("create the report pipe: %s", err)
+	}
+	defer os.Remove(pipe)
+	// Opened without blocking, and held open for writing too, so the reader
+	// neither waits for rclone to open the pipe nor ends before it has.
+	rd, err := os.OpenFile(pipe, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return failed("open the report pipe: %s", err)
+	}
+	defer rd.Close()
+	wr, err := os.OpenFile(pipe, os.O_WRONLY, 0)
+	if err != nil {
+		return failed("open the report pipe: %s", err)
+	}
+
+	var (
+		last lastError
+		mu   sync.Mutex
+		pv   = runfile.Preview{Deletes: t.dest.DeleteRemoved}
+	)
+	sample := func(list *[]string, p string) {
+		if len(*list) < runfile.SampleSize {
+			*list = append(*list, p)
+		}
+	}
+	size := func(rel string) int64 {
+		if fi, err := os.Lstat(filepath.Join(f.Path, filepath.FromSlash(rel))); err == nil {
+			return fi.Size()
+		}
+		return 0
+	}
+	read := make(chan struct{})
+	go func() {
+		defer close(read)
+		readLines(rd, maxLine, func(line []byte) {
+			if len(line) < 3 || line[1] != ' ' {
+				return
+			}
+			rel := string(line[2:])
+			mu.Lock()
+			defer mu.Unlock()
+			switch line[0] {
+			case '+':
+				pv.New++
+				pv.NewBytes += size(rel)
+				sample(&pv.NewSample, rel)
+			case '*':
+				pv.Changed++
+				pv.ChangedBytes += size(rel)
+				sample(&pv.ChangedSample, rel)
+			case '=':
+				pv.Unchanged++
+			case '-':
+				pv.Extra++
+				sample(&pv.ExtraSample, rel)
+			case '!':
+				pv.Errors++
+			}
+		})
+	}()
+
+	dest := t.dest.Name
+	// One attempt: a retry would report every file again.
+	args := append(t.args(f), "--dry-run", "--combined", pipe, "--retries", "1")
+	code, err := runTool(ctx, t.bin, args, nil, func(line []byte) {
+		var m rcloneLine
+		if len(line) == 0 || line[0] != '{' || json.Unmarshal(line, &m) != nil || (m.Msg == "" && m.Stats == nil) {
+			t.r.log.printf("rclone: %s", line)
+			return
+		}
+		if m.Stats == nil {
+			if m.Level == "error" {
+				last.set(m.Msg)
+			}
+			// One line per file it would copy or delete: the counts carry that.
+			if m.Skipped == "" {
+				t.r.log.printf("rclone: %s: %s", m.Level, m.Msg)
+			}
+			return
+		}
+		s := *m.Stats
+		mu.Lock()
+		done := pv.New + pv.Changed + pv.Unchanged + pv.Extra + pv.Errors
+		mu.Unlock()
+		t.r.track.progress(func(st *runfile.State) {
+			// Compared so far, of what rclone has listed so far: the total
+			// grows while it lists. Nothing is sent, so there is no speed.
+			st.Progress = &runfile.Progress{
+				Destination: dest, Folder: f.Label,
+				FilesDone: done, FilesTotal: max(done, s.TotalChecks+s.TotalTransfers),
+			}
+		})
+	})
+	wr.Close()
+	<-read
+
+	mu.Lock()
+	out := outcome{result: runfile.ResultSuccess, preview: &pv}
 	mu.Unlock()
 	if err != nil {
 		out.result, out.err = runfile.ResultFailure, err.Error()

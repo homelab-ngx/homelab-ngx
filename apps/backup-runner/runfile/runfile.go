@@ -33,7 +33,8 @@ const (
 )
 
 // Results. A run ends success, partial, failure or cancelled; an item also
-// passes through pending and running, and may be skipped.
+// passes through pending and running, and may be skipped. An item that was
+// not done when the run was stopped is cancelled.
 const (
 	ResultPending   = "pending"
 	ResultRunning   = "running"
@@ -68,6 +69,10 @@ type Spec struct {
 	// CheckOnly only checks that each destination can be reached: one
 	// destination item each, no folders, no restic init and no prune.
 	CheckOnly bool `json:"check_only,omitempty"`
+	// Preview compares every folder with its destination and changes nothing
+	// there. The runner does it only when it is also started with --preview,
+	// so a runner that does not know the mode refuses instead of copying.
+	Preview bool `json:"preview,omitempty"`
 
 	Destinations []Destination `json:"destinations"`
 	Folders      []Folder      `json:"folders"`
@@ -142,6 +147,8 @@ type State struct {
 	// Result is empty while the run is in flight.
 	Result string `json:"result,omitempty"`
 	Error  string `json:"error,omitempty"`
+	// Preview marks the state of a preview: nothing was copied.
+	Preview bool `json:"preview,omitempty"`
 
 	Items    []Item    `json:"items"`
 	Progress *Progress `json:"progress,omitempty"`
@@ -166,6 +173,33 @@ type Item struct {
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	Error      string     `json:"error,omitempty"`
 	Note       string     `json:"note,omitempty"`
+	// Preview is what a run would do to this folder; set by a preview only.
+	Preview *Preview `json:"preview,omitempty"`
+}
+
+// SampleSize is how many paths of each kind a preview keeps.
+const SampleSize = 100
+
+// Preview is what a run would do to one folder at one destination. The
+// samples hold the first SampleSize paths of their kind, relative to the
+// folder.
+type Preview struct {
+	// New files are not at the destination; Changed ones are, and differ.
+	New          int64 `json:"new"`
+	NewBytes     int64 `json:"new_bytes"`
+	Changed      int64 `json:"changed"`
+	ChangedBytes int64 `json:"changed_bytes"`
+	Unchanged    int64 `json:"unchanged"`
+	// Extra files are only at the destination. Deletes says whether a run
+	// removes them or leaves them.
+	Extra   int64 `json:"extra"`
+	Deletes bool  `json:"deletes"`
+	// Errors counts the files that could not be compared.
+	Errors int64 `json:"errors,omitempty"`
+
+	NewSample     []string `json:"new_sample,omitempty"`
+	ChangedSample []string `json:"changed_sample,omitempty"`
+	ExtraSample   []string `json:"extra_sample,omitempty"`
 }
 
 // Progress is the copy in flight.

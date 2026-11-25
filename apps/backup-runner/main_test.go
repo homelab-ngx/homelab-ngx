@@ -60,6 +60,41 @@ func fakeRclone(args []string) int {
 	stats := func(b, tb, n, tn int) {
 		fmt.Fprintf(os.Stderr, `{"time":"t","level":"notice","msg":"\nTransferred: ...","stats":{"bytes":%d,"totalBytes":%d,"transfers":%d,"totalTransfers":%d,"speed":1000.5,"errors":0,"transferring":[{"name":"a"}]},"source":"accounting/stats.go:549"}`+"\n", b, tb, n, tn)
 	}
+	for i, a := range args {
+		if a != "--combined" {
+			continue
+		}
+		// A dry run: report the files to the pipe, copy nothing.
+		dry := false
+		for _, b := range args {
+			dry = dry || b == "--dry-run"
+		}
+		if !dry {
+			fmt.Fprintln(os.Stderr, `{"level":"error","msg":"--combined without --dry-run"}`)
+			return 1
+		}
+		f, err := os.OpenFile(args[i+1], os.O_WRONLY, 0)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, `{"level":"notice","msg":"Skipped copy as --dry-run is set (size 1)","skipped":"copy","size":1,"object":"file.txt"}`+"\n")
+		fmt.Fprintf(os.Stderr, `{"level":"notice","msg":"stats","stats":{"checks":2,"totalChecks":4,"transfers":1,"totalTransfers":1}}`+"\n")
+		fmt.Fprint(f, "+ file.txt\n* sub/changed.bin\n= same.txt\n= same2.txt\n- only/there.txt\n")
+		for n := 0; n < 150; n++ {
+			fmt.Fprintf(f, "+ many/%03d\n", n)
+		}
+		f.Close()
+		if os.Getenv("FAKE_RCLONE") == "hang" {
+			// Stats keep coming, as from a comparison that goes on: the
+			// runner counts the report's lines into its progress on each.
+			for {
+				time.Sleep(50 * time.Millisecond)
+				fmt.Fprintf(os.Stderr, `{"level":"notice","msg":"stats","stats":{"checks":2,"totalChecks":4,"transfers":1,"totalTransfers":1}}`+"\n")
+			}
+		}
+		return 0
+	}
 	stats(100, 300, 1, 3)
 	switch os.Getenv("FAKE_RCLONE") {
 	case "noise":
@@ -207,7 +242,11 @@ func (e *env) run() (int, *runfile.State) {
 	e.t.Helper()
 	spec := e.writeSpec()
 	var stderr bytes.Buffer
-	code := realMain([]string{"--spec", spec, "--state", e.state}, &stderr)
+	args := []string{"--spec", spec, "--state", e.state}
+	if e.spec.Preview {
+		args = append(args, "--preview")
+	}
+	code := realMain(args, &stderr)
 	if _, err := os.Stat(spec); !os.IsNotExist(err) {
 		e.t.Errorf("spec file was not deleted")
 	}
@@ -621,6 +660,84 @@ func TestCheckOnly(t *testing.T) {
 	}
 }
 
+func TestPreview(t *testing.T) {
+	e := newEnv(t)
+	e.spec.Preview = true
+	e.spec.Folders = e.spec.Folders[:1]
+	e.spec.Folders[0].Excludes = []string{"/cache/**"}
+	e.spec.Folders[0].SizeOnly = true
+	sync := e.rclone(1, "bucket", "r:bucket")
+	sync.DeleteRemoved = true
+	e.spec.Destinations = []runfile.Destination{sync, e.rclone(2, "keeps", "r:other"), e.restic(3, "repo", true)}
+	code, st := e.run()
+	if code != exitOK || !st.Preview {
+		t.Errorf("exit %d, preview %v", code, st.Preview)
+	}
+	want(t, st, runfile.ResultSuccess, "bucket=success bucket/good=success keeps=success keeps/good=success repo=skipped repo/good=skipped")
+	pv := st.Items[1].Preview
+	if pv == nil {
+		t.Fatal("the folder has no preview")
+	}
+	// file.txt is in the source folder (1 byte); the others are not.
+	if pv.New != 151 || pv.NewBytes != 1 || pv.Changed != 1 || pv.Unchanged != 2 || pv.Extra != 1 || !pv.Deletes {
+		t.Errorf("preview = %+v", *pv)
+	}
+	if len(pv.NewSample) != runfile.SampleSize || pv.NewSample[0] != "file.txt" || pv.ExtraSample[0] != "only/there.txt" {
+		t.Errorf("samples: %d new, first %q, extra %v", len(pv.NewSample), pv.NewSample[0], pv.ExtraSample)
+	}
+	if st.Items[3].Preview == nil || st.Items[3].Preview.Deletes {
+		t.Errorf("a destination that keeps files: %+v", st.Items[3].Preview)
+	}
+	if st.Items[4].Note == "" || st.Items[5].Preview != nil {
+		t.Errorf("restic items: %+v", st.Items[4:])
+	}
+	if len(e.verbs("restic")) != 0 {
+		t.Errorf("a preview called restic: %v", e.verbs("restic"))
+	}
+	// Every call that could write is a dry run with the run's own arguments.
+	for _, c := range e.calls() {
+		if c.Args[0] == "lsd" {
+			continue
+		}
+		joined := strings.Join(c.Args, " ")
+		if !strings.Contains(joined, "--dry-run") {
+			t.Errorf("a preview ran rclone without --dry-run: %s", joined)
+		}
+		for _, w := range []string{"--filter - /cache/**", "--size-only", "--retries 1"} {
+			if !strings.Contains(joined, w) {
+				t.Errorf("missing %q in: %s", w, joined)
+			}
+		}
+	}
+	if got := strings.Join(e.verbs("rclone"), " "); got != "lsd sync lsd copy" {
+		t.Errorf("rclone calls = %q", got)
+	}
+	if left, _ := filepath.Glob(filepath.Join(e.spec.WorkDir, "*")); len(left) != 0 {
+		t.Errorf("files left in the work directory: %v", left)
+	}
+}
+
+// A preview is asked for twice, in the spec and on the command line. One
+// without the other is refused, so a preview's spec is never copied.
+func TestPreviewNeedsBoth(t *testing.T) {
+	for _, tc := range []struct{ spec, flag bool }{{true, false}, {false, true}} {
+		e := newEnv(t)
+		e.spec.Preview = tc.spec
+		e.spec.Destinations = []runfile.Destination{e.rclone(1, "bucket", "r:bucket")}
+		args := []string{"--spec", e.writeSpec(), "--state", e.state}
+		if tc.flag {
+			args = append(args, "--preview")
+		}
+		var stderr bytes.Buffer
+		if code := realMain(args, &stderr); code != exitUsage {
+			t.Errorf("spec %v, flag %v: exit %d, want 2", tc.spec, tc.flag, code)
+		}
+		if len(e.calls()) != 0 {
+			t.Errorf("spec %v, flag %v: a tool was called: %v", tc.spec, tc.flag, e.calls())
+		}
+	}
+}
+
 func TestPanicIsRecorded(t *testing.T) {
 	e := newEnv(t)
 	e.spec.Destinations = []runfile.Destination{e.rclone(1, "bucket", "r:bucket")}
@@ -704,7 +821,42 @@ func TestSigtermEndsCancelled(t *testing.T) {
 		t.Errorf("stopping took %s; the child was not signalled", d)
 	}
 	st := e.readState()
-	want(t, st, runfile.ResultCancelled, "bucket=skipped bucket/good=skipped bucket/bad=skipped")
+	want(t, st, runfile.ResultCancelled, "bucket=cancelled bucket/good=cancelled bucket/bad=cancelled")
+}
+
+func TestSigtermEndsAPreviewCancelled(t *testing.T) {
+	e := newEnv(t)
+	e.spec.Preview = true
+	e.spec.Destinations = []runfile.Destination{e.rclone(1, "bucket", "r:bucket")}
+	self, _ := os.Executable()
+	cmd := exec.Command(self, "--spec", e.writeSpec(), "--state", e.state, "--preview")
+	cmd.Env = append(os.Environ(), "RUNNER_MAIN=1", "FAKE_RCLONE=hang")
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill() })
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		if st, err := runfile.ReadState(e.state); err == nil && st.Progress != nil && st.Progress.FilesDone > 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the preview never reported progress")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	start := time.Now()
+	cmd.Process.Signal(syscall.SIGTERM)
+	cmd.Wait()
+	if d := time.Since(start); d > 10*time.Second {
+		t.Errorf("stopping took %s", d)
+	}
+	st := e.readState()
+	want(t, st, runfile.ResultCancelled, "bucket=cancelled bucket/good=cancelled bucket/bad=cancelled")
+	if left, _ := filepath.Glob(filepath.Join(e.spec.WorkDir, "*")); len(left) != 0 {
+		t.Errorf("files left in the work directory: %v", left)
+	}
 }
 
 func TestKillLeavesReadableState(t *testing.T) {
