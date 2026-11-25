@@ -234,7 +234,9 @@ type Backup struct {
 	// Running A run is in flight; last_run is that run.
 	Running bool `json:"running" doc:"A run is in flight; last_run is that run."`
 	// Previewing A preview is in flight.
-	Previewing bool      `json:"previewing" doc:"A preview is in flight."`
+	Previewing bool `json:"previewing" doc:"A preview is in flight."`
+	// HasPreview The backup has a preview to read, in flight or finished.
+	HasPreview bool      `json:"has_preview" doc:"The backup has a preview to read, in flight or finished."`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
 }

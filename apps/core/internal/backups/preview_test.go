@@ -318,6 +318,9 @@ func TestPreview(t *testing.T) {
 			t.Errorf("left on disk: %v", left)
 		}
 	}
+	if got, _ := h.svc.Get(ctx, b.Id); !got.HasPreview {
+		t.Error("the backup does not say it has a preview")
+	}
 	if got, _ := h.svc.Get(ctx, b.Id); got.Previewing || got.Running || got.LastRun != nil {
 		t.Errorf("backup after its preview = previewing %v, running %v, last run %v", got.Previewing, got.Running, got.LastRun)
 	}

@@ -320,6 +320,7 @@ func hostSteps(s *S) {
 		}
 		s.stackLongName(pool)
 		s.poolLifecycle()
+		s.backupLifecycle()
 	})
 
 	s.Step(7, "host settings: VPN, tunnel, firewall, name and time zone", func() {

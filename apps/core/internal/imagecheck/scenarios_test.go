@@ -93,6 +93,7 @@ type State struct {
 	VPNDevices int    `json:"vpn_devices"` // the VPN devices hostcheck expects
 	Made       string `json:"made"`        // the note on the device the host made keys for
 	Lifecycle  bool   `json:"lifecycle"`   // the second pool's lifecycle was checked
+	Backups    bool   `json:"backups"`     // a backup's preview, stop and run were checked
 	Rev        string `json:"rev"`         // the stack's first commit
 	Region     uint64 `json:"region"`      // where step 2 installed
 }

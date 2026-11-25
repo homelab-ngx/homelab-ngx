@@ -506,6 +506,14 @@ func (s *Service) List(ctx context.Context) ([]Backup, error) {
 	s.mu.Lock()
 	previewing := maps.Clone(s.previewing)
 	s.mu.Unlock()
+	previewIDs, err := s.q.ListBackupPreviewIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	hasPreview := map[int64]bool{}
+	for _, id := range previewIDs {
+		hasPreview[id] = true
+	}
 	out := make([]Backup, 0, len(rows))
 	for _, row := range rows {
 		b := Backup{
@@ -534,7 +542,7 @@ func (s *Service) List(ctx context.Context) ([]Backup, error) {
 			v := runView(r)
 			b.LastRun, b.Running = &v, r.Result == ResultRunning
 		}
-		b.Previewing = previewing[row.ID]
+		b.Previewing, b.HasPreview = previewing[row.ID], hasPreview[row.ID]
 		if row.Enabled && row.Schedule != "" {
 			if sched, err := cron.ParseStandard(row.Schedule); err == nil {
 				n := sched.Next(now)

@@ -5,6 +5,7 @@
   import { api, call, describe } from "#lib/api/client.ts";
   import BackupForm from "#lib/components/backups/BackupForm.svelte";
   import PasswordDialog from "#lib/components/backups/PasswordDialog.svelte";
+  import PreviewView from "#lib/components/backups/PreviewView.svelte";
   import RunsDialog from "#lib/components/backups/RunsDialog.svelte";
   import RunStrip from "#lib/components/backups/RunStrip.svelte";
   import RunView from "#lib/components/backups/RunView.svelte";
@@ -13,7 +14,7 @@
   import Modal from "#lib/components/Modal.svelte";
   import Pill from "#lib/components/Pill.svelte";
   import { ago, stamp } from "#lib/format.ts";
-  import { backupKeys, backupState, covers, dayMarks, describeSchedule, KIND_LABEL, type Backup, type Coverage, type Destination } from "#lib/backups.ts";
+  import { backupKeys, backupState, busy, canPreview, covers, dayMarks, describeSchedule, KIND_LABEL, type Backup, type Coverage, type Destination } from "#lib/backups.ts";
 
   const id = $derived(Number(page.params.id));
   const client = useQueryClient();
@@ -23,7 +24,7 @@
   const backups = createQuery(() => ({
     queryKey: backupKeys.list,
     queryFn: () => call(api.GET("/backups")) as Promise<Backup[]>,
-    refetchInterval: (q) => (q.state.data?.some((b) => b.running) ? 3_000 : 30_000),
+    refetchInterval: (q) => (q.state.data?.some(busy) ? 3_000 : 30_000),
   }));
   const destinations = createQuery(() => ({
     queryKey: backupKeys.destinations,
@@ -52,6 +53,7 @@
   let editing = $state(false);
   let allRuns = $state(false);
   let deleting = $state(false);
+  let stopping = $state(false);
   let password = $state<Destination | null>(null);
 
   /** Where a backup goes and when, in one line. */
@@ -65,6 +67,20 @@
     mutationFn: () => call(api.POST("/backups/{id}/run", at())),
     onMutate: () => (error = ""),
     onSuccess: (started) => open(started.run_id),
+    onError: (e: unknown) => (error = describe(e)),
+    onSettled: refresh,
+  }));
+  const preview = createMutation(() => ({
+    mutationFn: () => call(api.POST("/backups/{id}/preview", at())),
+    onMutate: () => (error = ""),
+    onError: (e: unknown) => (error = describe(e)),
+    onSettled: refresh,
+  }));
+  /** Stops the run or the preview in flight; the answer comes when it has stopped. */
+  const stop = createMutation(() => ({
+    mutationFn: () => call(api.POST("/backups/{id}/cancel", at())),
+    onMutate: () => (error = ""),
+    onSuccess: () => (stopping = false),
     onError: (e: unknown) => (error = describe(e)),
     onSettled: refresh,
   }));
@@ -104,19 +120,24 @@
     </h1>
     <div class="flex flex-wrap gap-2">
       <button type="button" class="btn" onclick={() => (editing = true)}>Edit</button>
-      <button
-        type="button"
-        class="btn btn-primary"
-        disabled={b.running || run.isPending}
-        title={b.running ? "Running now" : ""}
-        onclick={() => run.mutate()}
-      >
-        Run now
-      </button>
+      {#if busy(b)}
+        <button type="button" class="btn" onclick={() => (stopping = true)}>Stop</button>
+      {:else}
+        <button
+          type="button"
+          class="btn"
+          disabled={!canPreview(b) || preview.isPending || run.isPending}
+          title={canPreview(b) ? "Compare with the destinations, copy nothing" : "Only S3 and rclone destinations can be previewed"}
+          onclick={() => preview.mutate()}
+        >
+          Preview
+        </button>
+        <button type="button" class="btn btn-primary" disabled={run.isPending || preview.isPending} onclick={() => run.mutate()}>Run now</button>
+      {/if}
     </div>
   </div>
 
-  {#if error && !deleting}
+  {#if error && !deleting && !stopping}
     <p role="alert" class="mt-4 rounded-md bg-bad-soft px-3 py-2 text-bad">{error}</p>
   {/if}
 
@@ -152,6 +173,8 @@
       {/if}
     </div>
   </section>
+
+  <PreviewView backupId={b.id} has={b.has_preview} previewing={b.previewing} />
 
   <!-- Looked at rarely: closed until opened, and an opened one stays open on this device. -->
   <section class="card mt-4" aria-label="Sources">
@@ -231,6 +254,22 @@
         void refresh();
       }}
     />
+  {/if}
+
+  {#if stopping}
+    <Modal
+      open={true}
+      onOpenChange={(o) => !o && (stopping = false)}
+      title={b.previewing ? `Stop the preview of ${b.name}?` : `Stop ${b.name}?`}
+      description={b.previewing ? "The preview ends without a result." : "Files already copied stay at the destination. The rest waits for the next run."}
+    >
+      {#if error}<p class="text-bad">{error}</p>{/if}
+      {#snippet actions()}
+        <button type="button" class="btn btn-danger" disabled={stop.isPending} onclick={() => stop.mutate()}>
+          {stop.isPending ? "Stopping…" : b.previewing ? "Stop preview" : "Stop run"}
+        </button>
+      {/snippet}
+    </Modal>
   {/if}
 
   {#if deleting}

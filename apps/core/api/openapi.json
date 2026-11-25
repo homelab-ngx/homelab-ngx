@@ -499,6 +499,10 @@
           "enabled": {
             "type": "boolean"
           },
+          "has_preview": {
+            "description": "The backup has a preview to read, in flight or finished.",
+            "type": "boolean"
+          },
           "healthcheck_url": {
             "description": "Pinged at start, on success and, with /fail, on failure.",
             "type": "string"
@@ -593,6 +597,7 @@
           "overdue",
           "running",
           "previewing",
+          "has_preview",
           "created_at",
           "updated_at"
         ],

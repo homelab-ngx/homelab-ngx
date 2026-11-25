@@ -548,6 +548,33 @@ func (q *Queries) ListBackupDestinations(ctx context.Context) ([]BackupDestinati
 	return items, nil
 }
 
+const listBackupPreviewIDs = `-- name: ListBackupPreviewIDs :many
+SELECT backup_id FROM backup_previews
+`
+
+func (q *Queries) ListBackupPreviewIDs(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, listBackupPreviewIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var backup_id int64
+		if err := rows.Scan(&backup_id); err != nil {
+			return nil, err
+		}
+		items = append(items, backup_id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listBackupRunItems = `-- name: ListBackupRunItems :many
 SELECT id, run_id, kind, destination_id, destination_name, label, path, position, result, files, bytes, started_at, finished_at, error, note FROM backup_run_items WHERE run_id = ? ORDER BY position, id
 `

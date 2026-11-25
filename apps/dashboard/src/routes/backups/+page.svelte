@@ -16,6 +16,8 @@
   import {
     backupKeys,
     backupState,
+    busy,
+    canPreview,
     dayMarks,
     describeKeep,
     describeSchedule,
@@ -33,7 +35,7 @@
   const backups = createQuery(() => ({
     queryKey: backupKeys.list,
     queryFn: () => call(api.GET("/backups")) as Promise<Backup[]>,
-    refetchInterval: (q) => (q.state.data?.some((b) => b.running) ? 3_000 : 30_000),
+    refetchInterval: (q) => (q.state.data?.some(busy) ? 3_000 : 30_000),
   }));
   const destinations = createQuery(() => ({
     queryKey: backupKeys.destinations,
@@ -82,6 +84,14 @@
   const at = (id: number) => ({ params: { path: { id } } });
   /** The row shows the run as it goes; the backup's own page shows it folder by folder. */
   const runNow = (b: Backup) => op.mutate(() => call(api.POST("/backups/{id}/run", at(b.id))));
+  const preview = (b: Backup) => op.mutate(() => call(api.POST("/backups/{id}/preview", at(b.id))));
+  const askStop = (b: Backup) =>
+    (confirm = {
+      title: b.previewing ? `Stop the preview of ${b.name}?` : `Stop ${b.name}?`,
+      body: b.previewing ? "The preview ends without a result." : "Files already copied stay at the destination. The rest waits for the next run.",
+      label: b.previewing ? "Stop preview" : "Stop run",
+      run: () => call(api.POST("/backups/{id}/cancel", at(b.id))),
+    });
   const runHref = (b: Backup) => (run: number) => `/backups/${b.id}?run=${run}`;
   const setEnabled = (b: Backup, enabled: boolean) => op.mutate(() => call(api.PATCH("/backups/{id}", { ...at(b.id), body: { enabled } })));
   function askDeleteBackup(b: Backup) {
@@ -256,7 +266,7 @@
                   <LiveProgress runId={last.id} />
                 {:else if last}
                   <div class="text-xs text-muted tabular-nums">{ago(last.started_at)} · {duration(last.started_at, last.finished_at)} · {bytes(last.bytes)}</div>
-                  {#if last.error && st.tone !== "ok" && st.tone !== "idle"}<div class="text-xs break-words text-bad">{last.error}</div>{/if}
+                  {#if last.error && last.result !== "cancelled" && st.tone !== "ok" && st.tone !== "idle"}<div class="text-xs break-words text-bad">{last.error}</div>{/if}
                 {/if}
               </div>
             </td>
@@ -269,7 +279,7 @@
                 <div class="mt-1 text-xs whitespace-nowrap text-muted tabular-nums" title={stamp(last.started_at)}>
                   {ago(last.started_at)} · {duration(last.started_at, last.finished_at)} · {bytes(last.bytes)}
                 </div>
-                {#if last.error && st.tone !== "ok" && st.tone !== "idle"}
+                {#if last.error && last.result !== "cancelled" && st.tone !== "ok" && st.tone !== "idle"}
                   <div class="mt-1 max-w-64 text-xs break-words text-bad">{last.error}</div>
                 {/if}
               {/if}
@@ -291,12 +301,17 @@
                 >
                   <span aria-hidden="true" class="absolute top-0.5 size-3 rounded-full bg-surface transition-[left] {b.enabled ? 'left-3.5' : 'left-0.5'}"></span>
                 </button>
-                <button type="button" class="btn btn-sm" disabled={b.running || op.isPending} onclick={() => runNow(b)}>Run now</button>
+                {#if busy(b)}
+                  <button type="button" class="btn btn-sm" disabled={op.isPending} onclick={() => askStop(b)}>Stop</button>
+                {:else}
+                  <button type="button" class="btn btn-sm" disabled={op.isPending} onclick={() => runNow(b)}>Run now</button>
+                {/if}
                 <RowMenu
                   name={b.name}
                   items={[
                     { label: "Edit", onSelect: () => (form = { backup: b, preselect: [] }) },
-                    { label: "Delete…", danger: true, disabled: b.running, onSelect: () => askDeleteBackup(b) },
+                    { label: "Preview", disabled: busy(b) || !canPreview(b), onSelect: () => preview(b) },
+                    { label: "Delete…", danger: true, disabled: busy(b), onSelect: () => askDeleteBackup(b) },
                   ]}
                 />
               </div>

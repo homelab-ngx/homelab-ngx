@@ -6,7 +6,7 @@
  */
 import type { paths } from "#lib/api/schema.gen.ts";
 import type { Schema } from "#lib/api/client.ts";
-import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerMeter, powerProfile, powerProfiles, powerStatus, freezeThaw, restart, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
+import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerMeter, powerProfile, powerProfiles, powerStatus, previewBackup, cancelBackup, freezeThaw, restart, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
 import { history } from "./metrics.ts";
 
 /** A stack's files as the demo shows them: its manifest and a short flake. */
@@ -208,6 +208,11 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
     const r = b.recent_runs[0];
     return { logs: r ? `${r.started_at} ${b.name}: started (${r.trigger})\n${r.finished_at ?? ""} ${b.name}: ${r.result}${r.error ? `: ${r.error}` : ""}\n` : "" };
   },
+  "/backups/{id}/preview": (h, c) => {
+    const p = h.previews[Number(c.path.id)];
+    if (!p) throw new DemoProblem(404, "no_preview", "This backup has no preview.");
+    return p;
+  },
   "/backups/{id}/runs": (h, c) => h.backups.find((x) => x.id === Number(c.path.id))?.recent_runs ?? [],
   "/config": (h) => ({ core_services: ["homelab-daemon.service", "caddy.service"], generation: 42, loaded_at: iso(h.now() - 6 * DAY), pools: h.storage.pools.map((p) => ({ name: p.name, uuid: p.uuid, mountpoint: p.mountdir, auto_mount: p.auto_mount, options: "" })) }),
   "/core-services": (h) =>
@@ -348,6 +353,8 @@ const posts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknow
   "/stacks/{name}/freeze": (h, c) => ({ status: 200, body: freezeThaw(h, c.path.name!, true) }),
   "/stacks/{name}/thaw": (h, c) => ({ status: 200, body: freezeThaw(h, c.path.name!, false) }),
   "/backups/{id}/run": (h, c) => ({ status: 202, body: runBackup(h, Number(c.path.id)) }),
+  "/backups/{id}/preview": (h, c) => (previewBackup(h, Number(c.path.id)), { status: 202 }),
+  "/backups/{id}/cancel": (h, c) => (cancelBackup(h, Number(c.path.id)), { status: 204 }),
   "/system-updates/image/download": (h) => ({ status: 202, body: downloadImage(h) }),
   "/system-updates/image/release": (h, c) => ({ status: 202, body: installImage(h, String(c.body.reboot ?? "")) }),
   "/system/power": (h, c) => ({ status: 202, body: power(h, c.body.action === "poweroff" ? "poweroff" : "reboot", c.body.force === true, c.body.thaw === true) }),

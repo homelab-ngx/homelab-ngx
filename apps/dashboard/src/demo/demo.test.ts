@@ -28,7 +28,7 @@ describe("the demo's API", () => {
     // Paths the demo answers 404 on purpose, the event stream (metrics.ts),
     // and icons: an <img> never goes through the demo's fetch, so the page
     // draws its letter tiles.
-    const none = new Set(["/drafts/{name}", "/security/audits/{id}", "/metrics/stream", "/stacks/{name}/icon"]);
+    const none = new Set(["/backups/{id}/preview", "/drafts/{name}", "/security/audits/{id}", "/metrics/stream", "/stacks/{name}/icon"]);
     for (const [path, ops] of Object.entries(openapi.paths)) {
       if (!("get" in ops) || none.has(path)) continue;
       const url = path.replace(/{(\w+)}/g, (_, n: string) => fill[n] ?? "1").replace("/stack-updates/1", "/stack-updates/1000");
@@ -132,6 +132,21 @@ describe("the demo's API", () => {
     const b = await d.get<Schema<"Backup">>("/backups/2");
     expect([b.running, b.recent_runs[0]!.id, b.recent_runs[0]!.result]).toEqual([false, body.run_id, "success"]);
     expect((await d.get<Schema<"BackupRunDetail">>(`/backup-runs/${body.run_id}`)).items.every((i) => i.result === "success")).toBe(true);
+
+    // A preview is made, shown, and gone once the backup runs; a run can be stopped.
+    // A backup that copies to restic only has nothing to preview.
+    expect((await d.post("/backups/2/preview")).status).toBe(409);
+    expect((await d.send("GET", "/backups/1/preview")).status).toBe(404);
+    expect((await d.post("/backups/1/preview")).status).toBe(202);
+    expect((await d.get<Schema<"Backup">>("/backups/1")).previewing).toBe(true);
+    expect((await d.post("/backups/1/run")).status).toBe(409);
+    expect((await d.post("/backups/1/cancel")).status).toBe(204);
+    expect((await d.get<Schema<"BackupPreview">>("/backups/1/preview")).result).toBe("cancelled");
+    const again = await d.post<{ run_id: number }>("/backups/1/run");
+    expect((await d.send("GET", "/backups/1/preview")).status).toBe(404);
+    expect((await d.post("/backups/1/cancel")).status).toBe(204);
+    expect((await d.get<Schema<"BackupRunDetail">>(`/backup-runs/${again.body.run_id}`)).result).toBe("cancelled");
+    expect((await d.post("/backups/1/cancel")).status).toBe(409);
   });
 
   it("downloads the new image, installs it and boots it", async () => {

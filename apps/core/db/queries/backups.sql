@@ -150,3 +150,6 @@ SELECT * FROM backup_previews WHERE result = 'running' ORDER BY backup_id;
 
 -- name: DeleteBackupPreview :exec
 DELETE FROM backup_previews WHERE backup_id = ?;
+
+-- name: ListBackupPreviewIDs :many
+SELECT backup_id FROM backup_previews;

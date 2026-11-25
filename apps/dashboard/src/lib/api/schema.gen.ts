@@ -321,6 +321,26 @@ export interface paths {
         patch: operations["updateBackup"];
         trace?: never;
     };
+    "/backups/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Stop the backup's run or preview in flight.
+         * @description Answers once the run's unit has stopped. The run ends as `cancelled`; the files it has already copied stay at the destination. Errors: `404 unknown_backup`; `409 not_running`.
+         */
+        post: operations["cancelBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/backups/{id}/logs": {
         parameters: {
             query?: never;
@@ -332,6 +352,30 @@ export interface paths {
         get: operations["getBackupLogs"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/{id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The backup's newest preview.
+         * @description While the preview is in flight the items and `progress` are live; poll it. A run of the backup removes its preview. Errors: `404 unknown_backup`; `404 no_preview`.
+         */
+        get: operations["getBackupPreview"];
+        put?: never;
+        /**
+         * Start a preview: what a run would do, without copying.
+         * @description Compares every folder with its S3 and rclone destinations and changes nothing there. Restic destinations are left out, and no prepare step runs. It replaces the backup's earlier preview; read it with `GET /backups/{id}/preview`. Errors: `404 unknown_backup`; `409 already_running`; `409 shutting_down`; `409 not_ready`; `409 nothing_to_preview` when every destination is restic.
+         */
+        post: operations["previewBackup"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2710,6 +2754,8 @@ export interface components {
             created_at: string;
             destinations: components["schemas"]["DestinationRef"][];
             enabled: boolean;
+            /** @description The backup has a preview to read, in flight or finished. */
+            has_preview: boolean;
             /** @description Pinged at start, on success and, with /fail, on failure. */
             healthcheck_url: string;
             /** Format: int64 */
@@ -2729,6 +2775,8 @@ export interface components {
             next_run: string | null;
             /** @description No successful run within two schedule intervals (counted from daemon start when it never succeeded): the rule behind the backup-stale notification. */
             overdue: boolean;
+            /** @description A preview is in flight. */
+            previewing: boolean;
             /** @description The runs started in the last 15 days, oldest first. */
             recent_runs: components["schemas"]["BackupRun"][];
             /** @description A run is in flight; last_run is that run. */
@@ -2766,6 +2814,63 @@ export interface components {
             sources?: components["schemas"]["SourceInput"][];
             /** Format: int64 */
             transfers?: number;
+        };
+        BackupPreview: {
+            /** Format: int64 */
+            backup_id: number;
+            error: string;
+            /** Format: date-time */
+            finished_at: string | null;
+            items: components["schemas"]["BackupPreviewItem"][];
+            /** @description The comparison in flight, counted in files; null when the preview is not comparing. */
+            progress: components["schemas"]["BackupProgress"] | null;
+            /** @enum {string} */
+            result: "running" | "success" | "partial" | "failure" | "cancelled" | "unknown";
+            /** Format: date-time */
+            started_at: string;
+        };
+        BackupPreviewItem: {
+            /**
+             * Format: int64
+             * @description Files that are at the destination and differ.
+             */
+            changed: number;
+            /** Format: int64 */
+            changed_bytes: number;
+            changed_sample: string[];
+            /** @description Whether a run removes the extra files (true) or leaves them. */
+            deletes: boolean;
+            destination: string;
+            error: string;
+            /**
+             * Format: int64
+             * @description Files that could not be compared.
+             */
+            errors: number;
+            /**
+             * Format: int64
+             * @description Files that are only at the destination.
+             */
+            extra: number;
+            extra_sample: string[];
+            /** @enum {string} */
+            kind: "destination" | "folder";
+            label: string;
+            /**
+             * Format: int64
+             * @description Files that are not at the destination.
+             */
+            new: number;
+            /** Format: int64 */
+            new_bytes: number;
+            /** @description The first 100 new paths, relative to the folder. */
+            new_sample: string[];
+            note: string;
+            path: string;
+            /** @enum {string} */
+            result: "pending" | "running" | "success" | "partial" | "failure" | "skipped" | "cancelled";
+            /** Format: int64 */
+            unchanged: number;
         };
         BackupProgress: {
             /** Format: int64 */
@@ -2851,7 +2956,7 @@ export interface components {
             note: string;
             path: string;
             /** @enum {string} */
-            result: "pending" | "running" | "success" | "partial" | "failure" | "skipped";
+            result: "pending" | "running" | "success" | "partial" | "failure" | "skipped" | "cancelled";
             /** Format: date-time */
             started_at: string | null;
         };
@@ -7131,6 +7236,102 @@ export interface operations {
             };
         };
     };
+    cancelBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
     getBackupLogs: {
         parameters: {
             query?: never;
@@ -7153,6 +7354,181 @@ export interface operations {
             };
             /** @description Not Found */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getBackupPreview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BackupPreview"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    previewBackup: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
                 headers: {
                     [name: string]: unknown;
                 };

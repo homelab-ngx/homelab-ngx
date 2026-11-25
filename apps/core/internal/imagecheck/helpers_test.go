@@ -504,6 +504,125 @@ type deploy = sysupdates.CoreDeploy
 
 // op starts an operation and waits for its result (the daemon may restart
 // on the way): polled every 5 s, up to wait.
+// backupLifecycle: a backup of a folder to a folder that already holds
+// files, previewed, stopped mid-run and run to its end, through the daemon
+// and the real runner, rclone and systemd. It runs once, on the first version
+// that can preview.
+func (s *S) backupLifecycle() {
+	s.t.Helper()
+	if s.st.Backups {
+		return
+	}
+	const src, dst = "/var/bkcheck/src", "/var/bkcheck/dst"
+	// Not under /tmp or /var/tmp: the runner's unit has its own.
+	s.must("rm -rf /var/bkcheck && mkdir -p " + src + "/sub " + dst + "/data && " +
+		"echo same > " + src + "/same.txt && cp -p " + src + "/same.txt " + dst + "/data/ && " +
+		"echo new > " + src + "/sub/new.txt && echo changed-here > " + src + "/chg.txt && echo old > " + dst + "/data/chg.txt && " +
+		"echo extra > " + dst + "/data/extra.txt")
+	d := s.post("backup-destinations", map[string]any{"name": "check-disk", "kind": "rclone", "delete_removed": true,
+		"rclone": map[string]any{"config": "[disk]\ntype = local\n", "path": dst}}, "the destination was not made")
+	destID := int(nAt(d, "destination.id"))
+	b := s.post("backups", map[string]any{"name": "check", "destination_ids": []int{destID},
+		"sources": []any{map[string]any{"kind": "path", "path": src, "remote_path": "data"}}}, "the backup was not made")
+	id := int(nAt(b, "id"))
+	bk := fmt.Sprintf("backups/%d", id)
+	clean := func() {
+		s.ask(http.MethodDelete, bk, nil, "the backup was not deleted")
+		s.ask(http.MethodDelete, fmt.Sprintf("backup-destinations/%d", destID), nil, "the destination was not removed")
+		s.must("rm -rf /var/bkcheck")
+	}
+	if !s.has("a backup that can be previewed and stopped", func() (bool, error) { return hasKey(b, "previewing"), nil }) {
+		clean()
+		return
+	}
+	unit := fmt.Sprintf("homelab-backup-%d.service", id)
+	listing := func() string {
+		return s.must("cd " + dst + " && find . -type f -printf '%p %s %T@\\n' | sort | sha256sum")
+	}
+	preview := func() any {
+		s.ask(http.MethodPost, bk+"/preview", nil, "the preview did not start")
+		var p any
+		if !s.until(120*time.Second, func() bool {
+			r, err := s.try(http.MethodGet, bk+"/preview", nil)
+			if err != nil || r.Status != 200 {
+				return false
+			}
+			p = parse(r.Body)
+			return sAt(p, "result") != "running"
+		}) {
+			s.die("the preview did not end: %s", compact(p))
+		}
+		return p
+	}
+	counts := func(p any) string {
+		it := find(p, "items", "kind", "folder")
+		return fmt.Sprintf("%s new=%v changed=%v unchanged=%v extra=%v deletes=%v", sAt(p, "result"),
+			nAt(it, "new"), nAt(it, "changed"), nAt(it, "unchanged"), nAt(it, "extra"), bAt(it, "deletes"))
+	}
+
+	// A preview says what a run would do and leaves the destination alone.
+	before := listing()
+	p := preview()
+	if got := counts(p); got != "success new=1 changed=1 unchanged=1 extra=1 deletes=true" {
+		s.die("the preview of a filled destination: %s: %s", got, compact(p))
+	}
+	if listing() != before {
+		s.die("the preview changed the destination")
+	}
+	if n := len(list(s.getJ(bk+"/runs"), "")); n != 0 {
+		s.die("the preview left %d runs in the backup's history", n)
+	}
+
+	// A run is stopped mid-file: it ends cancelled, its unit is gone, and no
+	// part of the file shows at the destination.
+	s.must("dd if=/dev/urandom of=" + src + "/big.bin bs=1M count=200 status=none")
+	s.ask(http.MethodPatch, bk, map[string]any{"bwlimit": "2M"}, "the speed limit was refused")
+	run := int(nAt(s.post(bk+"/run", nil, "the run did not start"), "run_id"))
+	runPath := fmt.Sprintf("backup-runs/%d", run)
+	if !s.until(60*time.Second, func() bool { return nAt(s.getJ(runPath), "progress.bytes_done") > 0 }) {
+		s.die("the run never reported progress: %s", compact(s.getJ(runPath)))
+	}
+	if s.code(http.MethodGet, bk+"/preview", nil) != 404 {
+		s.die("the backup still has its preview after a run started")
+	}
+	if c := s.code(http.MethodPost, bk+"/cancel", nil); c != 204 {
+		s.die("the run was not stopped: HTTP %d", c)
+	}
+	r := s.getJ(runPath)
+	if sAt(r, "result") != "cancelled" || sAt(find(r, "items", "kind", "folder"), "result") != "cancelled" {
+		s.die("the stopped run is not cancelled: %s", compact(r))
+	}
+	if st := s.out("systemctl is-active " + unit); st == "active" || st == "deactivating" {
+		s.die("%s is still %s after the stop", unit, st)
+	}
+	if got := s.out("ls -A " + dst + "/data | grep -c big.bin"); got != "0" {
+		s.die("part of big.bin is at the destination after the stop: %s", s.out("ls -lA "+dst+"/data"))
+	}
+	if s.code(http.MethodPost, bk+"/cancel", nil) != 409 {
+		s.die("stopping a backup that is not running was not refused")
+	}
+
+	// The run after it sends the rest, and a preview then finds nothing to do.
+	s.ask(http.MethodPatch, bk, map[string]any{"bwlimit": ""}, "the speed limit was not lifted")
+	run = int(nAt(s.post(bk+"/run", nil, "the second run did not start"), "run_id"))
+	runPath = fmt.Sprintf("backup-runs/%d", run)
+	if !s.until(180*time.Second, func() bool { return sAt(s.getJ(runPath), "result") != "running" }) {
+		s.die("the second run did not end")
+	}
+	if r := s.getJ(runPath); sAt(r, "result") != "success" {
+		s.die("the second run: %s", compact(r))
+	}
+	if s.out("cmp "+src+"/big.bin "+dst+"/data/big.bin && test ! -e "+dst+"/data/extra.txt && echo same") != "same" {
+		s.die("the destination does not match the source after the run: %s", s.out("ls -lAR "+dst))
+	}
+	if got := counts(preview()); got != "success new=0 changed=0 unchanged=4 extra=0 deletes=true" {
+		s.die("the preview after a run: %s", got)
+	}
+	clean()
+	s.st.Backups = true
+	s.ok("a backup previewed against a filled folder with nothing changed there, stopped mid-file with no partial file left, then run to the counts the preview gave")
+}
+
 func (s *S) op(path string, body any, wait time.Duration) deploy {
 	s.t.Helper()
 	d, err := s.tryOp(path, body, wait)

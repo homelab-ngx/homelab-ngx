@@ -36,6 +36,8 @@ export interface Host {
   backups: Backup[];
   destinations: Schema<"Destination">[];
   runs: Schema<"BackupRunDetail">[];
+  /** Each backup's newest preview, by backup id. */
+  previews: Record<number, Schema<"BackupPreview">>;
   image: Schema<"ImageStatus">;
   deploys: Schema<"CoreDeploy">[];
   storage: Schema<"StorageStatus">;
@@ -335,6 +337,8 @@ function seedBackups(now: number): { backups: Backup[]; destinations: Schema<"De
       destinations: dests.map(ref),
       sources,
       running: false,
+      previewing: false,
+      has_preview: false,
       overdue: false,
       last_run: recent[0] ?? null,
       last_success: failed ? recent[1]!.finished_at : recent[0]!.finished_at,
@@ -441,6 +445,7 @@ export function newHost(now: () => number = Date.now): Host {
     backups,
     destinations,
     runs: [],
+    previews: {},
     image: {
       booted: "0.2.5",
       default: "0.2.5",
@@ -751,7 +756,7 @@ export function restart(h: Host, name: string): Stack {
 export function runBackup(h: Host, id: number): { run_id: number } {
   const b = h.backups.find((x) => x.id === id);
   if (!b) throw new DemoProblem(404, "backup_not_found", "There is no such backup.");
-  if (b.running) throw new DemoProblem(409, "backup_running", `${b.name} is already running.`);
+  if (b.running || b.previewing) throw new DemoProblem(409, "backup_running", `${b.name} is already running.`);
   const runId = Math.max(...h.backups.flatMap((x) => x.recent_runs.map((r) => r.id)), 0) + 1;
   const size = b.recent_runs[0]?.bytes ?? 100 * 1024 ** 2;
   const r: BackupRun = { id: runId, backup_id: b.id, backup_name: b.name, bytes: 0, files: 0, error: "", started_at: iso(h.now()), finished_at: null, result: "running", trigger: "manual" };
@@ -765,10 +770,14 @@ export function runBackup(h: Host, id: number): { run_id: number } {
   b.recent_runs.unshift(r);
   h.runs.unshift(detail);
   later(h, 4000, () => {
+    if (r.result !== "running") return;
     detail.progress = { ...(detail.progress as Schema<"BackupProgress">), bytes_done: Math.round(size * 0.6), speed: 42 * 1024 ** 2 };
     detail.bytes = r.bytes = Math.round(size * 0.6);
   });
+  delete h.previews[id];
+  b.has_preview = false;
   later(h, 8000, () => {
+    if (r.result !== "running") return; // stopped meanwhile
     const end = iso(h.now());
     Object.assign(r, { bytes: size, files: Math.round(size / (3.2 * 1024 ** 2)), finished_at: end, result: "success" });
     Object.assign(detail, r, { progress: null });
@@ -777,6 +786,54 @@ export function runBackup(h: Host, id: number): { run_id: number } {
     b.last_success = end;
   });
   return { run_id: runId };
+}
+
+/** A preview: what the next run would do, made up from the backup's sources. */
+export function previewBackup(h: Host, id: number): void {
+  const b = h.backups.find((x) => x.id === id);
+  if (!b) throw new DemoProblem(404, "backup_not_found", "There is no such backup.");
+  if (b.running || b.previewing) throw new DemoProblem(409, "already_running", `${b.name} is already running.`);
+  const dest = b.destinations.find((d) => d.kind !== "restic");
+  if (!dest) throw new DemoProblem(409, "nothing_to_preview", `${b.name} copies to restic only.`);
+  const item = (s: Schema<"Source">, done: boolean): Schema<"BackupPreviewItem"> => ({
+    kind: "folder", destination: dest.name, label: s.label, path: s.host_path, error: "", note: "", errors: 0, deletes: false,
+    result: done ? "success" : "pending",
+    new: done ? 12 : 0, new_bytes: done ? 48 * 1024 ** 2 : 0, changed: done ? 3 : 0, changed_bytes: done ? 2 * 1024 ** 2 : 0,
+    unchanged: done ? 1840 : 0, extra: done ? 2 : 0,
+    new_sample: done ? ["2026/11/IMG_2041.jpg", "2026/11/IMG_2042.jpg"] : [], changed_sample: done ? ["index.db"] : [], extra_sample: done ? ["old/export.zip"] : [],
+  });
+  const p: Schema<"BackupPreview"> = {
+    backup_id: id, started_at: iso(h.now()), finished_at: null, result: "running", error: "",
+    items: b.sources.map((s) => item(s, false)),
+    progress: { destination: dest.name, folder: b.sources[0]?.label ?? "", files_done: 0, files_total: 0, bytes_done: 0, bytes_total: 0, speed: 0 },
+  };
+  h.previews[id] = p;
+  b.previewing = b.has_preview = true;
+  later(h, 4000, () => {
+    if (h.previews[id] !== p || p.result !== "running") return;
+    Object.assign(p, { result: "success", finished_at: iso(h.now()), progress: null, items: b.sources.map((s) => item(s, true)) });
+    b.previewing = false;
+  });
+}
+
+/** Stops the backup's run or preview in flight. */
+export function cancelBackup(h: Host, id: number): void {
+  const b = h.backups.find((x) => x.id === id);
+  if (!b) throw new DemoProblem(404, "backup_not_found", "There is no such backup.");
+  const end = iso(h.now());
+  const p = h.previews[id];
+  if (b.previewing && p) {
+    Object.assign(p, { result: "cancelled", error: "the preview was stopped", finished_at: end, progress: null });
+    b.previewing = false;
+    return;
+  }
+  const r = b.last_run;
+  const detail = h.runs.find((x) => x.id === r?.id);
+  if (!b.running || !r || !detail) throw new DemoProblem(409, "not_running", `${b.name} is not running.`);
+  Object.assign(r, { result: "cancelled", error: "the run was stopped", finished_at: end });
+  Object.assign(detail, r, { progress: null });
+  detail.items = detail.items.map((i) => ({ ...i, result: "cancelled" as const, finished_at: end }));
+  b.running = false;
 }
 
 function deploy(h: Host, kind: Schema<"CoreDeploy">["kind"], version: string, phases: string[], done: () => void): Schema<"CoreDeploy"> {

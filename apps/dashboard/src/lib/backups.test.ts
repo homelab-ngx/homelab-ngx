@@ -285,9 +285,13 @@ describe("dayMarks", () => {
     expect(d).toMatchObject({ tone: "ok", label: "16 Nov: OK, 1 min 30 s, 212 MB" });
   });
 
-  it("counts stopped and unknown runs as failed, partial as partly failed", () => {
+  it("counts unknown runs as failed, partial as partly failed, and a stopped run as neither", () => {
     const tone = (res: Run["result"]) => dayMarks([r(1, new Date(2026, 10, 16, 4), res)], now)[13]!.tone;
-    expect([tone("cancelled"), tone("unknown"), tone("failure"), tone("partial")]).toEqual(["bad", "bad", "bad", "warn"]);
+    expect([tone("cancelled"), tone("unknown"), tone("failure"), tone("partial")]).toEqual(["warn", "bad", "bad", "warn"]);
+    const day = (h: number) => new Date(2026, 10, 16, h);
+    expect(dayMarks([r(1, day(4), "cancelled")], now)[13]!.label).toMatch(/^16 Nov: Stopped/);
+    expect(dayMarks([r(1, day(4), "cancelled"), r(2, day(5), "partial")], now)[13]!.label).toBe("16 Nov: Partly failed, 2 runs");
+    expect(dayMarks([r(1, day(4), "cancelled"), r(2, day(5), "failure")], now)[13]!.label).toBe("16 Nov: Failed, 2 runs");
   });
 
   it("shows a run in flight, but not over a failure the same day", () => {

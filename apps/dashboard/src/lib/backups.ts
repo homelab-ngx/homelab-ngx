@@ -7,6 +7,8 @@ export type Backup = Schema<"Backup">;
 export type Run = Schema<"BackupRun">;
 export type RunDetail = Schema<"BackupRunDetail">;
 export type RunItem = Schema<"BackupRunItem">;
+export type Preview = Schema<"BackupPreview">;
+export type PreviewItem = Schema<"BackupPreviewItem">;
 export type Destination = Schema<"Destination">;
 export type DestinationInput = Schema<"DestinationInput">;
 export type Coverage = Schema<"Coverage">;
@@ -22,6 +24,7 @@ export const backupKeys = {
   runs: (id: number) => ["daemon", "backups", "runs", id] as const,
   run: (id: number) => ["daemon", "backups", "run", id] as const,
   logs: (id: number) => ["daemon", "backups", "logs", id] as const,
+  preview: (id: number) => ["daemon", "backups", "preview", id] as const,
 };
 
 // ---- schedule ----
@@ -115,6 +118,7 @@ export interface State {
 /** What a backup's row says first. */
 export function backupState(b: Backup): State {
   if (b.running) return { tone: "info", label: "Running" };
+  if (b.previewing) return { tone: "info", label: "Previewing" };
   if (!b.enabled) return { tone: "idle", label: "Off" };
   switch (b.last_run?.result) {
     case "failure":
@@ -146,7 +150,14 @@ export const ITEM_STATE: Record<RunItem["result"], State> = {
   partial: { tone: "warn", label: "Partial" },
   failure: { tone: "bad", label: "Failed" },
   skipped: { tone: "idle", label: "Skipped" },
+  cancelled: { tone: "warn", label: "Stopped" },
 };
+
+/** A run or a preview is in flight: the backup can be stopped, and nothing else started. */
+export const busy = (b: Backup) => b.running || b.previewing;
+
+/** A preview compares S3 and rclone destinations only. */
+export const canPreview = (b: Backup) => b.destinations.some((d) => d.kind !== "restic");
 
 // ---- the strip of days ----
 
@@ -170,7 +181,7 @@ const RESULT_TONE: Record<Run["result"], DayTone> = {
   success: "ok",
   partial: "warn",
   failure: "bad",
-  cancelled: "bad",
+  cancelled: "warn",
   unknown: "bad",
   running: "run",
 };
@@ -202,7 +213,9 @@ export function dayMarks(runs: Run[], now = new Date(), days = 14): DayMark[] {
       continue;
     }
     const tone = list.map((r) => RESULT_TONE[r.result]).sort((a, b) => WORST.indexOf(a) - WORST.indexOf(b))[0]!;
-    let label = `${name}: ${DAY_WORD[tone]}`;
+    // A stopped run marks the day like a partly failed one, and says what it was.
+    const stopped = tone === "warn" && !list.some((r) => r.result === "partial");
+    let label = `${name}: ${stopped ? "Stopped" : DAY_WORD[tone]}`;
     if (list.length > 1) label += `, ${list.length} runs`;
     else if (newest.result !== "running") label += `, ${duration(newest.started_at, newest.finished_at)}, ${bytes(newest.bytes)}`;
     out.push({ key, tone, run: newest, label });
@@ -242,9 +255,9 @@ export function percent(done: number, total: number): number | null {
   return Math.min(100, Math.round((done / total) * 100));
 }
 
-/** A run's items under the destination they belong to. */
-export function byDestination(items: RunItem[]): { name: string; destination: RunItem | null; folders: RunItem[] }[] {
-  const groups: { name: string; destination: RunItem | null; folders: RunItem[] }[] = [];
+/** A run's or a preview's items under the destination they belong to. */
+export function byDestination<T extends { kind: RunItem["kind"]; destination: string }>(items: T[]): { name: string; destination: T | null; folders: T[] }[] {
+  const groups: { name: string; destination: T | null; folders: T[] }[] = [];
   for (const it of items) {
     let g = groups.find((x) => x.name === it.destination);
     if (!g) groups.push((g = { name: it.destination, destination: null, folders: [] }));

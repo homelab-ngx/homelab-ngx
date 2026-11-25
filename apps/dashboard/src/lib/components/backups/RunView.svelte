@@ -46,7 +46,8 @@
       <span class="ml-auto"><AskButton small title="{r.backup_name} run" subject={{ kind: "backup_run", ref: String(r.id) }} /></span>
     {/if}
   </div>
-  {#if r.error}
+  <!-- A stopped run is not an error: its mark says it. -->
+  {#if r.error && r.result !== "cancelled"}
     <p class="mt-2 rounded-md bg-bad-soft px-3 py-2 break-words text-bad">{r.error}</p>
   {/if}
   {#if r.result === "running"}
