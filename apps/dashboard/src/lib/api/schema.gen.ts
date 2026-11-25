@@ -3625,6 +3625,8 @@ export interface components {
             disks: components["schemas"]["InstallDisk"][];
             error?: string;
             hostname?: string;
+            /** @description After an install starts: the IPv4 configuration chosen for the installed system. */
+            ipv4?: components["schemas"]["IPv4"];
             /** @description The install's output, newest last. */
             log: string[];
             /** @description What the installer found out about the machine before an install. */

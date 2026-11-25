@@ -1,9 +1,13 @@
 <script lang="ts">
   import { createInfiniteQuery } from "@tanstack/svelte-query";
-  import { untrack } from "svelte";
+  import { replaceState } from "$app/navigation";
+  import { page } from "$app/state";
+  import { onDestroy, untrack } from "svelte";
   import { segments } from "#lib/ansi.ts";
   import { api, call, describe, type Schema } from "#lib/api/client.ts";
   import { stamp } from "#lib/format.ts";
+  import { formatLogLines, LOG_LEVELS, levelWord } from "#lib/logs.ts";
+  import { copyText } from "#lib/shell.ts";
   import AskButton from "./ask/AskButton.svelte";
 
   type LogPage = Schema<"LogPage">;
@@ -28,26 +32,37 @@
   const PAGE_SIZE = 100;
   const FOLLOW_MS = 5_000;
 
-  /** Highest syslog priority each level keeps. */
-  const LEVELS = [
-    { id: "", label: "All levels", priority: undefined },
-    { id: "error", label: "Errors", priority: 3 },
-    { id: "warn", label: "Warnings and errors", priority: 4 },
-    { id: "info", label: "Info and up", priority: 6 },
-  ] as const;
+  const validLevel = (v: string | null) => (LOG_LEVELS.some((l) => l.id === v) ? v! : "");
 
   // The picker owns the choice from here; `initial` only seeds it.
   let unit = $state(untrack(() => initial));
-  let level = $state("");
-  let text = $state("");
-  let search = $state("");
+  let level = $state(untrack(() => (boxed ? "" : validLevel(page.url.searchParams.get("level")))));
+  const initialQuery = untrack(() => (boxed ? "" : (page.url.searchParams.get("q") ?? "").trim()));
+  let text = $state(initialQuery);
+  let search = $state(initialQuery);
   let follow = $state(false);
+  let copied = $state(false);
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+
+  onDestroy(() => clearTimeout(copyTimer));
 
   // Debounce the search box into the query.
   $effect(() => {
     const t = text.trim();
     const timer = setTimeout(() => (search = t), 300);
     return () => clearTimeout(timer);
+  });
+
+  $effect(() => {
+    if (boxed) return;
+    const u = new URL(untrack(() => page.url.href));
+    if (unit) u.searchParams.set("unit", unit);
+    else u.searchParams.delete("unit");
+    if (level) u.searchParams.set("level", level);
+    else u.searchParams.delete("level");
+    if (search) u.searchParams.set("q", search);
+    else u.searchParams.delete("q");
+    if (u.search !== untrack(() => page.url.search)) replaceState(u, {});
   });
 
   const groups = $derived.by(() => {
@@ -61,7 +76,7 @@
   });
   const label = $derived(units.find((u) => u.id === unit)?.label ?? unit);
 
-  const priority = $derived(LEVELS.find((l) => l.id === level)?.priority);
+  const priority = $derived(LOG_LEVELS.find((l) => l.id === level)?.priority);
   const logs = createInfiniteQuery(() => ({
     queryKey: ["daemon", "logs", unit, search, level],
     queryFn: ({ pageParam }: { pageParam: string }) =>
@@ -76,14 +91,31 @@
   }));
   const lines = $derived(logs.data?.pages.flatMap((p) => p.entries) ?? []);
 
-  const levelOf = (p: number) =>
-    p <= 3
-      ? { word: "ERROR", cls: "text-bad" }
-      : p === 4
-        ? { word: "WARN", cls: "text-warn" }
-        : p === 7
-          ? { word: "DEBUG", cls: "text-muted" }
-          : { word: "INFO", cls: "text-muted" };
+  const levelOf = (p: number) => ({
+    word: levelWord(p),
+    cls: p <= 3 ? "text-bad" : p === 4 ? "text-warn" : "text-muted",
+  });
+
+  async function copyLogs() {
+    if (!lines.length) return;
+    await copyText(formatLogLines(lines));
+    copied = true;
+    clearTimeout(copyTimer);
+    copyTimer = setTimeout(() => (copied = false), 2_000);
+  }
+
+  function downloadLogs() {
+    if (!lines.length) return;
+    const blob = new Blob([formatLogLines(lines)], { type: "text/plain;charset=utf-8" });
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = `${unit.replace(/\.service$/, "") || "logs"}.log`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(href);
+  }
 </script>
 
 <div class="flex min-h-0 flex-col gap-3">
@@ -114,7 +146,7 @@
     <label class="w-full sm:w-48">
       <span class="sr-only">Level</span>
       <select class="input" bind:value={level}>
-        {#each LEVELS as l (l.id)}<option value={l.id}>{l.label}</option>{/each}
+        {#each LOG_LEVELS as l (l.id)}<option value={l.id}>{l.label}</option>{/each}
       </select>
     </label>
     <label class="flex items-center gap-1.5">
@@ -125,6 +157,8 @@
       {logs.isFetching ? "Reading…" : "Refresh"}
     </button>
     {#if lines.length}
+      <button type="button" class="btn" onclick={copyLogs}>{copied ? "Copied" : "Copy"}</button>
+      <button type="button" class="btn" onclick={downloadLogs}>Download</button>
       <AskButton title="{label} logs" subject={{ kind: "logs", ref: unit, q: search || undefined, priority }} />
     {/if}
   </div>

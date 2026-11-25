@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Schema, ServiceInfo, Stack } from "./api/client.ts";
-import { attentionItems } from "./overview.ts";
+import type { Backup } from "./backups.ts";
+import type { HostSettings } from "./host.ts";
+import { attentionItems, setupChecklist } from "./overview.ts";
 
 const svc = (unit_name: string, active_state: string, extra: Partial<ServiceInfo> = {}): ServiceInfo =>
   ({ name: unit_name, unit_name, active_state, sub_state: "", type: "Native", description: "", masked: false, started_at: null, ...extra }) as ServiceInfo;
@@ -65,5 +67,59 @@ describe("attentionItems", () => {
     expect(attentionItems({ settingsStatus: { tiles: { updates: { state: "bad" } } } })).toEqual([
       { id: "core-update-failed", tone: "bad", label: "Update fell back", href: "/settings/updates" },
     ]);
+  });
+});
+
+const emptyHost = (overrides: Partial<HostSettings> = {}): HostSettings =>
+  ({
+    domain: { domain: "", dashboard_label: "homelab", dns_provider: "", dns_credentials_set: false, acme_email: "" },
+    wireguard: { enabled: false, peers: [] },
+    tunnel: { enabled: false, credentials_set: false, dns_managed: false, routes: [] },
+    tailscale: { enabled: false },
+    ...overrides,
+  }) as unknown as HostSettings;
+
+const emptyStorage = (pools = 0): Schema<"StorageStatus"> =>
+  ({ pools: Array.from({ length: pools }, (_, i) => ({ name: `p${i}` })), unassigned: [] }) as unknown as Schema<"StorageStatus">;
+
+describe("setupChecklist", () => {
+  it("stays empty while any required query is still loading", () => {
+    expect(setupChecklist({ storage: emptyStorage(0), host: emptyHost(), stacks: [] })).toEqual([]);
+  });
+
+  it("shows four incomplete steps on a fresh host", () => {
+    const steps = setupChecklist({
+      storage: emptyStorage(0),
+      host: emptyHost(),
+      stacks: [],
+      backups: [],
+    });
+    expect(steps).toEqual([
+      { id: "storage", label: "Create a storage pool", href: "/storage", done: false },
+      { id: "remote", label: "Set up a domain or VPN", href: "/settings/domain", done: false },
+      { id: "stack", label: "Add a stack", href: "/stacks/add", done: false },
+      { id: "backup", label: "Configure a backup", href: "/backups", done: false },
+    ]);
+  });
+
+  it("tracks partial completion including VPN alternatives", () => {
+    const steps = setupChecklist({
+      storage: emptyStorage(1),
+      host: emptyHost({ tailscale: { enabled: true } as HostSettings["tailscale"] }),
+      stacks: [stack("media", "up_to_date")],
+      backups: [],
+    });
+    expect(steps.map((s) => `${s.id}:${s.done}`)).toEqual(["storage:true", "remote:true", "stack:true", "backup:false"]);
+  });
+
+  it("returns empty once all four setup steps are complete", () => {
+    expect(
+      setupChecklist({
+        storage: emptyStorage(1),
+        host: emptyHost({ domain: { domain: "home.example", dashboard_label: "homelab", dns_provider: "cloudflare", dns_credentials_set: true, acme_email: "" } }),
+        stacks: [stack("media", "up_to_date")],
+        backups: [{ id: 1, name: "daily" } as unknown as Backup],
+      }),
+    ).toEqual([]);
   });
 });

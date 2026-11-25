@@ -40,8 +40,15 @@
 <svelte:head><title>{setup ? "Set a password" : "Sign in"} · Homelab-ngx</title></svelte:head>
 
 <main class="mx-auto grid max-w-sm gap-4 px-4 py-16">
-  <h1 class="text-xl font-semibold">{setup ? "Set a password" : "Sign in"}</h1>
-  {#if setup}<p class="text-muted">No password yet. The first one set here unlocks the dashboard.</p>{/if}
+  <div>
+    <p class="text-xs font-medium tracking-wide text-muted uppercase">Homelab-ngx</p>
+    <h1 class="mt-1 text-xl font-semibold">{setup ? "Set a password" : "Sign in"}</h1>
+  </div>
+  {#if setup}
+    <p class="text-muted">No password yet. The first one set here unlocks the dashboard.</p>
+  {:else}
+    <p class="text-muted">Forgot password? Run <code>homelab auth reset</code> on the host console.</p>
+  {/if}
   <form id="{id}-form" class="card grid gap-4" onsubmit={submit}>
     <!-- For password managers: the dashboard has one user. -->
     <input type="text" name="username" autocomplete="username" value="homelab" hidden readonly />

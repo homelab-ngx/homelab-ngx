@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -93,6 +94,7 @@ type Service struct {
 	step     Step
 	disk     string
 	hostname string
+	ipv4     hostcfg.IPv4
 	phase    string
 	lines    []string
 	err      string
@@ -138,10 +140,17 @@ func (s *Service) State(ctx context.Context) (InstallerState, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var ip *hostcfg.IPv4
+	if s.ipv4.Mode != "" {
+		cp := s.ipv4
+		cp.DNS = slices.Clone(s.ipv4.DNS)
+		ip = &cp
+	}
 	return InstallerState{
 		Active: true, Claimed: s.token != "" && !s.lapsed(), Step: s.step, Phase: s.phase, Disk: s.disk, Hostname: s.hostname,
 		Log: append([]string{}, s.lines...), Error: s.err, Disks: disks, MinBytes: MinBytes,
 		Current:    s.lease(ctx),
+		IPv4:       ip,
 		Machine:    machine(),
 		CanRestart: s.step == StepInstalled && s.entry != "",
 		SharedESP:  s.step == StepInstalled && s.onShared,
@@ -598,7 +607,7 @@ func (s *Service) Install(ctx context.Context, token, disk string, erase bool, s
 	if s.step == StepInstalling || s.step == StepInstalled {
 		return ErrBusy
 	}
-	s.step, s.phase, s.disk, s.hostname, s.lines, s.err, s.entry = StepInstalling, "partition", disk, setup.Hostname, nil, "", ""
+	s.step, s.phase, s.disk, s.hostname, s.ipv4, s.lines, s.err, s.entry = StepInstalling, "partition", disk, setup.Hostname, setup.IPv4, nil, "", ""
 	s.onShared = existingESP(d, erase, shared) != ""
 	go s.run(context.WithoutCancel(ctx), d, erase, setup)
 	return nil

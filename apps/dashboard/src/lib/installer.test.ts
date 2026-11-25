@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diskSegments, installProgress, largestFree, planSegments, type Disk, type Part, type PlanRow } from "./installer";
+import { diskSegments, installAddress, installProgress, largestFree, planSegments, type Disk, type Part, type PlanRow } from "./installer";
 
 const GB = 1e9;
 const MB = 1e6;
@@ -101,5 +101,29 @@ describe("the install's progress", () => {
     expect(at("partition", ["Copying in '/dev/sda2'", "Formatting future partition 5."]).stage).toBe(3);
     expect(at("boot", []).label).toBe("Installing the boot loader");
     expect(installProgress("installed", "finish", []).percent).toBe(100);
+  });
+});
+
+describe("installAddress", () => {
+  it("prefers a chosen static IPv4 address over the installer DHCP lease", () => {
+    expect(
+      installAddress({
+        current: { mode: "dhcp", address: "192.0.2.40/24", gateway: "192.0.2.1", dns: [] },
+        ipv4: { mode: "static", address: "192.168.1.20/24", gateway: "192.168.1.1", dns: ["192.168.1.1"] },
+      }),
+    ).toBe("192.168.1.20");
+  });
+
+  it("falls back to the current DHCP lease when DHCP was kept", () => {
+    expect(
+      installAddress({
+        current: { mode: "dhcp", address: "192.0.2.40/24", gateway: "192.0.2.1", dns: [] },
+        ipv4: { mode: "dhcp" },
+      }),
+    ).toBe("192.0.2.40");
+  });
+
+  it("returns undefined when neither static nor DHCP provides an address", () => {
+    expect(installAddress({ current: { mode: "dhcp" }, ipv4: undefined })).toBeUndefined();
   });
 });

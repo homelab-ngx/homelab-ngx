@@ -3203,6 +3203,10 @@
           "hostname": {
             "type": "string"
           },
+          "ipv4": {
+            "$ref": "#/components/schemas/IPv4",
+            "description": "After an install starts: the IPv4 configuration chosen for the installed system."
+          },
           "log": {
             "description": "The install's output, newest last.",
             "items": {

@@ -6,6 +6,7 @@
   import { api, call, describe, ProblemError, type Draft, type DraftCheck, type Stack } from "#lib/api/client.ts";
   import { fetchAssistant, keys } from "#lib/api/queries.ts";
   import CodeEditor from "#lib/components/CodeEditor.svelte";
+  import Modal from "#lib/components/Modal.svelte";
   import RowMenu from "#lib/components/RowMenu.svelte";
   import { bufferOf, changesOf, MANIFEST, type Buffer } from "#lib/drafts.ts";
   import { manifestAssist, type SchemaNode } from "#lib/manifest-assist.ts";
@@ -211,9 +212,24 @@
         ]
       : [];
 
+  let pendingNav = $state<string | null>(null);
+  let allowLeave = false;
+
   beforeNavigate((nav) => {
-    if (dirty && working !== "delete" && !confirm("Unsaved changes. Leave anyway?")) nav.cancel();
+    if (allowLeave || !dirty || working === "delete" || nav.type === "leave" || !nav.to) return;
+    nav.cancel();
+    pendingNav = `${nav.to.url.pathname}${nav.to.url.search}${nav.to.url.hash}`;
   });
+
+  function confirmLeave() {
+    const dest = pendingNav;
+    pendingNav = null;
+    if (!dest) return;
+    allowLeave = true;
+    void goto(dest).finally(() => {
+      allowLeave = false;
+    });
+  }
 
   function keydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === "s") {
@@ -368,3 +384,16 @@
     {/if}
   </div>
 </div>
+
+<Modal
+  open={pendingNav !== null}
+  onOpenChange={(o) => {
+    if (!o) pendingNav = null;
+  }}
+  title="Leave without saving?"
+>
+  <p class="text-muted">Unsaved changes in this draft will be lost.</p>
+  {#snippet actions()}
+    <button type="button" class="btn btn-danger" onclick={confirmLeave}>Leave</button>
+  {/snippet}
+</Modal>

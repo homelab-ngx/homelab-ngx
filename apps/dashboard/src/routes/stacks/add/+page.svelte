@@ -13,6 +13,14 @@
 
   type Kind = "git" | "folder" | "write";
   const STEPS = ["Source", "Configure and approve", "Install"] as const;
+  const STARTERS = [
+    { name: "immich", label: "Immich", url: "https://github.com/homelab-ngx/stack-immich" },
+    { name: "navidrome", label: "Navidrome", url: "https://github.com/homelab-ngx/stack-navidrome" },
+    { name: "plex-jellyfin", label: "Plex & Jellyfin", url: "https://github.com/homelab-ngx/stack-plex-jellyfin" },
+    { name: "samba", label: "Samba", url: "https://github.com/homelab-ngx/stack-samba" },
+    { name: "pocket-id", label: "Pocket ID", url: "https://github.com/homelab-ngx/stack-pocket-id" },
+  ] as const;
+  const BROWSE_STACKS = "https://github.com/homelab-ngx?q=stack-";
   const KINDS: [Kind, string][] = [
     ["git", "Git repository"],
     ["folder", "Local folder"],
@@ -171,6 +179,22 @@
           <span class="label">Branch or tag (optional)</span>
           <input class="input" bind:value={branch} placeholder="default branch" autocomplete="off" spellcheck="false" />
         </label>
+      </div>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="label">Official stacks</span>
+        {#each STARTERS as s (s.name)}
+          <button
+            type="button"
+            class="btn btn-sm {url === s.url ? 'border-accent text-accent' : ''}"
+            onclick={() => {
+              url = s.url;
+              branch = "";
+            }}
+          >
+            {s.label}
+          </button>
+        {/each}
+        <a class="link text-xs" href={BROWSE_STACKS} target="_blank" rel="noopener noreferrer">Browse all</a>
       </div>
     {:else if kind === "folder"}
       <label class="flex flex-col gap-1">

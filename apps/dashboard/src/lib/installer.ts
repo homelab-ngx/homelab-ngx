@@ -177,3 +177,10 @@ export function installProgress(step: string, phase: string | undefined, log: re
   const s = STAGES[i] ?? STAGES[0];
   return { stage: i + 1, label: s.label, percent: s.at };
 }
+
+/** Direct IPv4 address for the installed host once DNS or .local is unavailable. */
+export function installAddress(st: Pick<Schema<"InstallerState">, "ipv4" | "current">): string | undefined {
+  const raw = st.ipv4?.mode === "static" && st.ipv4.address ? st.ipv4.address : st.current?.address;
+  const ip = raw?.replace(/\/\d+$/, "").trim();
+  return ip || undefined;
+}

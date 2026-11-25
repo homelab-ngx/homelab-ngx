@@ -74,6 +74,7 @@ type InstallerState struct {
 	Disks    []InstallDisk `json:"disks"`
 	MinBytes uint64        `json:"min_bytes" doc:"The space an install needs."`
 	Current  hostcfg.IPv4  `json:"current" doc:"The installer medium's own address from DHCP: where a static setting starts."`
+	IPv4     *hostcfg.IPv4 `json:"ipv4,omitempty" doc:"After an install starts: the IPv4 configuration chosen for the installed system."`
 	Machine  Machine       `json:"machine" doc:"What the installer found out about the machine before an install."`
 	// CanRestart is false after an install whose boot entry the firmware
 	// does not list: that machine is turned off and started by hand.

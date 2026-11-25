@@ -1,7 +1,8 @@
-/** Overview page logic: surfacing what needs attention across the host. */
+/** Overview page logic: surfacing what needs attention across the host and first-run setup. */
 import type { Schema, ServiceInfo, Stack } from "./api/client.ts";
-import { uncovered, type Coverage } from "./backups.ts";
+import { uncovered, type Backup, type Coverage } from "./backups.ts";
 import type { Tone } from "./components/Pill.svelte";
+import type { HostSettings } from "./host.ts";
 import { failingOf, openOf, type Snapshot } from "./notifications.ts";
 import { logId } from "./stacks.ts";
 import { diskState, flaggedDisks } from "./storage.ts";
@@ -114,4 +115,35 @@ export function attentionItems(input: AttentionInput): AttentionItem[] {
 
   const rank: Record<Tone, number> = { bad: 0, warn: 1, info: 2, ok: 3, idle: 4 };
   return items.sort((a, b) => rank[a.tone] - rank[b.tone]);
+}
+
+export interface SetupStep {
+  id: string;
+  label: string;
+  href: string;
+  done: boolean;
+}
+
+export interface SetupInput {
+  storage?: Schema<"StorageStatus">;
+  host?: HostSettings;
+  stacks?: Stack[];
+  backups?: Backup[];
+}
+
+/** First-run setup steps for an unconfigured host; empty until all inputs load or once every step is done. */
+export function setupChecklist(input: SetupInput): SetupStep[] {
+  if (!input.storage || !input.host || !input.stacks || !input.backups) return [];
+  const steps: SetupStep[] = [
+    { id: "storage", label: "Create a storage pool", href: "/storage", done: input.storage.pools.length > 0 },
+    {
+      id: "remote",
+      label: "Set up a domain or VPN",
+      href: "/settings/domain",
+      done: Boolean(input.host.domain?.domain || input.host.wireguard?.enabled || input.host.tunnel?.enabled || input.host.tailscale?.enabled),
+    },
+    { id: "stack", label: "Add a stack", href: "/stacks/add", done: input.stacks.length > 0 },
+    { id: "backup", label: "Configure a backup", href: "/backups", done: input.backups.length > 0 },
+  ];
+  return steps.every((s) => s.done) ? [] : steps;
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { createQuery, keepPreviousData } from "@tanstack/svelte-query";
-  import { ChevronRight } from "@lucide/svelte";
+  import { Check, ChevronRight } from "@lucide/svelte";
   import { api, call, describe, type Schema, type ServiceInfo } from "#lib/api/client.ts";
   import { fetchServices, fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
   import Chart from "#lib/components/Chart.svelte";
@@ -8,11 +8,12 @@
   import Pill, { type Tone } from "#lib/components/Pill.svelte";
   import StatusMark from "#lib/components/StatusMark.svelte";
   import UpdatedDialog from "#lib/components/core/UpdatedDialog.svelte";
-  import { backupKeys, type Coverage } from "#lib/backups.ts";
+  import { backupKeys, type Backup, type Coverage } from "#lib/backups.ts";
   import { bytes } from "#lib/format.ts";
+  import { fetchHostSettings, hostKeys } from "#lib/host.ts";
   import { notificationKeys, type Snapshot } from "#lib/notifications.ts";
   import { notificationsTray } from "#lib/notifications-tray.svelte.ts";
-  import { attentionItems } from "#lib/overview.ts";
+  import { attentionItems, setupChecklist } from "#lib/overview.ts";
   import { profileMarks } from "#lib/power-meter.ts";
   import { watts } from "#lib/power-profile.ts";
   import { LiveMetrics } from "#lib/live-metrics.svelte.ts";
@@ -76,11 +77,50 @@
     queryFn: () => call<Schema<"StorageStatus">>(api.GET("/storage")),
     refetchInterval: 60_000,
   }));
+  const hostSettings = createQuery(() => ({
+    queryKey: hostKeys.settings,
+    queryFn: fetchHostSettings,
+    refetchInterval: 60_000,
+  }));
+  const backups = createQuery(() => ({
+    queryKey: backupKeys.list,
+    queryFn: () => call<Backup[]>(api.GET("/backups")),
+    refetchInterval: 60_000,
+  }));
   const coverage = createQuery(() => ({
     queryKey: backupKeys.coverage,
     queryFn: () => call<Coverage>(api.GET("/backup-coverage")),
     refetchInterval: 60_000,
   }));
+
+  const ONBOARDING_KEY = "homelab.onboarding.dismissed";
+  let onboardingDismissed = $state(readDismissed());
+  function readDismissed(): boolean {
+    try {
+      return localStorage.getItem(ONBOARDING_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+  function dismissOnboarding() {
+    onboardingDismissed = true;
+    try {
+      localStorage.setItem(ONBOARDING_KEY, "1");
+    } catch {
+      // A private window keeps dismissal for this load only.
+    }
+  }
+
+  const checklist = $derived(
+    onboardingDismissed
+      ? []
+      : setupChecklist({
+          storage: storage.data,
+          host: hostSettings.data,
+          stacks: stacks.data,
+          backups: backups.data,
+        }),
+  );
 
   const attention = $derived(
     attentionItems({
@@ -213,6 +253,35 @@
         {/each}
       </ul>
     </div>
+  </section>
+{/if}
+
+{#if checklist.length > 0}
+  <section aria-label="Get started" class="card mt-4">
+    <div class="flex items-center justify-between gap-2">
+      <h2 class="font-semibold">Get started</h2>
+      <button type="button" class="btn btn-sm" onclick={dismissOnboarding}>Dismiss</button>
+    </div>
+    <ul class="mt-3 grid gap-2 sm:grid-cols-2">
+      {#each checklist as step (step.id)}
+        <li>
+          <a
+            href={step.href}
+            class="flex items-center justify-between gap-2 rounded-md border border-line px-3 py-2 transition-colors hover:border-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            <span class="flex items-center gap-2 {step.done ? 'text-muted line-through' : 'text-fg'}">
+              {#if step.done}
+                <Check class="size-4 shrink-0 text-ok" aria-hidden="true" />
+              {:else}
+                <span class="size-4 shrink-0 rounded-full border border-muted" aria-hidden="true"></span>
+              {/if}
+              <span>{step.label}</span>
+            </span>
+            {#if !step.done}<ChevronRight class="size-3.5 shrink-0 text-muted" aria-hidden="true" />{/if}
+          </a>
+        </li>
+      {/each}
+    </ul>
   </section>
 {/if}
 

@@ -2,7 +2,7 @@
   import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { api, call, describe, type Schema } from "#lib/api/client.ts";
   import { bytes } from "#lib/format.ts";
-  import { diskSegments, HOLDS_WORD, installProgress, largestFree, planSegments, STAGES, type Segment } from "#lib/installer.ts";
+  import { diskSegments, HOLDS_WORD, installAddress, installProgress, largestFree, planSegments, STAGES, type Segment } from "#lib/installer.ts";
   import Disclosure from "#lib/components/Disclosure.svelte";
   import Help from "#lib/components/Help.svelte";
   import Modal from "#lib/components/Modal.svelte";
@@ -299,17 +299,22 @@
         </div>
       </Disclosure>
       {#if st.step === "installed"}
+        {@const ip = installAddress(st)}
         <!-- Without a firmware boot entry for the new system there is no
              restart into it: the machine is turned off and started by hand. -->
         <ol class="grid list-decimal gap-1 pl-5">
           {#if st.can_restart}
             <li>Restart</li>
-            <li>Open <a class="link" href="http://{st.hostname}.local">http://{st.hostname}.local</a></li>
+            <li>
+              Open <a class="link" href="http://{st.hostname}.local">http://{st.hostname}.local</a>{#if ip} or <a class="link" href="http://{ip}">http://{ip}</a>{/if}
+            </li>
             <li>Remove the installer medium</li>
           {:else}
             <li>Turn off</li>
             <li>Remove the installer medium</li>
-            <li>Turn on, then open <a class="link" href="http://{st.hostname}.local">http://{st.hostname}.local</a></li>
+            <li>
+              Turn on, then open <a class="link" href="http://{st.hostname}.local">http://{st.hostname}.local</a>{#if ip} or <a class="link" href="http://{ip}">http://{ip}</a>{/if}
+            </li>
           {/if}
         </ol>
         <div class="flex flex-wrap items-center gap-2">

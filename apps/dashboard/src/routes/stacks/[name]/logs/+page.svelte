@@ -21,7 +21,7 @@
 {:else if services.data && units.length === 0}
   <p class="rounded-lg border border-line bg-surface px-4 py-3 text-muted">No services listed.</p>
 {:else if services.data}
-  {#key initial}
+  {#key name}
     <LogViewer {units} {initial} />
   {/key}
 {:else}

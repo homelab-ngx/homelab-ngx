@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 
@@ -566,5 +567,59 @@ func TestESPFreeCountsThisSystemsKernels(t *testing.T) {
 	free, err := espFree(dir)
 	if err != nil || free < 1<<20+1<<10 {
 		t.Errorf("free = %d, %v", free, err)
+	}
+}
+
+func TestInstallStateIncludesChosenIPv4(t *testing.T) {
+	oldDefs, oldOS := definitions, osRelease
+	definitions = t.TempDir()
+	osRelease = filepath.Join(t.TempDir(), "os-release")
+	defer func() { definitions, osRelease = oldDefs, oldOS }()
+
+	d := assess(windows(512 * mib))
+	s := New(cmdrunnertest.NewFake(), fakeDisks{list: []InstallDisk{d}}, quiet())
+	ctx := context.Background()
+
+	st, err := s.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.IPv4 != nil {
+		t.Fatalf("initial IPv4 = %+v, want nil", st.IPv4)
+	}
+
+	tok, err := s.Claim()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := hostcfg.IPv4{Mode: "static", Address: "192.168.1.20/24", Gateway: "192.168.1.1", DNS: []string{"1.1.1.1"}}
+	if err := s.Install(ctx, tok, "nvme0n1", true, Setup{Hostname: "box", IPv4: want}); err != nil {
+		t.Fatal(err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		st, err = s.State(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Step != StepInstalling {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("install goroutine did not finish in time")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if st.IPv4 == nil || st.IPv4.Mode != "static" || st.IPv4.Address != "192.168.1.20/24" || !slices.Equal(st.IPv4.DNS, []string{"1.1.1.1"}) {
+		t.Fatalf("IPv4 after Install = %+v, want %+v", st.IPv4, want)
+	}
+	st.IPv4.DNS[0] = "9.9.9.9"
+	st2, err := s.State(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(st2.IPv4.DNS, []string{"1.1.1.1"}) {
+		t.Errorf("State aliased internal DNS slice: %v", st2.IPv4.DNS)
 	}
 }
