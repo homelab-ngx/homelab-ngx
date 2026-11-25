@@ -1,4 +1,4 @@
-// Package tilestatus is the System Settings grid's badges: each feature
+// Package tilestatus is the Settings grid's badges: each feature
 // reports the state of its tiles, and GET /settings/status collects them.
 package tilestatus
 

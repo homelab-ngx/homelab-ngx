@@ -14,6 +14,6 @@
     <HostEditor {root} {path} />
   {/key}
 {:else}
-  <a class="link text-xs" href={browseHref("/")}>← Files</a>
+  <p class="text-muted"><a class="link" href="/storage">Storage</a> / <a class="link" href={browseHref("/")}>Files</a> /</p>
   <p class="mt-4 text-muted">No file to open.</p>
 {/if}

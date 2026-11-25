@@ -22,9 +22,9 @@
   const initial = page.url.searchParams.get("unit") || DEFAULT_UNIT;
 </script>
 
-<svelte:head><title>Logs · System Settings · Homelab-ngx</title></svelte:head>
+<svelte:head><title>Logs · Settings · Homelab-ngx</title></svelte:head>
 
-<p class="text-muted"><a class="link" href="/settings">System Settings</a> /</p>
+<p class="text-muted"><a class="link" href="/settings">Settings</a> /</p>
 <h1 class="mt-1 text-xl font-semibold">
   <Help label="Logs">Log lines of the host and of backup jobs, newest first. A stack's services have their logs on the stack's page.</Help>
 </h1>

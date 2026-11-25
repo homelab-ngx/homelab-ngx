@@ -28,7 +28,7 @@ func TestTiles(t *testing.T) {
 	h.Firewall.Openings = []Opening{{Port: 8080}, {Port: 8443}, {Port: 9000}}
 	h.Host.SSHKeys = []string{"ssh-ed25519 AAAA"}
 	got = tiles(h, TailscaleNeedsLogin)
-	for _, k := range []string{"clock", "domain", "lan", "host"} {
+	for _, k := range []string{"clock", "domain", "lan", "system"} {
 		if s, ok := got[k]; ok {
 			t.Errorf("%s = %+v, want no badge", k, s)
 		}
@@ -74,7 +74,7 @@ func TestTilesApplyErrors(t *testing.T) {
 	h.Tunnel = Tunnel{Enabled: true, CredentialsSet: true, Routes: []Route{{}, {}}}
 	h.Applied.Errors = []string{"caddy: reload failed", "tunnel: no route", "etc: write failed", "something else", "ssh: x"}
 	got := tiles(h, "")
-	for _, k := range []string{"domain", "tunnel", "host", "ssh"} {
+	for _, k := range []string{"domain", "tunnel", "system", "ssh"} {
 		if got[k].State != tilestatus.Bad {
 			t.Errorf("%s = %+v, want bad", k, got[k])
 		}
@@ -88,7 +88,7 @@ func TestTilesApplyErrors(t *testing.T) {
 
 	// A NixOS host's settings are not applied by the daemon.
 	h.Managed = ManagedNixOS
-	if s := tiles(h, "")["host"]; s.State == tilestatus.Bad {
+	if s := tiles(h, "")["system"]; s.State == tilestatus.Bad {
 		t.Errorf("nixos host = %+v", s)
 	}
 }

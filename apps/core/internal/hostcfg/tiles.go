@@ -7,9 +7,9 @@ import (
 	"homelab-ngx.com/core/internal/tilestatus"
 )
 
-// Tiles reports the System Settings tiles this package backs: clock,
-// domain, lan, tailscale, wireguard, tunnel, firewall and ssh, and host
-// when a part of the last apply failed that no other tile owns.
+// Tiles reports the Settings tiles this package backs: clock, domain,
+// lan, tailscale, wireguard, tunnel, firewall and ssh, and system when
+// a part of the last apply failed that no other tile owns.
 func (s *Service) Tiles(ctx context.Context) (map[string]tilestatus.TileStatus, error) {
 	h, err := s.Get(ctx)
 	if err != nil {
@@ -23,7 +23,7 @@ func (s *Service) Tiles(ctx context.Context) (map[string]tilestatus.TileStatus, 
 }
 
 // applyTile is the tile each part of the apply belongs to (Apply's part
-// names); etc and anything else are the host's.
+// names); etc and anything else are the system tile's.
 var applyTile = map[string]string{"caddy": "domain", "firewall": "firewall", "tunnel": "tunnel", "tailscale": "tailscale", "ssh": "ssh"}
 
 func tiles(h HostSettings, ts TailscaleState) map[string]tilestatus.TileStatus {
@@ -61,7 +61,7 @@ func tiles(h HostSettings, ts TailscaleState) map[string]tilestatus.TileStatus {
 		part, _, _ := strings.Cut(e, ":")
 		key, ok := applyTile[part]
 		if !ok {
-			key = "host"
+			key = "system"
 		}
 		st := t[key]
 		st.State = tilestatus.Bad

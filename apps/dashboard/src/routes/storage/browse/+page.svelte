@@ -54,8 +54,8 @@
 
 <svelte:head><title>{here} · Storage · Homelab-ngx</title></svelte:head>
 
-<a class="link text-xs" href="/storage">← Storage</a>
-<h1 class="mt-2 text-xl font-semibold">
+<p class="text-muted"><a class="link" href="/storage">Storage</a> /</p>
+<h1 class="mt-1 text-xl font-semibold">
   <Help label="Files">
     The subvolumes and the stacks' folders. A file opens in the editor. Above those folders only the way down to them is listed.
   </Help>

@@ -1,8 +1,8 @@
 /**
- * System Settings' index: its tiles, each a page of its own, and their
+ * Settings' index: its tiles, each a page of its own, and their
  * badges, which the daemon reports in one answer (GET /settings/status).
  */
-import { Bell, BrickWall, CircleUser, Clock, Cloud, Gauge, Globe, House, Keyboard, KeyRound, Network, Power, RefreshCw, ScrollText, ShieldCheck, ShieldHalf, Sparkles, Waypoints } from "@lucide/svelte";
+import { Bell, BrickWall, CircleUser, Clock, Cloud, Globe, Keyboard, KeyRound, Network, RefreshCw, ScrollText, ShieldCheck, ShieldHalf, SlidersHorizontal, Sparkles, Waypoints } from "@lucide/svelte";
 import { api, call, type Schema } from "./api/client.ts";
 
 /** A tile's badge: a tone, a count, both, or neither. */
@@ -12,7 +12,7 @@ export type TileState = NonNullable<TileStatus["state"]>;
 export const settingsStatusKey = ["daemon", "settings", "status"] as const;
 export const fetchSettingsStatus = () => call<Schema<"SettingsStatus">>(api.GET("/settings/status"));
 
-type Icon = typeof House;
+type Icon = typeof SlidersHorizontal;
 
 export interface Tile {
   /** The daemon's name for the tile in GET /settings/status. */
@@ -42,14 +42,15 @@ export const SECTIONS: Section[] = [
     id: "host",
     title: "This host",
     tiles: [
-      tile("host", "Host", House, { words: notApplied }),
+      tile("system", "System Settings", SlidersHorizontal, { words: { ...notApplied, info: "scheduled" } }),
       tile("clock", "Clock", Clock, { words: { warn: "not synced" } }),
       tile("console", "Console", Keyboard),
-      tile("power-profile", "Power profile", Gauge),
       tile("updates", "Updates", RefreshCw, { core: true, words: { info: "update waiting", bad: "fell back" } }),
       tile("notifications", "Notifications", Bell, { words: { ok: "on", bad: "failing", off: "no channels" }, noun: ["channel", "channels"] }),
       tile("logs", "Logs", ScrollText),
-      tile("power", "Power", Power, { words: { info: "scheduled" } }),
+      tile("security", "Security audit", ShieldCheck, { words: { ok: "good", info: "fair", warn: "weak", bad: "poor", off: "never run" } }),
+      tile("assistant", "AI assistant", Sparkles, { words: { ok: "on" } }),
+      tile("account", "Account", CircleUser),
     ],
   },
   {
@@ -65,15 +66,6 @@ export const SECTIONS: Section[] = [
       tile("ssh", "SSH", KeyRound, { words: { off: "no keys", ...notApplied }, noun: ["key", "keys"] }),
     ],
   },
-  {
-    id: "ai",
-    title: "Assistant",
-    tiles: [
-      tile("assistant", "AI assistant", Sparkles, { words: { ok: "on" } }),
-      tile("security", "Security audit", ShieldCheck, { words: { ok: "good", info: "fair", warn: "weak", bad: "poor", off: "never run" } }),
-    ],
-  },
-  { id: "browser", title: "This browser", tiles: [tile("account", "Account", CircleUser)] },
 ];
 
 const WORDS: Record<TileState, string> = { ok: "ok", warn: "warning", bad: "failed", info: "pending", off: "off" };
@@ -90,10 +82,11 @@ export function tileLabel(t: Tile, st: TileStatus | undefined): string {
 }
 
 /** The tiles that were cards on the General and Network pages, by their old anchor. */
-const MOVED = new Set(["host", "clock", "console", "domain", "lan", "tailscale", "wireguard", "tunnel", "firewall", "ssh"]);
+const MOVED = new Set(["clock", "console", "domain", "lan", "tailscale", "wireguard", "tunnel", "firewall", "ssh"]);
 
 /** Where an old /settings/general or /settings/network link goes: its anchor's own page, else the index. */
 export function movedTile(hash: string): string {
   const key = hash.replace(/^#/, "");
+  if (key === "host") return "/settings/system#host";
   return MOVED.has(key) ? `/settings/${key}` : "/settings";
 }

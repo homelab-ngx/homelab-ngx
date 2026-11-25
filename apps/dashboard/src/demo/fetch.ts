@@ -294,7 +294,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
       security: { state: "off" },
     };
     if (h.image.pending_reboot || h.image.available.length || h.image.core.available.length) tiles.updates = { state: "info" };
-    if (h.power.scheduled) tiles.power = { state: "info" };
+    if (h.power.scheduled) tiles.system = { state: "info" };
     return { tiles };
   },
   "/stack-updates": (h, c) => h.updates.filter((u) => !c.query.get("stack") || u.stack === c.query.get("stack")).slice(0, Number(c.query.get("limit")) || 50),

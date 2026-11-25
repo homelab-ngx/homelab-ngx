@@ -15,7 +15,7 @@ func TestTiles(t *testing.T) {
 		t.Fatalf("nothing scheduled: %+v, %v", got, err)
 	}
 	r.logind.sched = &PowerScheduled{Action: Reboot, At: time.Now().Add(time.Hour)}
-	if got, err := r.svc.Tiles(ctx); err != nil || got["power"].State != tilestatus.Info {
+	if got, err := r.svc.Tiles(ctx); err != nil || got["system"].State != tilestatus.Info {
 		t.Fatalf("scheduled: %+v, %v", got, err)
 	}
 }

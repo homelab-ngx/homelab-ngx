@@ -25,7 +25,7 @@ type statusOut struct{ Body SettingsStatus }
 func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeRead, huma.Operation{
 		OperationID: "getSettingsStatus", Method: http.MethodGet, Path: "/settings/status", Tags: []string{"system"},
-		Summary:     "The System Settings tiles' badges.",
+		Summary:     "The Settings tiles' badges.",
 		Description: "Each feature reports its own tiles, in parallel and within a short deadline. A feature that fails or is too slow leaves its tiles without a badge; the call itself does not fail.",
 	}, func(ctx context.Context, _ *struct{}) (*statusOut, error) {
 		return &statusOut{Body: SettingsStatus{Tiles: h.reg.Collect(ctx)}}, nil

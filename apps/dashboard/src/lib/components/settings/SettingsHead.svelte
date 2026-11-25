@@ -11,8 +11,8 @@
   let { title, help }: Props = $props();
 </script>
 
-<!-- A System Settings page's head: the way back to the grid, and the heading with its help. -->
-<svelte:head><title>{title} · System Settings · Homelab-ngx</title></svelte:head>
+<!-- A Settings page's head: the way back to the grid, and the heading with its help. -->
+<svelte:head><title>{title} · Settings · Homelab-ngx</title></svelte:head>
 
-<p class="text-muted"><a class="link" href="/settings">System Settings</a> /</p>
+<p class="text-muted"><a class="link" href="/settings">Settings</a> /</p>
 <h1 class="mt-1 text-xl font-semibold"><Help label={title}>{@render help()}</Help></h1>

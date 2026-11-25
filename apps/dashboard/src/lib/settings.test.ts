@@ -19,12 +19,17 @@ describe("tileLabel", () => {
     expect(tileLabel(byKey("logs"), undefined)).toBe("Logs");
     expect(tileLabel(byKey("clock"), {})).toBe("Clock");
   });
+
+  it("describes System Settings badges for apply errors and scheduled power", () => {
+    expect(tileLabel(byKey("system"), { state: "bad" })).toBe("System Settings, not applied");
+    expect(tileLabel(byKey("system"), { state: "info" })).toBe("System Settings, scheduled");
+  });
 });
 
 describe("movedTile", () => {
   it("takes an old anchor to its own page", () => {
     expect(movedTile("#tailscale")).toBe("/settings/tailscale");
-    expect(movedTile("#host")).toBe("/settings/host");
+    expect(movedTile("#host")).toBe("/settings/system#host");
   });
 
   it("takes anything else to the index", () => {
@@ -34,7 +39,13 @@ describe("movedTile", () => {
 });
 
 describe("SECTIONS", () => {
-  it("gives every tile its own page under /settings", () => {
+  it("groups Settings into This host and Network with unique tile pages", () => {
+    expect(SECTIONS.map((s) => s.title)).toEqual(["This host", "Network"]);
+    const hostKeys = SECTIONS[0]!.tiles.map((t) => t.key);
+    expect(hostKeys).toContain("system");
+    expect(hostKeys).toContain("security");
+    expect(hostKeys).toContain("assistant");
+    expect(hostKeys).toContain("account");
     const tiles = SECTIONS.flatMap((s) => s.tiles);
     expect(new Set(tiles.map((t) => t.key)).size).toBe(tiles.length);
     for (const t of tiles) expect(t.href).toBe(`/settings/${t.key}`);

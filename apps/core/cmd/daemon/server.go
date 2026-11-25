@@ -84,10 +84,9 @@ func features(d deps) []feature {
 	}
 }
 
-// tiles is each feature's reporter for the System Settings grid's badges.
-// A tile with no reporter (host, console, logs, power profile, account) has
-// no badge. With the OpenAPI command's zero deps the reporters are never
-// called.
+// tiles is each feature's reporter for the Settings grid's badges.
+// A tile with no reporter (console, logs, account) has no badge. With the
+// OpenAPI command's zero deps the reporters are never called.
 func tiles(d deps) *tilestatus.Registry {
 	g := tilestatus.NewRegistry(logging.Logger("tilestatus"))
 	g.Add("hostcfg", d.hostcfg.Tiles)

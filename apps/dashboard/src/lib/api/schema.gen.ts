@@ -1414,7 +1414,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * The System Settings tiles' badges.
+         * The Settings tiles' badges.
          * @description Each feature reports its own tiles, in parallel and within a short deadline. A feature that fails or is too slow leaves its tiles without a badge; the call itself does not fail.
          */
         get: operations["getSettingsStatus"];

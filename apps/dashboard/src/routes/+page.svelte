@@ -160,7 +160,7 @@
     <p class="text-xs text-muted">CPU{tempDisk === undefined ? "" : ` · system disk ${degrees(tempDisk)}`}</p>
   </div>
   {#if hasPower}
-    <a class="card block hover:bg-sunken" href="/settings/power-profile">
+    <a class="card block hover:bg-sunken" href="/settings/system#profile">
       <p class="text-muted">Power</p>
       <p class="mt-1 text-lg tabular-nums">{watts(powerWall ?? powerCpu)}</p>
       <p class="text-xs text-muted">

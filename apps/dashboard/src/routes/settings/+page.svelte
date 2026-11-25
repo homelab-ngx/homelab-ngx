@@ -13,9 +13,9 @@
     "group row-span-2 grid grid-rows-subgrid justify-items-center gap-y-1.5 rounded-lg px-2 pt-3.5 pb-3 text-center hover:bg-sunken focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 </script>
 
-<svelte:head><title>System Settings · Homelab-ngx</title></svelte:head>
+<svelte:head><title>Settings · Homelab-ngx</title></svelte:head>
 
-<h1 class="text-xl font-semibold">System Settings</h1>
+<h1 class="text-xl font-semibold">Settings</h1>
 
 <div class="mt-5 grid gap-5">
   {#each SECTIONS as section (section.id)}

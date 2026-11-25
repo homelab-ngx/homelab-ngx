@@ -41,9 +41,9 @@
   const blocked = $derived(!assistantOn ? "Set up the assistant first." : running ? "An audit is running." : "");
 </script>
 
-<svelte:head><title>Security audit · System Settings · Homelab-ngx</title></svelte:head>
+<svelte:head><title>Security audit · Settings · Homelab-ngx</title></svelte:head>
 
-<p class="text-muted"><a class="link" href="/settings">System Settings</a> /</p>
+<p class="text-muted"><a class="link" href="/settings">Settings</a> /</p>
 <h1 class="mt-1 text-xl font-semibold">
   <Help label="Security audit">
     The assistant's audit model reviews what the daemon knows about the host, one area at a time: exposure, access, stacks,

@@ -6,7 +6,7 @@ import (
 	"homelab-ngx.com/core/internal/tilestatus"
 )
 
-// Tiles reports the power tile: info while a reboot or shutdown is
+// Tiles reports the system tile: info while a reboot or shutdown is
 // scheduled. It asks logind directly: Status would mark a page as following
 // a shutdown.
 func (s *Service) Tiles(ctx context.Context) (map[string]tilestatus.TileStatus, error) {
@@ -17,5 +17,5 @@ func (s *Service) Tiles(ctx context.Context) (map[string]tilestatus.TileStatus, 
 	if sch == nil {
 		return nil, nil
 	}
-	return map[string]tilestatus.TileStatus{"power": tilestatus.Of(tilestatus.Info)}, nil
+	return map[string]tilestatus.TileStatus{"system": tilestatus.Of(tilestatus.Info)}, nil
 }

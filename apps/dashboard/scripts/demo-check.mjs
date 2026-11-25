@@ -8,8 +8,8 @@ const pages = [
   "/", "/stacks", "/stacks/photos", "/stacks/home", "/stacks/photos/configuration", "/stacks/photos/logs",
   "/stacks/photos/history", "/stacks/photos/access", "/stacks/add", "/storage", "/storage/browse", "/storage/browse?path=/media",
   "/backups", "/backups/1", "/settings", "/settings/notifications", "/settings/updates", "/settings/security",
-  "/settings/assistant", "/settings/logs", "/settings/host", "/settings/clock", "/settings/console", "/settings/domain", "/settings/lan",
-  "/settings/tailscale", "/settings/wireguard", "/settings/tunnel", "/settings/firewall", "/settings/ssh", "/settings/power", "/settings/account",
+  "/settings/assistant", "/settings/logs", "/settings/system", "/settings/host", "/settings/clock", "/settings/console", "/settings/domain", "/settings/lan",
+  "/settings/tailscale", "/settings/wireguard", "/settings/tunnel", "/settings/firewall", "/settings/ssh", "/settings/power", "/settings/power-profile", "/settings/account",
   "/?installer",
 ];
 

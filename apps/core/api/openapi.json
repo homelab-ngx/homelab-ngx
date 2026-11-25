@@ -20604,7 +20604,7 @@
             "description": "Error"
           }
         },
-        "summary": "The System Settings tiles' badges.",
+        "summary": "The Settings tiles' badges.",
         "tags": [
           "system"
         ]

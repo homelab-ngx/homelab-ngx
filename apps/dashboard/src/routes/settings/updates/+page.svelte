@@ -58,9 +58,9 @@
   const away = $derived(deploying && (!!image.error || !!deploys.error));
 </script>
 
-<svelte:head><title>Updates · System Settings · Homelab-ngx</title></svelte:head>
+<svelte:head><title>Updates · Settings · Homelab-ngx</title></svelte:head>
 
-<p class="text-muted"><a class="link" href="/settings">System Settings</a> /</p>
+<p class="text-muted"><a class="link" href="/settings">Settings</a> /</p>
 <div class="mt-1 flex flex-wrap items-start justify-between gap-2">
   <h1 class="min-w-0 flex-1 text-xl font-semibold text-core">
     <Help label="Updates">

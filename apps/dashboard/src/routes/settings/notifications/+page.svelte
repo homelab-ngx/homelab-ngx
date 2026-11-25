@@ -66,9 +66,9 @@
     act(() => call(api.PUT("/notification-channels/{id}", { ...at(c.id), body: { ...channelInput(channelDraft(c)), enabled: !c.enabled } })));
 </script>
 
-<svelte:head><title>Notifications · System Settings · Homelab-ngx</title></svelte:head>
+<svelte:head><title>Notifications · Settings · Homelab-ngx</title></svelte:head>
 
-<p class="text-muted"><a class="link" href="/settings">System Settings</a> /</p>
+<p class="text-muted"><a class="link" href="/settings">Settings</a> /</p>
 <h1 class="mt-1 text-xl font-semibold">
   <Help label="Notifications">
     Where alerts go when something needs attention. The bell in the header shows what is open and the history.
