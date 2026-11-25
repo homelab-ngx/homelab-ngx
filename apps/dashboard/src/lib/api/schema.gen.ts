@@ -1812,7 +1812,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Stop a stack and remove its routes and network rules. */
+        /** Stop a stack and remove its routes and network rules. Cancels a start that is waiting for health. */
         post: operations["stopStack"];
         delete?: never;
         options?: never;
@@ -4901,6 +4901,10 @@ export interface components {
              * @description The generation to go back to.
              */
             generation?: number;
+        };
+        StackStop: {
+            /** @description Cancel a start that is waiting for health before stopping the stack. */
+            force?: boolean;
         };
         StackUpdate: {
             /** @description Packages changed from the generation before, once built. */
@@ -13239,7 +13243,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["StackStop"];
+            };
+        };
         responses: {
             /** @description Accepted */
             202: {

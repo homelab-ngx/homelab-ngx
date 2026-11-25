@@ -35,6 +35,9 @@ const (
 	opRollback = "rollback"
 )
 
+// errStartCancelled is a start's error when a stop ended its health wait.
+var errStartCancelled = errors.New("cancelled by stop")
+
 // operation is one start, stop, update or rollback of a stack. They take
 // minutes (a build, a boot, a health check), so they run in the background
 // and the API reports the latest one per stack.
@@ -45,6 +48,8 @@ type operation struct {
 	finished time.Time
 	err      string
 	done     chan struct{}
+	// cancelWait stops waitHealthy while start is waiting for health; guarded by s.mu.
+	cancelWait context.CancelFunc
 	// attempt is the stack_updates row of an install, update or rollback;
 	// 0 for anything else. result overrides the outcome finish derives.
 	attempt int64
@@ -170,8 +175,49 @@ func (s *Service) Start(ctx context.Context, name string) (Stack, error) {
 	}, func(ctx context.Context, o *operation) error { return s.start(ctx, o, name) })
 }
 
-// Stop shuts the stack down and takes its routes and rules away.
+// Stop shuts the stack down and takes its routes and rules away. If a start
+// is waiting for the stack to be healthy, Stop cancels that wait first.
 func (s *Service) Stop(ctx context.Context, name string) (Stack, error) {
+	if _, err := s.row(ctx, name); err != nil {
+		return Stack{}, err
+	}
+	for {
+		s.mu.Lock()
+		if s.goingDown {
+			s.mu.Unlock()
+			return Stack{}, shuttingDown()
+		}
+		o := s.ops[name]
+		if o == nil || !o.finished.IsZero() {
+			s.mu.Unlock()
+			break
+		}
+		if o.kind != opStart || o.cancelWait == nil {
+			err := httpx.Conflict("busy", "stack %q is busy with a %s (%s)", name, o.kind, o.phase)
+			s.mu.Unlock()
+			return Stack{}, err
+		}
+		cancel, done := o.cancelWait, o.done
+		o.cancelWait = nil
+		s.mu.Unlock()
+
+		// Flip want_running to 0 while the start still holds the slot, so the
+		// monitor cannot restart the stack in the gap before stop begins.
+		if err := s.st.Queries().SetStackWantRunning(ctx, store.SetStackWantRunningParams{Name: name, Want: 0}); err != nil {
+			s.mu.Lock()
+			if s.ops[name] == o && o.finished.IsZero() {
+				o.cancelWait = cancel
+			}
+			s.mu.Unlock()
+			return Stack{}, err
+		}
+		cancel()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return Stack{}, ctx.Err()
+		}
+	}
 	return s.launch(ctx, name, opStop, nil,
 		func(ctx context.Context, o *operation) error { return s.stop(ctx, o, name) })
 }
@@ -378,7 +424,7 @@ func (s *Service) StartWanted(ctx context.Context) {
 		}
 		err = s.start(ctx, o, r.Name)
 		s.finish(r.Name, o, err)
-		if err != nil && ctx.Err() == nil {
+		if err != nil && ctx.Err() == nil && !errors.Is(err, errStartCancelled) {
 			s.notify(ctx, r.Name, "Stack "+r.Name+" did not start", err.Error())
 		}
 	}
@@ -572,8 +618,20 @@ func (s *Service) start(ctx context.Context, o *operation, name string) error {
 	if err := s.st.Queries().SetStackWantRunning(ctx, store.SetStackWantRunningParams{Name: name, Want: 1}); err != nil {
 		return err
 	}
+	wctx, wcancel := context.WithCancel(ctx)
+	defer wcancel()
+	s.mu.Lock()
+	o.cancelWait = wcancel
+	s.mu.Unlock()
 	s.phase(o, "waiting for it to be healthy")
-	if err := s.waitHealthy(ctx, name, stackAddr(subnet), m.Health); err != nil {
+	err = s.waitHealthy(wctx, name, stackAddr(subnet), m.Health)
+	s.mu.Lock()
+	o.cancelWait = nil
+	s.mu.Unlock()
+	if err != nil {
+		if wctx.Err() != nil && ctx.Err() == nil {
+			return errStartCancelled
+		}
 		return fmt.Errorf("the stack is started but not healthy: %w", err)
 	}
 	s.phase(o, "running generation %d (%s)", g.ID, short(g.Rev))
@@ -1010,6 +1068,10 @@ func (s *Service) monitorOnce(ctx context.Context, fails map[string]int) {
 		} else {
 			err = s.probeStack(ctx, r)
 			giveBack()
+		}
+		if errors.Is(err, errStartCancelled) {
+			delete(fails, name)
+			continue
 		}
 		if ctx.Err() != nil || s.notifier == nil {
 			continue

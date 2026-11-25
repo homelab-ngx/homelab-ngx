@@ -45,6 +45,11 @@ type rollbackIn struct {
 	Body *StackRollback `required:"false"`
 }
 
+type stopIn struct {
+	Name string     `path:"name" doc:"The stack's name, as it was installed."`
+	Body *StackStop `required:"false"`
+}
+
 type variableIn struct {
 	Name string `path:"name" doc:"The stack's name, as it was installed."`
 	Var  string `path:"var" doc:"The variable's name: 1-64 characters of A-Z, 0-9 and '_', starting with a letter."`
@@ -252,8 +257,14 @@ func (h *HTTP) Register(a httpx.APIs) {
 		"Start a stack, building its approved commit first when nothing is built.", http.StatusAccepted),
 		stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Start(ctx, n) }))
 	httpx.Register(a, httpx.ScopeControl, op("stopStack", http.MethodPost, "/stacks/{name}/stop",
-		"Stop a stack and remove its routes and network rules.", http.StatusAccepted),
-		stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Stop(ctx, n) }))
+		"Stop a stack and remove its routes and network rules. Cancels a start that is waiting for health.", http.StatusAccepted),
+		func(ctx context.Context, in *stopIn) (*stackBody, error) {
+			s, err := h.svc.Stop(ctx, in.Name)
+			if err != nil {
+				return nil, err
+			}
+			return &stackBody{Body: s}, nil
+		})
 	httpx.Register(a, httpx.ScopeOperator, op("freezeStack", http.MethodPost, "/stacks/{name}/freeze",
 		"Freeze a running stack: its processes stop where they are and keep their memory, and its addresses stop answering until it is thawed. A reboot loses what they held. Refused with stack_not_running, and with busy while an operation runs.", 0),
 		stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Freeze(ctx, n) }))

@@ -279,7 +279,23 @@ func stacksCmd() *cli.Command {
 				},
 			},
 			stackOpCmd("start", "Start a stack, building its approved commit first when nothing is built", nil),
-			stackOpCmd("stop", "Stop a stack and remove its routes and network rules", nil),
+			{
+				Name:      "stop",
+				Usage:     "Stop a stack and remove its routes and network rules",
+				ArgsUsage: "<name>",
+				Flags:     []cli.Flag{&cli.BoolFlag{Name: "force", Usage: "cancel a start waiting for health and stop the stack"}},
+				Action: func(c *cli.Context) error {
+					args, flags := argsAndBools(c, "force")
+					if len(args) < 1 {
+						return fmt.Errorf("usage: homelab stacks stop <name> [--force]")
+					}
+					var in any
+					if flags["force"] {
+						in = stacks.StackStop{Force: true}
+					}
+					return runStackOp(c, "stop", args[0], in)
+				},
+			},
 			stackFreezeCmd("freeze", "Freeze a running stack: its processes stop where they are and keep their memory until it is thawed; a reboot loses it"),
 			stackFreezeCmd("thaw", "Thaw a frozen stack: its processes carry on where they stopped"),
 			{
@@ -746,52 +762,55 @@ func stackOpCmd(verb, usage string, body func(*cli.Context) any) *cli.Command {
 			if err := requireArgs(c, 1, "homelab stacks "+verb+" <name>"); err != nil {
 				return err
 			}
-			name := c.Args().First()
 			var in any
 			if body != nil {
 				in = body(c)
 			}
-			s, err := call[stacks.Stack](c.Context, http.MethodPost, stackPath(name, "/"+verb), in)
-			if err != nil {
-				return err
-			}
-			if s == nil || s.Operation == nil {
-				return errors.New("the daemon did not report the operation it started")
-			}
-			started, phase := s.Operation.StartedAt, ""
-			for {
-				op := s.Operation
-				if op == nil || !op.StartedAt.Equal(started) {
-					return fmt.Errorf("lost track of the %s: the daemon restarted or another operation replaced it", verb)
-				}
-				if op.Phase != phase && !jsonFlag(c) {
-					phase = op.Phase
-					fmt.Fprintf(os.Stderr, "  %s\n", phase)
-				}
-				if op.FinishedAt != nil {
-					break
-				}
-				time.Sleep(stackOpPoll)
-				next, err := getStack(c, name)
-				if err != nil {
-					return err
-				}
-				s = &next
-			}
-			if jsonFlag(c) {
-				if err := printJSON(s); err != nil {
-					return err
-				}
-			}
-			if e := s.Operation.Error; e != "" {
-				return fmt.Errorf("%s %s: %s", verb, name, e)
-			}
-			if !jsonFlag(c) {
-				fmt.Printf("✔ %s: %s.\n", name, s.Operation.Phase)
-			}
-			return nil
+			return runStackOp(c, verb, c.Args().First(), in)
 		},
 	}
+}
+
+func runStackOp(c *cli.Context, verb, name string, in any) error {
+	s, err := call[stacks.Stack](c.Context, http.MethodPost, stackPath(name, "/"+verb), in)
+	if err != nil {
+		return err
+	}
+	if s == nil || s.Operation == nil {
+		return errors.New("the daemon did not report the operation it started")
+	}
+	started, phase := s.Operation.StartedAt, ""
+	for {
+		op := s.Operation
+		if op == nil || !op.StartedAt.Equal(started) {
+			return fmt.Errorf("lost track of the %s: the daemon restarted or another operation replaced it", verb)
+		}
+		if op.Phase != phase && !jsonFlag(c) {
+			phase = op.Phase
+			fmt.Fprintf(os.Stderr, "  %s\n", phase)
+		}
+		if op.FinishedAt != nil {
+			break
+		}
+		time.Sleep(stackOpPoll)
+		next, err := getStack(c, name)
+		if err != nil {
+			return err
+		}
+		s = &next
+	}
+	if jsonFlag(c) {
+		if err := printJSON(s); err != nil {
+			return err
+		}
+	}
+	if e := s.Operation.Error; e != "" {
+		return fmt.Errorf("%s %s: %s", verb, name, e)
+	}
+	if !jsonFlag(c) {
+		fmt.Printf("✔ %s: %s.\n", name, s.Operation.Phase)
+	}
+	return nil
 }
 
 // stackFreezeCmd freezes or thaws a stack. Both answer at once.

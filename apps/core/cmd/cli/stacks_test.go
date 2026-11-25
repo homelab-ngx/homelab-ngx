@@ -354,3 +354,54 @@ func TestStackVarSetReadOnlyKeepsTheFolder(t *testing.T) {
 		t.Errorf("sent %+v", got)
 	}
 }
+
+func TestStackStopForce(t *testing.T) {
+	stackOpPoll = time.Millisecond
+	for _, tc := range []struct {
+		args      []string
+		wantForce bool
+	}{
+		{[]string{"stacks", "stop", "immich"}, false},
+		{[]string{"stacks", "stop", "immich", "--force"}, true},
+		{[]string{"stacks", "stop", "--force", "immich"}, true},
+	} {
+		var body []byte
+		var reads atomic.Int32
+		mux := http.NewServeMux()
+		mux.HandleFunc("POST /api/stacks/immich/stop", func(w http.ResponseWriter, r *http.Request) {
+			var err error
+			body, err = io.ReadAll(r.Body)
+			if err != nil {
+				t.Error(err)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusAccepted)
+			fmt.Fprint(w, stackJSON(`{"kind":"stop","phase":"stopping the container","started_at":"2026-11-15T22:00:00Z"}`))
+		})
+		mux.HandleFunc("GET /api/stacks/immich", func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if reads.Add(1) == 1 {
+				fmt.Fprint(w, stackJSON(`{"kind":"stop","phase":"stopping the container","started_at":"2026-11-15T22:00:00Z"}`))
+				return
+			}
+			fmt.Fprint(w, stackJSON(`{"kind":"stop","phase":"stopped","started_at":"2026-11-15T22:00:00Z","finished_at":"2026-11-15T22:00:05Z"}`))
+		})
+		serve(t, mux)
+		out, err := captureStdout(t, func() error { return runApp(t, tc.args...) })
+		if err != nil {
+			t.Fatalf("%v: %v", tc.args, err)
+		}
+		if !strings.Contains(out, "stopped") {
+			t.Errorf("%v: stdout = %q", tc.args, out)
+		}
+		var req stacks.StackStop
+		if len(body) > 0 {
+			if err := json.Unmarshal(body, &req); err != nil {
+				t.Fatalf("%v: unmarshal body %q: %v", tc.args, body, err)
+			}
+		}
+		if req.Force != tc.wantForce {
+			t.Errorf("%v: force = %v, want %v (body=%q)", tc.args, req.Force, tc.wantForce, body)
+		}
+	}
+}

@@ -707,6 +707,12 @@ type StackRollback struct {
 	Generation int `json:"generation,omitempty" doc:"The generation to go back to."`
 }
 
+// StackStop is the optional body of stopStack.
+type StackStop struct {
+	// Force cancels a start that is waiting for health before stopping the stack.
+	Force bool `json:"force,omitempty" doc:"Cancel a start that is waiting for health before stopping the stack."`
+}
+
 // StackUpdateAll is the answer of updateAllStacks.
 type StackUpdateAll struct {
 	// Queued The stacks that will be updated, in order.

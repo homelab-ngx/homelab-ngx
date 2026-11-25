@@ -1187,3 +1187,43 @@ func TestStackLinksAreTheDaemons(t *testing.T) {
 		t.Error("the networkd file was not written again")
 	}
 }
+
+func TestStopCancelsStartWaitingForHealth(t *testing.T) {
+	t.Parallel()
+	svc, _, h := newRuntime(t)
+	ctx := context.Background()
+	svc.healthTimeout = time.Minute
+	svc.healthEvery = 5 * time.Millisecond
+	svc.probe = func(context.Context, string) error { return errors.New("still down") }
+
+	if _, err := svc.Start(ctx, "immich"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if v := svc.operationView("immich"); v != nil && v.Phase == "waiting for it to be healthy" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("start did not reach health wait; view = %+v", svc.operationView("immich"))
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	if _, err := svc.Stop(ctx, "immich"); err != nil {
+		t.Fatalf("Stop during health wait: %v", err)
+	}
+	s := waitIdle(t, svc, "immich")
+	if s.Running || s.WantRunning {
+		t.Fatalf("after stop: running=%v want_running=%v", s.Running, s.WantRunning)
+	}
+	if s.Operation == nil || s.Operation.Kind != "stop" || s.Operation.Phase != "stopped" || s.Operation.Error != "" {
+		t.Fatalf("operation = %+v", s.Operation)
+	}
+	if len(h.CallsMatching("systemctl", "stop", unitName("immich"))) == 0 {
+		t.Error("systemctl stop was not called")
+	}
+	if op := storedOp(t, svc); op != "/" {
+		t.Errorf("stored op = %q, want /", op)
+	}
+}

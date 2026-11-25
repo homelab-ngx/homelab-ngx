@@ -641,6 +641,9 @@ func (s *Service) waitHealthy(ctx context.Context, name, addr string, h Health) 
 		if err == nil {
 			return nil
 		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		if !s.now().Before(deadline) {
 			return err
 		}

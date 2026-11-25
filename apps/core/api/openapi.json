@@ -7104,6 +7104,16 @@
         },
         "type": "object"
       },
+      "StackStop": {
+        "additionalProperties": false,
+        "properties": {
+          "force": {
+            "description": "Cancel a start that is waiting for health before stopping the stack.",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "StackUpdate": {
         "additionalProperties": false,
         "properties": {
@@ -22370,6 +22380,15 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StackStop"
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "content": {
@@ -22420,7 +22439,7 @@
             "description": "Error"
           }
         },
-        "summary": "Stop a stack and remove its routes and network rules.",
+        "summary": "Stop a stack and remove its routes and network rules. Cancels a start that is waiting for health.",
         "tags": [
           "stacks"
         ]
