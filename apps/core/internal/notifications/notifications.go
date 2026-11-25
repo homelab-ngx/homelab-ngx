@@ -99,7 +99,7 @@ func (n *Notifier) targets(ctx context.Context) ([]Target, error) {
 // fails delivery.
 func (n *Notifier) Send(ctx context.Context, m Message) (string, error) {
 	channel, attempts, err := n.deliver(ctx, m)
-	n.record(ctx, Change{Entries: []Entry{n.entry(KindSent, "", m, attempts)}}, len(attempts))
+	n.record(ctx, Change{Entries: []Entry{n.entry(KindSent, m.Key, m, attempts)}}, len(attempts))
 	return channel, err
 }
 

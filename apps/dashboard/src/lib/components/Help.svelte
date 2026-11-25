@@ -21,7 +21,7 @@
      so the label can sit in a heading; it takes a full row in a flex parent. -->
 <button
   type="button"
-  class="cursor-help rounded-sm text-left decoration-muted decoration-dotted underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [letter-spacing:inherit] [text-transform:inherit] {cls}"
+  class="cursor-help rounded-sm text-left underline decoration-muted/45 decoration-dotted underline-offset-4 hover:decoration-muted focus-visible:decoration-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent [letter-spacing:inherit] [text-transform:inherit] {cls}"
   aria-expanded={open}
   aria-controls={open ? id : undefined}
   onclick={() => (flipped = !flipped)}>{label}</button

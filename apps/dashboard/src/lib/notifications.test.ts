@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attention, channelDraft, channelInput, channelProblem, channelState, channelWhere, delivery, detail, failingOf, kindTone, openOf, type Channel, type Entry, type Snapshot } from "./notifications.ts";
+import { attention, channelDraft, channelInput, channelProblem, channelState, channelWhere, delivery, detail, failingOf, kindTone, notificationHref, openOf, type Channel, type Entry, type Snapshot } from "./notifications.ts";
 
 const ntfy: Channel = { id: 1, name: "Phone", kind: "ntfy", enabled: true, server: "https://ntfy.sh", topic: "homelab", has_token: false, created_at: "" };
 const hook: Channel = { id: 2, name: "Hub", kind: "webhook", enabled: false, url: "https://192.0.2.1:8788/homelab/notify", cert_sha256: "a".repeat(64), has_token: true, created_at: "" };
@@ -68,5 +68,27 @@ describe("the tray", () => {
     expect(delivery(entry({ deliveries: [{ channel: "Phone", ok: false }, { channel: "Hub", ok: true }] as Entry["deliveries"] }))).toBe("Phone failed");
     expect(detail(entry({ title: "Disk", body: "Disk · 12 bad sectors\nmore" }))).toBe("12 bad sectors");
     expect(detail(entry({ title: "Disk", body: "Disk" }))).toBe("");
+  });
+
+  it("maps notification keys and titles to target pages", () => {
+    expect(notificationHref("stack:media")).toBe("/stacks/media");
+    expect(notificationHref("stack-update:home")).toBe("/stacks/home");
+    expect(notificationHref("backup:4")).toBe("/backups/4");
+    expect(notificationHref("backup-stale:7")).toBe("/backups/7");
+    expect(notificationHref("backup-coverage:home")).toBe("/backups");
+    expect(notificationHref("disk:sdb:smart")).toBe("/storage");
+    expect(notificationHref("image-release:0.4.3")).toBe("/settings/updates");
+    expect(notificationHref("image-boot:check")).toBe("/settings/updates");
+    expect(notificationHref("churn:caddy.service")).toBe("/settings/logs?unit=caddy");
+    expect(notificationHref("unit:homelab-health-audit.service")).toBe("/settings/logs?unit=homelab-health-audit");
+    expect(notificationHref("daemon-crash")).toBe("/settings/logs?unit=homelab-daemon");
+    expect(notificationHref("audit:smart")).toBe("/storage");
+    expect(notificationHref("audit:cloudflare-tunnel")).toBe("/settings/tunnel");
+    expect(notificationHref("audit:db-snapshot")).toBe("/backups");
+    expect(notificationHref(null, "Security audit ready")).toBe("/settings/security");
+    expect(notificationHref(null, "Updated to 0.2.5")).toBe("/settings/updates");
+    expect(notificationHref(null, "Not backed up: home")).toBe("/backups");
+    expect(notificationHref(null, "Stack media did not start")).toBe("/stacks/media");
+    expect(notificationHref(null, "Unrelated message")).toBeNull();
   });
 });

@@ -133,3 +133,40 @@ export function detail(e: Entry): string {
   const prefix = `${e.title} · `;
   return first.startsWith(prefix) ? first.slice(prefix.length) : first;
 }
+
+const AUDIT_HREF: Record<string, string> = {
+  disk: "/storage",
+  smart: "/storage",
+  daemon: "/settings/logs?unit=homelab-daemon",
+  caddy: "/settings/logs?unit=caddy",
+  "systemd-units": "/settings/logs",
+  "cloudflare-tunnel": "/settings/tunnel",
+  "db-snapshot": "/backups",
+};
+
+/** Where a notification row points in the dashboard, or null when no page fits. */
+export function notificationHref(key: string | null | undefined, title = ""): string | null {
+  const k = key?.trim() ?? "";
+  if (k) {
+    if (k.startsWith("stack:")) return `/stacks/${encodeURIComponent(k.slice("stack:".length))}`;
+    if (k.startsWith("stack-update:")) return `/stacks/${encodeURIComponent(k.slice("stack-update:".length))}`;
+    if (k.startsWith("backup:")) return `/backups/${encodeURIComponent(k.slice("backup:".length))}`;
+    if (k.startsWith("backup-stale:")) return `/backups/${encodeURIComponent(k.slice("backup-stale:".length))}`;
+    if (k.startsWith("backup-coverage:")) return "/backups";
+    if (k.startsWith("disk:")) return "/storage";
+    if (k.startsWith("image-release:") || k.startsWith("image-boot:")) return "/settings/updates";
+    if (k.startsWith("churn:") || k.startsWith("unit:")) {
+      const unit = k.slice(k.indexOf(":") + 1).replace(/\.service$/, "");
+      return unit ? `/settings/logs?unit=${encodeURIComponent(unit)}` : "/settings/logs";
+    }
+    if (k === "daemon-crash") return "/settings/logs?unit=homelab-daemon";
+    if (k.startsWith("audit:")) return AUDIT_HREF[k.slice("audit:".length)] ?? null;
+  }
+  if (/^Security audit\b/.test(title)) return "/settings/security";
+  if (/^Updated to\b/.test(title)) return "/settings/updates";
+  if (/^Not backed up:/.test(title)) return "/backups";
+  if (/^Daemon recovered from crash\b/.test(title)) return "/settings/logs?unit=homelab-daemon";
+  const m = /^Stack ([a-z0-9-]+)(?:\b|:)/.exec(title);
+  if (m) return `/stacks/${encodeURIComponent(m[1]!)}`;
+  return null;
+}

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ServiceInfo, Stack } from "../api/client.ts";
 import StackGrid from "./StackGrid.svelte";
@@ -6,8 +6,17 @@ import StackGrid from "./StackGrid.svelte";
 const unit = (name: string, active_state: string, stack = "media"): ServiceInfo =>
   ({ name, stack, active_state, sub_state: "", type: "Native", description: "", unit_name: name + ".service", started_at: null }) as ServiceInfo;
 
-const manifest = (icon?: string) => ({ version: 9, name: "x", routes: [], storage: [], egress: [], gpu: false, health: { units: [] }, ...(icon ? { icon } : {}) });
-const stack = (name: string, extra: Partial<Stack> = {}, icon?: string): Stack =>
+const manifest = (icon?: string, hosts: string[] = []) => ({
+  version: 9,
+  name: "x",
+  routes: hosts.map((host) => ({ host, port: 80 })),
+  storage: [],
+  egress: [],
+  gpu: false,
+  health: { units: [] },
+  ...(icon ? { icon } : {}),
+});
+const stack = (name: string, extra: Partial<Stack> = {}, icon?: string, hosts: string[] = []): Stack =>
   ({
     name,
     source: "github:o/" + name,
@@ -15,8 +24,8 @@ const stack = (name: string, extra: Partial<Stack> = {}, icon?: string): Stack =
     want_running: true,
     generation: 2,
     generations: [{ id: 2, rev: "abcdef0123", built_at: "", failed: false }],
-    fetched: { rev: "abcdef0123", url: "", at: "", manifest: manifest(icon) },
-    approved: { rev: "abcdef0123", url: "", at: "", manifest: manifest(icon) },
+    fetched: { rev: "abcdef0123", url: "", at: "", manifest: manifest(icon, hosts) },
+    approved: { rev: "abcdef0123", url: "", at: "", manifest: manifest(icon, hosts) },
     update_state: "up_to_date",
     commits: [],
     new_grants: [],
@@ -62,5 +71,26 @@ describe("StackGrid", () => {
     render(StackGrid, { props: { stacks, services: [], view: "minimal" } });
     expect(within(card("email")).getByText("update ready")).toBeTruthy();
     expect(within(card("media")).getByText("needs approval")).toBeTruthy();
+  });
+
+  it("adds a direct external link for one approved route and a route menu for several", async () => {
+    const stacks = [
+      stack("bare", {}),
+      stack("photos", {}, undefined, ["photos.example.com"]),
+      stack("media", {}, undefined, ["movies.example.com", "tv.example.com"]),
+    ];
+    render(StackGrid, { props: { stacks, services: [], view: "minimal" } });
+
+    expect(card("photos").getAttribute("href")).toBe("/stacks/photos");
+    const direct = screen.getByRole("link", { name: "Open web UI" });
+    expect(direct.getAttribute("href")).toBe("https://photos.example.com");
+    expect(direct.getAttribute("target")).toBe("_blank");
+
+    const trigger = screen.getByRole("button", { name: "Open web routes for media" });
+    await fireEvent.click(trigger);
+    const movies = await screen.findByRole("menuitem", { name: "movies.example.com" });
+    const tv = screen.getByRole("menuitem", { name: "tv.example.com" });
+    expect(movies.getAttribute("href")).toBe("https://movies.example.com");
+    expect(tv.getAttribute("href")).toBe("https://tv.example.com");
   });
 });

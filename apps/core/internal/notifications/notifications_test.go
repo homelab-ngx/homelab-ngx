@@ -384,3 +384,18 @@ func TestApplyInvalid(t *testing.T) {
 		}
 	}
 }
+
+func TestSendPreservesKeyInLog(t *testing.T) {
+	t.Parallel()
+	srv, _ := newHook(t, 200)
+	now := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
+	n := testNotifier(t, srv.URL, &now)
+	ctx := context.Background()
+	if _, err := n.Send(ctx, Message{Severity: Alert, Key: "stack:media", Title: "Stack media did not start"}); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := n.Log(ctx, 0, 10)
+	if err != nil || len(entries) != 1 || entries[0].Key != "stack:media" {
+		t.Fatalf("entries = %+v, err %v", entries, err)
+	}
+}

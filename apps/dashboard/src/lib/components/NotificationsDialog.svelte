@@ -1,12 +1,12 @@
 <script lang="ts">
-  import { X } from "@lucide/svelte";
+  import { ChevronDown, X } from "@lucide/svelte";
   import { createInfiniteQuery } from "@tanstack/svelte-query";
   import { Dialog } from "bits-ui";
   import { api, call, describe } from "#lib/api/client.ts";
   import AskButton from "#lib/components/ask/AskButton.svelte";
   import Pill from "#lib/components/Pill.svelte";
   import { ago, stamp } from "#lib/format.ts";
-  import { delivery, detail, failingOf, kindTone, LOG_PAGE, notificationKeys, openOf, type Entry, type Snapshot } from "#lib/notifications.ts";
+  import { delivery, detail, failingOf, kindTone, LOG_PAGE, notificationHref, notificationKeys, openOf, type Entry, type Snapshot } from "#lib/notifications.ts";
 
   interface Props {
     /** The header's snapshot query data: the tray shows what the bell counts. */
@@ -17,6 +17,8 @@
 
   const failing = $derived(failingOf(snapshot));
   const open = $derived(openOf(snapshot));
+  let expandedOpen = $state<Record<string, boolean>>({});
+  let expandedLog = $state<Record<number, boolean>>({});
 
   /** The persisted log (90 days), newest first, paged by id. It is read only while the tray is open. */
   const log = createInfiniteQuery(() => ({
@@ -70,12 +72,38 @@
           {:else}
             <ul class="divide-y divide-line border-t border-line">
               {#each open as p (p.key)}
-                <li class="flex items-center gap-2 px-4 py-2">
-                  <Pill tone="bad">open</Pill>
-                  <span class="min-w-0 flex-1 truncate">{p.title}</span>
-                  <span class="shrink-0 text-xs text-muted" title={stamp(p.opened_at)}>since {ago(p.opened_at)}</span>
-                  {#if entryOf(p.key)}
-                    <AskButton small title={p.title} subject={{ kind: "notification", ref: String(entryOf(p.key)!.id) }} />
+                {@const href = notificationHref(p.key, p.title)}
+                {@const entry = entryOf(p.key)}
+                {@const expanded = !!expandedOpen[p.key]}
+                <li class="px-4 py-2">
+                  <div class="flex items-center gap-2">
+                    <Pill tone="bad">open</Pill>
+                    {#if href}
+                      <a class="link min-w-0 flex-1 {expanded ? 'break-words' : 'truncate'}" {href} onclick={onClose}>{p.title}</a>
+                    {:else}
+                      <span class="min-w-0 flex-1 {expanded ? 'break-words' : 'truncate'}">{p.title}</span>
+                    {/if}
+                    <span class="shrink-0 text-xs text-muted" title={stamp(p.opened_at)}>since {ago(p.opened_at)}</span>
+                    <button
+                      type="button"
+                      class="btn btn-sm px-1.5"
+                      aria-expanded={expanded}
+                      aria-label={expanded ? "Collapse notification" : "Expand notification"}
+                      onclick={() => (expandedOpen[p.key] = !expanded)}
+                    >
+                      <ChevronDown class="size-3.5 transition-transform {expanded ? 'rotate-180' : ''}" aria-hidden="true" />
+                    </button>
+                    {#if entry}
+                      <AskButton small title={p.title} subject={{ kind: "notification", ref: String(entry.id) }} />
+                    {/if}
+                  </div>
+                  {#if expanded}
+                    <div class="mt-2 rounded-md bg-sunken px-2.5 py-2 text-xs whitespace-pre-wrap break-words text-muted">
+                      <p class="text-fg">{p.title}</p>
+                      {#if entry?.body && entry.body.trim() !== p.title.trim()}
+                        <p class="mt-1">{entry.body}</p>
+                      {/if}
+                    </div>
                   {/if}
                 </li>
               {/each}
@@ -96,16 +124,38 @@
               {#each entries as e (e.id)}
                 {@const failed = delivery(e)}
                 {@const more = detail(e)}
-                <li class="flex items-start gap-2 px-4 py-2">
-                  <span class="min-w-0 flex-1">
-                    <span class="block truncate">{e.title}</span>
-                    <span class="block truncate text-xs text-muted">
-                      <time datetime={e.at}>{stamp(e.at)}</time>{#if failed}&nbsp;·&nbsp;<span class={failed === "not sent" ? "" : "text-bad"}>{failed}</span>{/if}{#if more}&nbsp;·&nbsp;{more}{/if}
-                    </span>
-                  </span>
-                  <span class="w-20 shrink-0"><Pill tone={kindTone(e)}>{e.kind}</Pill></span>
-                  {#if kindTone(e) === "bad" || kindTone(e) === "warn"}
-                    <AskButton small title={e.title} subject={{ kind: "notification", ref: String(e.id) }} />
+                {@const href = notificationHref(e.key, e.title)}
+                {@const expanded = !!expandedLog[e.id]}
+                {@const hasBody = Boolean(e.body.trim() && e.body.trim() !== e.title.trim())}
+                {@const errors = e.deliveries.filter((d) => !d.ok && d.error)}
+                <li class="px-4 py-2">
+                  <div class="flex items-start gap-2">
+                    <button
+                      type="button"
+                      class="min-w-0 flex-1 rounded-sm text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                      aria-expanded={expanded}
+                      onclick={() => (expandedLog[e.id] = !expanded)}
+                    >
+                      <span class="block {expanded ? 'font-medium break-words' : 'truncate'}">{e.title}</span>
+                      <span class="block text-xs text-muted {expanded ? 'break-words' : 'truncate'}">
+                        <time datetime={e.at}>{stamp(e.at)}</time>{#if failed}&nbsp;·&nbsp;<span class={failed === "not sent" ? "" : "text-bad"}>{failed}</span>{/if}{#if !expanded && more}&nbsp;·&nbsp;{more}{/if}
+                      </span>
+                    </button>
+                    <span class="w-20 shrink-0"><Pill tone={kindTone(e)}>{e.kind}</Pill></span>
+                    {#if href}
+                      <a class="link shrink-0 text-xs" {href} onclick={onClose}>Open</a>
+                    {/if}
+                    {#if kindTone(e) === "bad" || kindTone(e) === "warn"}
+                      <AskButton small title={e.title} subject={{ kind: "notification", ref: String(e.id) }} />
+                    {/if}
+                  </div>
+                  {#if expanded && (hasBody || errors.length > 0)}
+                    <div class="mt-2 rounded-md bg-sunken px-2.5 py-2 text-xs whitespace-pre-wrap break-words text-muted">
+                      {#if hasBody}<p>{e.body}</p>{/if}
+                      {#each errors as d (d.channel)}
+                        <p class="mt-1 text-bad">{d.channel}: {d.error}</p>
+                      {/each}
+                    </div>
                   {/if}
                 </li>
               {/each}
