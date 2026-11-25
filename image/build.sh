@@ -124,7 +124,9 @@ for try in 1 2 3; do
     rm -f "$log"
     exit 1
   fi
-  echo "a package download failed (try $try of 3); building again"
+  wait=$((try * 15))
+  echo "a package download failed (try $try of 3); waiting ${wait}s before trying again"
+  sleep "$wait"
 done
 rm -f "$log"
 $sudo rm -rf "$tree" "$work"
