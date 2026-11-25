@@ -266,10 +266,10 @@ func hostSteps(s *S) {
 			if err != nil {
 				continue
 			}
-			running = st.Running
-			if e := sAt(v, "operation.error"); !running && e != "" {
+			if e := sAt(v, "operation.error"); e != "" {
 				s.die("stack failed: %s", e)
 			}
+			running = st.Running && (st.Operation == nil || st.Operation.FinishedAt != nil)
 		}
 		if !running {
 			s.die("the stack did not start in 10 minutes")

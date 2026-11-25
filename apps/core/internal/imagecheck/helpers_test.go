@@ -789,7 +789,7 @@ func (s *S) stackRunning(limit time.Duration) time.Duration {
 	start := time.Now()
 	for {
 		st, _, err := s.stack()
-		if err == nil && st.Running {
+		if err == nil && st.Running && (st.Operation == nil || st.Operation.FinishedAt != nil) {
 			return time.Since(start).Round(time.Second)
 		}
 		if err == nil && st.Operation != nil && st.Operation.Error != "" {
@@ -974,7 +974,7 @@ func (s *S) stackLongName(pool string) {
 			s.die("%s failed: %s", name, e)
 		}
 		addr = sAt(v, "address")
-		return bAt(v, "running") && addr != ""
+		return bAt(v, "running") && addr != "" && (at(v, "operation") == nil || at(v, "operation.finished_at") != nil)
 	}) {
 		s.die("%s did not start in 10 minutes", name)
 	}
@@ -993,7 +993,10 @@ func (s *S) stackLongName(pool string) {
 		s.die("site no longer has ve-site")
 	}
 	s.ask("POST", "stacks/"+name+"/stop", nil, "stop refused")
-	if !s.until(2*time.Minute, func() bool { return !bAt(s.getJ("stacks/"+name), "running") }) {
+	if !s.until(2*time.Minute, func() bool {
+		v := s.getJ("stacks/" + name)
+		return !bAt(v, "running") && (at(v, "operation") == nil || at(v, "operation.finished_at") != nil)
+	}) {
 		s.die("%s did not stop", name)
 	}
 	s.ask("DELETE", "stacks/"+name, nil, "removal refused")
