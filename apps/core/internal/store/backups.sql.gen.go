@@ -53,6 +53,15 @@ func (q *Queries) DeleteBackupDestination(ctx context.Context, id int64) error {
 	return err
 }
 
+const deleteBackupPreview = `-- name: DeleteBackupPreview :exec
+DELETE FROM backup_previews WHERE backup_id = ?
+`
+
+func (q *Queries) DeleteBackupPreview(ctx context.Context, backupID int64) error {
+	_, err := q.db.ExecContext(ctx, deleteBackupPreview, backupID)
+	return err
+}
+
 const deleteBackupRunItems = `-- name: DeleteBackupRunItems :exec
 DELETE FROM backup_run_items WHERE run_id = ?
 `
@@ -77,6 +86,29 @@ DELETE FROM backup_targets WHERE backup_id = ?
 
 func (q *Queries) DeleteBackupTargets(ctx context.Context, backupID int64) error {
 	_, err := q.db.ExecContext(ctx, deleteBackupTargets, backupID)
+	return err
+}
+
+const finishBackupPreview = `-- name: FinishBackupPreview :exec
+UPDATE backup_previews SET finished_at = ?, result = ?, error = ?, items = ? WHERE backup_id = ?
+`
+
+type FinishBackupPreviewParams struct {
+	FinishedAt *int64
+	Result     string
+	Error      string
+	Items      string
+	BackupID   int64
+}
+
+func (q *Queries) FinishBackupPreview(ctx context.Context, arg FinishBackupPreviewParams) error {
+	_, err := q.db.ExecContext(ctx, finishBackupPreview,
+		arg.FinishedAt,
+		arg.Result,
+		arg.Error,
+		arg.Items,
+		arg.BackupID,
+	)
 	return err
 }
 
@@ -147,6 +179,24 @@ func (q *Queries) GetBackupDestination(ctx context.Context, id int64) (BackupDes
 		&i.PasswordConfirmedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getBackupPreview = `-- name: GetBackupPreview :one
+SELECT backup_id, started_at, finished_at, result, error, items FROM backup_previews WHERE backup_id = ?
+`
+
+func (q *Queries) GetBackupPreview(ctx context.Context, backupID int64) (BackupPreview, error) {
+	row := q.db.QueryRowContext(ctx, getBackupPreview, backupID)
+	var i BackupPreview
+	err := row.Scan(
+		&i.BackupID,
+		&i.StartedAt,
+		&i.FinishedAt,
+		&i.Result,
+		&i.Error,
+		&i.Items,
 	)
 	return i, err
 }
@@ -805,6 +855,40 @@ func (q *Queries) RecentBackupRuns(ctx context.Context, startedAt int64) ([]Back
 	return items, nil
 }
 
+const runningBackupPreviews = `-- name: RunningBackupPreviews :many
+SELECT backup_id, started_at, finished_at, result, error, items FROM backup_previews WHERE result = 'running' ORDER BY backup_id
+`
+
+func (q *Queries) RunningBackupPreviews(ctx context.Context) ([]BackupPreview, error) {
+	rows, err := q.db.QueryContext(ctx, runningBackupPreviews)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []BackupPreview
+	for rows.Next() {
+		var i BackupPreview
+		if err := rows.Scan(
+			&i.BackupID,
+			&i.StartedAt,
+			&i.FinishedAt,
+			&i.Result,
+			&i.Error,
+			&i.Items,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const runningBackupRuns = `-- name: RunningBackupRuns :many
 SELECT id, backup_id, backup_name, "trigger", started_at, finished_at, result, error, files, bytes FROM backup_runs WHERE result = 'running' ORDER BY backup_id, started_at DESC, id DESC
 `
@@ -842,6 +926,25 @@ func (q *Queries) RunningBackupRuns(ctx context.Context) ([]BackupRun, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+const startBackupPreview = `-- name: StartBackupPreview :exec
+
+INSERT INTO backup_previews (backup_id, started_at, result) VALUES (?, ?, 'running')
+ON CONFLICT (backup_id) DO UPDATE SET
+    started_at = excluded.started_at, finished_at = NULL, result = 'running', error = '', items = '[]'
+`
+
+type StartBackupPreviewParams struct {
+	BackupID  int64
+	StartedAt int64
+}
+
+// ---- previews ----
+// StartBackupPreview replaces the backup's preview with one in flight.
+func (q *Queries) StartBackupPreview(ctx context.Context, arg StartBackupPreviewParams) error {
+	_, err := q.db.ExecContext(ctx, startBackupPreview, arg.BackupID, arg.StartedAt)
+	return err
 }
 
 const updateBackup = `-- name: UpdateBackup :exec

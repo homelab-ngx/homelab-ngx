@@ -130,3 +130,23 @@ DELETE FROM backup_run_items WHERE run_id = ?;
 INSERT INTO backup_run_items (run_id, kind, destination_id, destination_name, label, path, position, result,
     files, bytes, started_at, finished_at, error, note)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+
+-- ---- previews ----
+
+-- StartBackupPreview replaces the backup's preview with one in flight.
+-- name: StartBackupPreview :exec
+INSERT INTO backup_previews (backup_id, started_at, result) VALUES (?, ?, 'running')
+ON CONFLICT (backup_id) DO UPDATE SET
+    started_at = excluded.started_at, finished_at = NULL, result = 'running', error = '', items = '[]';
+
+-- name: FinishBackupPreview :exec
+UPDATE backup_previews SET finished_at = ?, result = ?, error = ?, items = ? WHERE backup_id = ?;
+
+-- name: GetBackupPreview :one
+SELECT * FROM backup_previews WHERE backup_id = ?;
+
+-- name: RunningBackupPreviews :many
+SELECT * FROM backup_previews WHERE result = 'running' ORDER BY backup_id;
+
+-- name: DeleteBackupPreview :exec
+DELETE FROM backup_previews WHERE backup_id = ?;

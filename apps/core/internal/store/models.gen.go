@@ -45,6 +45,15 @@ type BackupDestination struct {
 	UpdatedAt           int64
 }
 
+type BackupPreview struct {
+	BackupID   int64
+	StartedAt  int64
+	FinishedAt *int64
+	Result     string
+	Error      string
+	Items      string
+}
+
 type BackupRun struct {
 	ID         int64
 	BackupID   *int64
