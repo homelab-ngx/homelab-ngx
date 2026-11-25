@@ -304,11 +304,28 @@ func DashboardHost(d Domain) string {
 	if d.Domain == "" {
 		return ""
 	}
-	label := d.DashboardLabel
-	if label == "" {
-		label = "homelab"
+	return dashboardLabel(d) + "." + d.Domain
+}
+
+func dashboardLabel(d Domain) string {
+	if d.DashboardLabel == "" {
+		return "homelab"
 	}
-	return label + "." + d.Domain
+	return strings.ToLower(strings.TrimSpace(d.DashboardLabel))
+}
+
+// isDashboardTarget reports whether a tunnel route target names the dashboard
+// itself, either as its label under the domain or as its full host name.
+func isDashboardTarget(target string, d Domain) bool {
+	t := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(target)), ".")
+	if t == "" {
+		return false
+	}
+	if !strings.Contains(t, ".") {
+		return t == dashboardLabel(d)
+	}
+	h := DashboardHost(d)
+	return h != "" && t == strings.ToLower(h)
 }
 
 // RouteTarget is the private host name a tunnel route serves: a label under
@@ -536,6 +553,19 @@ func (s *Service) SetDomain(ctx context.Context, in DomainSet) (HostSettings, er
 	return s.change(ctx, func(rs map[string]row) error {
 		var old Domain
 		_ = json.Unmarshal(rs["domain"].value, &old)
+		var t Tunnel
+		if r, ok := rs["tunnel"]; ok {
+			_ = json.Unmarshal(r.value, &t)
+		}
+		for _, rt := range t.Routes {
+			if isDashboardTarget(rt.Target, d) {
+				name := DashboardHost(d)
+				if name == "" {
+					name = dashboardLabel(d)
+				}
+				return invalid("dashboard_label: a tunnel route already serves %s; remove that route before naming the dashboard %s", rt.Target, name)
+			}
+		}
 		var sec domainSecret
 		if in.DNSCredentials != nil {
 			sec.Credentials = map[string]string{}
@@ -762,6 +792,15 @@ func (s *Service) SetTunnel(ctx context.Context, in TunnelSet) (HostSettings, er
 		in.Routes[i] = r
 	}
 	return s.change(ctx, func(rs map[string]row) error {
+		var d Domain
+		if r, ok := rs["domain"]; ok {
+			_ = json.Unmarshal(r.value, &d)
+		}
+		for i, rt := range in.Routes {
+			if isDashboardTarget(rt.Target, d) {
+				return invalid("routes[%d].target: the dashboard cannot be published through the tunnel; use the VPN or Tailscale instead", i)
+			}
+		}
 		var sec tunnelSecret
 		if err := s.open(rs["tunnel"], &sec); err != nil && in.Credentials == nil {
 			return err

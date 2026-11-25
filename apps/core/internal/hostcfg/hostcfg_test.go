@@ -658,3 +658,99 @@ func TestAStaticInstallTakesItsLANFromItsAddress(t *testing.T) {
 		t.Errorf("LAN = %v", got.Network.LAN)
 	}
 }
+
+func TestTunnelRefusesDashboard(t *testing.T) {
+	t.Parallel()
+	s, _, _ := newService(t)
+	ctx := context.Background()
+
+	// Without a domain set, the default dashboard label ("homelab") is still refused.
+	if _, err := s.SetTunnel(ctx, TunnelSet{
+		Credentials: &creds,
+		Routes:      []Route{{Hostname: "dash.example.net", Target: "homelab"}},
+	}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("tunnel targeting default dashboard without domain: %v, want invalid", err)
+	}
+
+	if _, err := s.SetDomain(ctx, DomainSet{Domain: "home.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"homelab", "homelab.home.example.com", "HOMELAB.HOME.EXAMPLE.COM"} {
+		if _, err := s.SetTunnel(ctx, TunnelSet{
+			Credentials: &creds,
+			Routes:      []Route{{Hostname: "dash.example.net", Target: target}},
+		}); !errors.Is(err, ErrInvalid) {
+			t.Errorf("SetTunnel(%q) = %v, want invalid", target, err)
+		}
+	}
+	if _, err := s.SetTunnel(ctx, TunnelSet{
+		Credentials: &creds,
+		Routes: []Route{
+			{Hostname: "photos.example.net", Target: "photos"},
+			{Hostname: "immich.example.net", Target: "photos.home.example.com"},
+		},
+	}); err != nil {
+		t.Fatalf("SetTunnel valid routes: %v", err)
+	}
+
+	// Custom dashboard_label blocks that label and its full host name, while allowing "homelab".
+	if _, err := s.SetDomain(ctx, DomainSet{Domain: "home.example.com", DashboardLabel: "lab"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"lab", "lab.home.example.com"} {
+		if _, err := s.SetTunnel(ctx, TunnelSet{
+			Credentials: &creds,
+			Routes:      []Route{{Hostname: "dash.example.net", Target: target}},
+		}); !errors.Is(err, ErrInvalid) {
+			t.Errorf("SetTunnel(%q) with label lab = %v, want invalid", target, err)
+		}
+	}
+	if _, err := s.SetTunnel(ctx, TunnelSet{
+		Credentials: &creds,
+		Routes:      []Route{{Hostname: "other.example.net", Target: "homelab"}},
+	}); err != nil {
+		t.Fatalf("SetTunnel(homelab) with label lab: %v", err)
+	}
+
+	// Changing dashboard_label to collide with an existing tunnel route is refused.
+	if _, err := s.SetTunnel(ctx, TunnelSet{
+		Credentials: &creds,
+		Routes:      []Route{{Hostname: "svc.example.net", Target: "panel"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetDomain(ctx, DomainSet{Domain: "home.example.com", DashboardLabel: "panel"}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("SetDomain colliding with label route = %v, want invalid", err)
+	}
+	if _, err := s.SetTunnel(ctx, TunnelSet{
+		Credentials: &creds,
+		Routes:      []Route{{Hostname: "svc.example.net", Target: "panel.home.example.com"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetDomain(ctx, DomainSet{Domain: "home.example.com", DashboardLabel: "panel"}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("SetDomain colliding with FQDN route = %v, want invalid", err)
+	}
+
+	// Defense in depth: TunnelConfig drops any dashboard route already in a snapshot.
+	var snap Snapshot
+	snap.Domain = Domain{Domain: "home.example.com"}
+	snap.Tunnel = Tunnel{
+		Enabled:  true,
+		TunnelID: tunnelID(creds),
+		Routes: []Route{
+			{Hostname: "dash1.example.net", Target: "homelab"},
+			{Hostname: "dash2.example.net", Target: "homelab.home.example.com"},
+			{Hostname: "photos.example.net", Target: "photos"},
+		},
+	}
+	cfg := TunnelConfig(snap, "/c.json")
+	for _, forbidden := range []string{"dash1.example.net", "dash2.example.net", "homelab.home.example.com"} {
+		if strings.Contains(cfg, forbidden) {
+			t.Errorf("TunnelConfig kept dashboard route %q:\n%s", forbidden, cfg)
+		}
+	}
+	if !strings.Contains(cfg, "photos.example.net") {
+		t.Errorf("TunnelConfig dropped non-dashboard route:\n%s", cfg)
+	}
+}

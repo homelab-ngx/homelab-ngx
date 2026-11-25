@@ -442,6 +442,9 @@ func TunnelConfig(s Snapshot, credentialsPath string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Written by homelab-daemon from the host settings.\ntunnel: %s\ncredentials-file: %s\nmetrics: %s\nno-autoupdate: true\ningress:\n", s.Tunnel.TunnelID, credentialsPath, tunnelMetrics)
 	for _, r := range s.Tunnel.Routes {
+		if isDashboardTarget(r.Target, s.Domain) {
+			continue
+		}
 		target := RouteTarget(r.Target, s.Domain.Domain)
 		fmt.Fprintf(&b, "  - hostname: %s\n", r.Hostname)
 		if r.Path != "" {
@@ -506,6 +509,9 @@ func (a *ImageApplier) routeDNS(ctx context.Context, s Snapshot, cert string) er
 	}
 	var errs []error
 	for _, r := range s.Tunnel.Routes {
+		if isDashboardTarget(r.Target, s.Domain) {
+			continue
+		}
 		k := s.Tunnel.TunnelID + " " + r.Hostname
 		if a.routed[k] {
 			continue
