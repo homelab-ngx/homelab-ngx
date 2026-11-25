@@ -201,4 +201,15 @@ describe("the demo's API", () => {
     await d.post("/stacks/git/start");
     expect((await d.get<Schema<"Stack">>("/stacks/git")).running).toBe(true);
   });
+
+  it("restarts a stack as a phased daemon operation", async () => {
+    const d = demo();
+    const { body } = await d.post<Schema<"Stack">>("/stacks/git/restart");
+    expect(body.operation?.kind).toBe("restart");
+    expect(body.operation?.finished_at).toBeUndefined();
+    d.wait(1500);
+    const done = await d.get<Schema<"Stack">>("/stacks/git");
+    expect(done.running).toBe(true);
+    expect(done.operation).toBeUndefined();
+  });
 });

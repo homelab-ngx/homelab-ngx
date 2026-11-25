@@ -59,8 +59,8 @@ type Stack struct {
 	// Not empty means the fetched commit is waiting for approval.
 	NewGrants []StackGrant `json:"new_grants" doc:"What the fetched manifest asks for beyond the approved grants. Not empty means the fetched commit is waiting for approval."`
 
-	// Operation The running or last start, stop, update or rollback since the daemon started.
-	Operation *StackOperation `json:"operation,omitempty" doc:"The running or last start, stop, update or rollback since the daemon started."`
+	// Operation The running or last start, stop, restart, update or rollback since the daemon started.
+	Operation *StackOperation `json:"operation,omitempty" doc:"The running or last start, stop, restart, update or rollback since the daemon started."`
 
 	// Running The stack's container is up.
 	Running bool `json:"running" doc:"The stack's container is up."`
@@ -457,7 +457,7 @@ type StackOperation struct {
 
 	// FinishedAt Absent while it runs.
 	FinishedAt *time.Time         `json:"finished_at,omitempty" doc:"Absent while it runs."`
-	Kind       StackOperationKind `json:"kind" enum:"start,stop,update,rollback"`
+	Kind       StackOperationKind `json:"kind" enum:"start,stop,restart,update,rollback"`
 
 	// Phase What it is doing, or did last.
 	Phase     string    `json:"phase" doc:"What it is doing, or did last."`
@@ -469,6 +469,7 @@ type StackOperationKind string
 
 // Values of StackOperationKind.
 const (
+	StackOperationKindRestart  StackOperationKind = "restart"
 	StackOperationKindRollback StackOperationKind = "rollback"
 	StackOperationKindStart    StackOperationKind = "start"
 	StackOperationKindStop     StackOperationKind = "stop"

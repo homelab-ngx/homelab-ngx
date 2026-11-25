@@ -31,6 +31,7 @@ type Notifier interface {
 const (
 	opStart    = "start"
 	opStop     = "stop"
+	opRestart  = "restart"
 	opUpdate   = "update"
 	opRollback = "rollback"
 )
@@ -38,7 +39,7 @@ const (
 // errStartCancelled is a start's error when a stop ended its health wait.
 var errStartCancelled = errors.New("cancelled by stop")
 
-// operation is one start, stop, update or rollback of a stack. They take
+// operation is one start, stop, restart, update or rollback of a stack. They take
 // minutes (a build, a boot, a health check), so they run in the background
 // and the API reports the latest one per stack.
 type operation struct {
@@ -154,10 +155,8 @@ func notApproved(name string) *httpx.Problem {
 	return httpx.Conflict("not_approved", "stack %q has no approved commit; approve it first", name)
 }
 
-// Start boots the stack on its current generation, building the approved
-// commit first when nothing is built.
-func (s *Service) Start(ctx context.Context, name string) (Stack, error) {
-	return s.launch(ctx, name, opStart, func(r store.Stack) error {
+func (s *Service) startCheck(ctx context.Context, name string) func(store.Stack) error {
+	return func(r store.Stack) error {
 		if s.frozen(ctx, name) {
 			return stackFrozen(name)
 		}
@@ -172,11 +171,38 @@ func (s *Service) Start(ctx context.Context, name string) (Stack, error) {
 			return err
 		}
 		return s.misfitGate(name, m)
-	}, func(ctx context.Context, o *operation) error { return s.start(ctx, o, name) })
+	}
 }
 
-// Stop shuts the stack down and takes its routes and rules away. If a start
-// is waiting for the stack to be healthy, Stop cancels that wait first.
+// Start boots the stack on its current generation, building the approved
+// commit first when nothing is built.
+func (s *Service) Start(ctx context.Context, name string) (Stack, error) {
+	return s.launch(ctx, name, opStart, s.startCheck(ctx, name),
+		func(ctx context.Context, o *operation) error { return s.start(ctx, o, name) })
+}
+
+// Restart halts the stack container (without clearing want_running) and starts
+// it again so changed binds, variables, or tokens take effect.
+func (s *Service) Restart(ctx context.Context, name string) (Stack, error) {
+	return s.launch(ctx, name, opRestart, s.startCheck(ctx, name),
+		func(ctx context.Context, o *operation) error { return s.restart(ctx, o, name) })
+}
+
+func (s *Service) restart(ctx context.Context, o *operation, name string) error {
+	if s.isRunning(ctx, name) {
+		s.phase(o, "stopping the container")
+		if err := s.halt(ctx, name); err != nil {
+			return err
+		}
+		if !s.isStopped(ctx, name) {
+			return errors.New("the container is still running")
+		}
+	}
+	return s.start(ctx, o, name)
+}
+
+// Stop shuts the stack down and takes its routes and rules away. If a start or
+// restart is waiting for the stack to be healthy, Stop cancels that wait first.
 func (s *Service) Stop(ctx context.Context, name string) (Stack, error) {
 	if _, err := s.row(ctx, name); err != nil {
 		return Stack{}, err
@@ -192,7 +218,7 @@ func (s *Service) Stop(ctx context.Context, name string) (Stack, error) {
 			s.mu.Unlock()
 			break
 		}
-		if o.kind != opStart || o.cancelWait == nil {
+		if (o.kind != opStart && o.kind != opRestart) || o.cancelWait == nil {
 			err := httpx.Conflict("busy", "stack %q is busy with a %s (%s)", name, o.kind, o.phase)
 			s.mu.Unlock()
 			return Stack{}, err

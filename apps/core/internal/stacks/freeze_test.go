@@ -60,6 +60,8 @@ func TestAFrozenStackRefusesWhatWouldCallIntoIt(t *testing.T) {
 	wantCode(t, err, http.StatusConflict, "stack_frozen")
 	_, err = svc.Start(ctx, "immich")
 	wantCode(t, err, http.StatusConflict, "stack_frozen")
+	_, err = svc.Restart(ctx, "immich")
+	wantCode(t, err, http.StatusConflict, "stack_frozen")
 	if q, _ := svc.UpdateAll(ctx); len(q) != 0 {
 		t.Errorf("update all queued %v", q)
 	}

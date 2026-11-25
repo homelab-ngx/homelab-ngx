@@ -115,7 +115,7 @@ func TestStackShowSaysWhenARestartIsNeeded(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Restart needed: the container runs with other paths than its values give now. Apply them with: homelab stacks stop immich && homelab stacks start immich\n",
+		"Restart needed: the container runs with other paths than its values give now. Apply them with: homelab stacks restart immich\n",
 		"Fill in the missing values with: homelab stacks var set immich <NAME> --value-stdin\n",
 	} {
 		if !strings.Contains(out, want) {
@@ -403,5 +403,34 @@ func TestStackStopForce(t *testing.T) {
 		if req.Force != tc.wantForce {
 			t.Errorf("%v: force = %v, want %v (body=%q)", tc.args, req.Force, tc.wantForce, body)
 		}
+	}
+}
+
+func TestStackRestartCommand(t *testing.T) {
+	stackOpPoll = time.Millisecond
+	var posted bool
+	var reads atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/stacks/immich/restart", func(w http.ResponseWriter, _ *http.Request) {
+		posted = true
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		fmt.Fprint(w, stackJSON(`{"kind":"restart","phase":"stopping the container","started_at":"2026-11-15T22:00:00Z"}`))
+	})
+	mux.HandleFunc("GET /api/stacks/immich", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if reads.Add(1) == 1 {
+			fmt.Fprint(w, stackJSON(`{"kind":"restart","phase":"waiting for it to be healthy","started_at":"2026-11-15T22:00:00Z"}`))
+			return
+		}
+		fmt.Fprint(w, stackJSON(`{"kind":"restart","phase":"running generation 1 (abcdef1)","started_at":"2026-11-15T22:00:00Z","finished_at":"2026-11-15T22:00:05Z"}`))
+	})
+	serve(t, mux)
+	out, err := captureStdout(t, func() error { return runApp(t, "stacks", "restart", "immich") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !posted || !strings.Contains(out, "running generation 1") {
+		t.Errorf("posted=%v stdout=%q", posted, out)
 	}
 }

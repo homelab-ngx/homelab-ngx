@@ -6,7 +6,7 @@
  */
 import type { paths } from "#lib/api/schema.gen.ts";
 import type { Schema } from "#lib/api/client.ts";
-import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerMeter, powerProfile, powerProfiles, powerStatus, freezeThaw, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
+import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerMeter, powerProfile, powerProfiles, powerStatus, freezeThaw, restart, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
 import { history } from "./metrics.ts";
 
 /** A stack's files as the demo shows them: its manifest and a short flake. */
@@ -344,6 +344,7 @@ const posts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknow
   "/stacks/{name}/rollback": (h, c) => ({ status: 202, body: rollback(h, c.path.name!, Number(c.body.generation)) }),
   "/stacks/{name}/start": (h, c) => ({ status: 202, body: startStop(h, c.path.name!, true) }),
   "/stacks/{name}/stop": (h, c) => ({ status: 202, body: startStop(h, c.path.name!, false) }),
+  "/stacks/{name}/restart": (h, c) => ({ status: 202, body: restart(h, c.path.name!) }),
   "/stacks/{name}/freeze": (h, c) => ({ status: 200, body: freezeThaw(h, c.path.name!, true) }),
   "/stacks/{name}/thaw": (h, c) => ({ status: 200, body: freezeThaw(h, c.path.name!, false) }),
   "/backups/{id}/run": (h, c) => ({ status: 202, body: runBackup(h, Number(c.path.id)) }),

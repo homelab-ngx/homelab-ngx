@@ -256,6 +256,9 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeControl, op("startStack", http.MethodPost, "/stacks/{name}/start",
 		"Start a stack, building its approved commit first when nothing is built.", http.StatusAccepted),
 		stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Start(ctx, n) }))
+	httpx.Register(a, httpx.ScopeControl, op("restartStack", http.MethodPost, "/stacks/{name}/restart",
+		"Stop a running stack container and start it again to apply updated variables or mounts.", http.StatusAccepted),
+		stack(func(ctx context.Context, n string) (Stack, error) { return h.svc.Restart(ctx, n) }))
 	httpx.Register(a, httpx.ScopeControl, op("stopStack", http.MethodPost, "/stacks/{name}/stop",
 		"Stop a stack and remove its routes and network rules. Cancels a start that is waiting for health.", http.StatusAccepted),
 		func(ctx context.Context, in *stopIn) (*stackBody, error) {

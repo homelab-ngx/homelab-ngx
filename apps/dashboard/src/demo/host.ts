@@ -730,6 +730,23 @@ export function startStop(h: Host, name: string, running: boolean): Stack {
   return s;
 }
 
+export function restart(h: Host, name: string): Stack {
+  const s = stackOf(h, name);
+  if (s.frozen) throw new DemoProblem(409, "stack_frozen", `stack "${name}" is frozen; thaw it first`);
+  if (busy(s)) throw new DemoProblem(409, "busy", `stack "${name}" is busy`);
+  s.operation = { kind: "restart", phase: "stopping the container", started_at: iso(h.now()) };
+  later(h, 500, () => {
+    setRunning(h, s, true);
+    s.want_running = true;
+    s.operation = { ...s.operation!, phase: "waiting for it to be healthy" };
+  });
+  later(h, 1500, () => {
+    s.operation = undefined;
+    s.restart_needed = false;
+  });
+  return s;
+}
+
 /** Flow 3: a backup runs, and its run is in the history. */
 export function runBackup(h: Host, id: number): { run_id: number } {
   const b = h.backups.find((x) => x.id === id);

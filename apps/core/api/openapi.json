@@ -5988,7 +5988,7 @@
           },
           "operation": {
             "$ref": "#/components/schemas/StackOperation",
-            "description": "The running or last start, stop, update or rollback since the daemon started."
+            "description": "The running or last start, stop, restart, update or rollback since the daemon started."
           },
           "restart_needed": {
             "description": "What the stack was booted with differs from what it would get now: a variable's value, a path, or the API token changed since. Services read them only when they start, so restarting the stack applies them; nothing restarts on its own.",
@@ -6994,6 +6994,7 @@
             "enum": [
               "start",
               "stop",
+              "restart",
               "update",
               "rollback"
             ],
@@ -22209,6 +22210,77 @@
           }
         },
         "summary": "The icon of a stack, or of one of its services: the image, or a redirect to it when the manifest names an https URL. Answers no_icon when there is none.",
+        "tags": [
+          "stacks"
+        ]
+      }
+    },
+    "/stacks/{name}/restart": {
+      "post": {
+        "operationId": "restartStack",
+        "parameters": [
+          {
+            "description": "The stack's name, as it was installed.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "The stack's name, as it was installed.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stack"
+                }
+              }
+            },
+            "description": "Accepted"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Stop a running stack container and start it again to apply updated variables or mounts.",
         "tags": [
           "stacks"
         ]

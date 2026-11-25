@@ -279,6 +279,7 @@ func stacksCmd() *cli.Command {
 				},
 			},
 			stackOpCmd("start", "Start a stack, building its approved commit first when nothing is built", nil),
+			stackOpCmd("restart", "Stop and start a stack", nil),
 			{
 				Name:      "stop",
 				Usage:     "Stop a stack and remove its routes and network rules",
@@ -500,7 +501,7 @@ func setStackFolders(c *cli.Context, name string, in []stacks.StackFolderIn, msg
 		return err
 	}
 	if s != nil && s.RestartNeeded {
-		msg += fmt.Sprintf(" Restart the stack to apply it: homelab stacks stop %s && homelab stacks start %s", name, name)
+		msg += fmt.Sprintf(" Restart the stack to apply it: homelab stacks restart %s", name)
 	}
 	return emit(c, s, msg)
 }
@@ -655,7 +656,7 @@ func stackVarCmd() *cli.Command {
 					}
 					msg := fmt.Sprintf("✔ %s set on %s; restart the services that use it.", v, name)
 					if s != nil && s.RestartNeeded {
-						msg = fmt.Sprintf("✔ %s set on %s; restart the stack to apply it: homelab stacks stop %s && homelab stacks start %s", v, name, name, name)
+						msg = fmt.Sprintf("✔ %s set on %s; restart the stack to apply it: homelab stacks restart %s", v, name, name)
 					}
 					return emit(c, s, msg)
 				},
@@ -935,7 +936,7 @@ func printStack(c *cli.Context, s stacks.Stack) error {
 		}
 	}
 	if s.RestartNeeded {
-		fmt.Printf("\nRestart needed: the container runs with other paths than its values give now. Apply them with: homelab stacks stop %s && homelab stacks start %s\n", s.Name, s.Name)
+		fmt.Printf("\nRestart needed: the container runs with other paths than its values give now. Apply them with: homelab stacks restart %s\n", s.Name)
 	}
 	if len(s.Generations) > 0 {
 		fmt.Println("\nGenerations:")

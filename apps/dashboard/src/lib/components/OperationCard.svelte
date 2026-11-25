@@ -22,6 +22,7 @@
     {
       start: stack.generation <= 1 && attempt?.kind === "install" ? "Installing" : "Starting",
       stop: "Stopping",
+      restart: "Restarting",
       update: "Updating",
       rollback: "Rolling back",
     }[op.kind] +

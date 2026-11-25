@@ -66,19 +66,21 @@
   const own = $derived(servicesOf(services.data, name));
 
   const refresh = () => client.invalidateQueries({ queryKey: keys.all });
-  const op = (fn: () => Promise<unknown>) =>
+  const op = (fn: () => Promise<Stack>) =>
     createMutation(() => ({
       mutationFn: fn,
       onMutate: () => (error = ""),
+      onSuccess: (s: Stack) => client.setQueryData([...keys.stacks, name], s),
       onError: (e: unknown) => (error = describe(e)),
       onSettled: refresh,
     }));
   const path = () => ({ params: { path: { name } } });
-  const start = op(() => call(api.POST("/stacks/{name}/start", path())));
-  const stop = op(() => call(api.POST("/stacks/{name}/stop", path())));
-  const update = op(() => call(api.POST("/stacks/{name}/update", path())));
-  const freeze = op(() => call(api.POST("/stacks/{name}/freeze", path())));
-  const thaw = op(() => call(api.POST("/stacks/{name}/thaw", path())));
+  const start = op(() => call<Stack>(api.POST("/stacks/{name}/start", path())));
+  const stop = op(() => call<Stack>(api.POST("/stacks/{name}/stop", path())));
+  const restart = op(() => call<Stack>(api.POST("/stacks/{name}/restart", path())));
+  const update = op(() => call<Stack>(api.POST("/stacks/{name}/update", path())));
+  const freeze = op(() => call<Stack>(api.POST("/stacks/{name}/freeze", path())));
+  const thaw = op(() => call<Stack>(api.POST("/stacks/{name}/thaw", path())));
   const autostart = createMutation(() => ({
     mutationFn: (on: boolean) => call(api.PATCH("/stacks/{name}", { ...path(), body: { autostart: on } })),
     onMutate: () => (error = ""),
@@ -99,28 +101,8 @@
     },
   }));
 
-  /** Restart is a stop, then a start once the stop has finished. */
-  async function restart() {
-    error = "";
-    try {
-      await call(api.POST("/stacks/{name}/stop", path()));
-      for (;;) {
-        await new Promise((r) => setTimeout(r, 1500));
-        const s = await fetchStack(name);
-        if (!busy(s)) {
-          if (s.operation?.error) throw new Error(s.operation.error);
-          break;
-        }
-      }
-      await call(api.POST("/stacks/{name}/start", path()));
-    } catch (e) {
-      error = describe(e);
-    }
-    await refresh();
-  }
-
   const working = $derived(
-    start.isPending || stop.isPending || update.isPending || freeze.isPending || thaw.isPending || (stack.data ? busy(stack.data) : false),
+    start.isPending || stop.isPending || restart.isPending || update.isPending || freeze.isPending || thaw.isPending || (stack.data ? busy(stack.data) : false),
   );
 
   /** The Controls card's menu: the rarer actions, Remove last. A fork starts in the Source code tab. */
@@ -241,7 +223,7 @@
       {#if s.restart_needed}
         <div role="status" class="flex flex-wrap items-center justify-between gap-2 rounded-md bg-warn-soft px-3 py-2 text-warn">
           <p>Restart to apply changed values, folders or API access.</p>
-          <button type="button" class="btn btn-sm" disabled={working} onclick={restart}>Restart</button>
+          <button type="button" class="btn btn-sm" disabled={working} onclick={() => restart.mutate()}>Restart</button>
         </div>
       {/if}
       {#if s.idle_grants.length}
@@ -280,7 +262,7 @@
           <button type="button" class="btn btn-primary" disabled={working} onclick={() => thaw.mutate()}><Play class="size-3.5" aria-hidden="true" />Thaw</button>
           <button type="button" class="btn" disabled={working} onclick={() => stop.mutate()}><Square class="size-3.5" aria-hidden="true" />Stop</button>
         {:else if s.running}
-          <button type="button" class="btn" disabled={working} onclick={restart}><RotateCcw class="size-3.5" aria-hidden="true" />Restart</button>
+          <button type="button" class="btn" disabled={working} onclick={() => restart.mutate()}><RotateCcw class="size-3.5" aria-hidden="true" />Restart</button>
           <button type="button" class="btn" disabled={working} onclick={() => stop.mutate()}><Square class="size-3.5" aria-hidden="true" />Stop</button>
           <button type="button" class="btn" disabled={working} onclick={() => freeze.mutate()}><Snowflake class="size-3.5" aria-hidden="true" />Freeze</button>
           <button type="button" class="btn" onclick={() => openShellWindow(name)}><SquareTerminal class="size-3.5" aria-hidden="true" />Shell</button>
@@ -293,10 +275,6 @@
         <div class="flex items-center justify-between gap-3">
           <span>Start at boot</span>
           <Switch checked={s.autostart} label="Start at boot" disabled={autostart.isPending} onChange={(on) => autostart.mutate(on)} />
-        </div>
-        <div class="flex items-center justify-between gap-3">
-          <span class="text-muted">Update automatically</span>
-          <Switch checked={false} label="Update automatically" disabled title="Not available yet" />
         </div>
       </div>
 

@@ -61,7 +61,7 @@
       {#if !s.variables_ready}
         <p class="rounded-md bg-warn-soft px-3 py-2 text-warn">
           Needs values first: {missingVariables(s).join(", ") || "its variables"}.
-          <a class="underline" href="/stacks/{s.name}" onclick={onClose}>Open {stackTitle(s)}</a>
+          <a class="underline" href="/stacks/{s.name}/configuration" onclick={onClose}>Open configuration</a>
         </p>
       {/if}
       {#if error}
@@ -69,7 +69,13 @@
       {/if}
     </div>
     {#snippet actions()}
-      <button type="button" class="btn btn-primary" disabled={approve.isPending} onclick={() => approve.mutate(s)}>
+      <button
+        type="button"
+        class="btn btn-primary"
+        disabled={approve.isPending || !s.variables_ready}
+        title={!s.variables_ready ? "Set required values in Configuration first" : undefined}
+        onclick={() => approve.mutate(s)}
+      >
         {approve.isPending ? "Approving…" : s.generation > 0 ? "Approve and update" : "Approve"}
       </button>
     {/snippet}

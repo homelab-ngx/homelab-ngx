@@ -12,7 +12,7 @@
   import { missingVariables } from "#lib/variables.ts";
 
   type Kind = "git" | "folder" | "write";
-  const STEPS = ["Source", "Mappings", "Review access", "Install"] as const;
+  const STEPS = ["Source", "Configure and approve", "Install"] as const;
   const KINDS: [Kind, string][] = [
     ["git", "Git repository"],
     ["folder", "Local folder"],
@@ -62,11 +62,7 @@
     refetchInterval: stack.data && busy(stack.data) ? busyPoll : false,
   }));
 
-  /** Mappings is the step while a required variable has none. */
-  const step = $derived(installing ? 3 : name ? (stack.data && !stack.data.variables_ready ? 1 : 2) : 0);
-  const needsValues = $derived(
-    (stack.data?.fetched.manifest.variables ?? []).length > 0 || (stack.data?.fetched.manifest.secrets ?? []).length > 0,
-  );
+  const step = $derived(installing ? 2 : name ? 1 : 0);
 
   /** Starts a draft from the template and opens the editor. */
   async function write() {
@@ -137,9 +133,9 @@
         ? 'border-accent font-semibold text-accent'
         : i < step
           ? 'border-line text-ok'
-          : 'border-line text-muted'} {label === 'Mappings' && !needsValues ? 'border-dashed' : ''}"
+          : 'border-line text-muted'}"
     >
-      {i + 1} · {label}{#if label === "Mappings" && step > 1 && !needsValues}&nbsp;(none){/if}
+      {i + 1} · {label}
     </li>
   {/each}
 </ol>
@@ -216,7 +212,7 @@
   </form>
 {:else if stack.data}
   {@const s = stack.data}
-  {#if step === 1 || step === 2}
+  {#if step === 1}
     {@const missing = missingVariables(s)}
     {@const asks = s.approved ? grants(s.fetched.manifest) : s.new_grants}
     <section class="card mt-5" aria-labelledby="asks-h">

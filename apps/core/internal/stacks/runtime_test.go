@@ -1227,3 +1227,45 @@ func TestStopCancelsStartWaitingForHealth(t *testing.T) {
 		t.Errorf("stored op = %q, want /", op)
 	}
 }
+
+func TestRestartRebootsContainerAndStopCancelsRestartWait(t *testing.T) {
+	t.Parallel()
+	svc, _, h := newRuntime(t)
+	ctx := context.Background()
+	s := finished(t, svc, svc.Start)
+	if !s.Running {
+		t.Fatalf("not running after initial start")
+	}
+
+	restarted := finished(t, svc, svc.Restart)
+	if !restarted.Running || !restarted.WantRunning || restarted.Operation == nil || restarted.Operation.Kind != "restart" {
+		t.Fatalf("after restart: %+v", restarted)
+	}
+	if len(h.CallsMatching("systemctl", "stop", unitName("immich"))) == 0 {
+		t.Error("restart did not stop container")
+	}
+
+	svc.healthTimeout = time.Minute
+	svc.healthEvery = 5 * time.Millisecond
+	svc.probe = func(context.Context, string) error { return errors.New("still down") }
+	if _, err := svc.Restart(ctx, "immich"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if v := svc.operationView("immich"); v != nil && v.Phase == "waiting for it to be healthy" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("restart did not reach health wait; view = %+v", svc.operationView("immich"))
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := svc.Stop(ctx, "immich"); err != nil {
+		t.Fatalf("Stop during restart health wait: %v", err)
+	}
+	stopped := waitIdle(t, svc, "immich")
+	if stopped.Running || stopped.WantRunning || stopped.Operation == nil || stopped.Operation.Kind != "stop" {
+		t.Fatalf("after stop: %+v", stopped)
+	}
+}

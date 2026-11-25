@@ -1769,6 +1769,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks/{name}/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Stop a running stack container and start it again to apply updated variables or mounts. */
+        post: operations["restartStack"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks/{name}/rollback": {
         parameters: {
             query?: never;
@@ -4530,7 +4547,7 @@ export interface components {
             nixpkgs?: string;
             /** @description The nixpkgs commit the approved manifest's nixpkgs resolves to now (version 7). When the running generation was built with another, an update is ready. */
             nixpkgs_rev?: string;
-            /** @description The running or last start, stop, update or rollback since the daemon started. */
+            /** @description The running or last start, stop, restart, update or rollback since the daemon started. */
             operation?: components["schemas"]["StackOperation"];
             /** @description What the stack was booted with differs from what it would get now: a variable's value, a path, or the API token changed since. Services read them only when they start, so restarting the stack applies them; nothing restarts on its own. */
             restart_needed: boolean;
@@ -4858,7 +4875,7 @@ export interface components {
              */
             finished_at?: string;
             /** @enum {string} */
-            kind: "start" | "stop" | "update" | "rollback";
+            kind: "start" | "stop" | "restart" | "update" | "rollback";
             /** @description What it is doing, or did last. */
             phase: string;
             /** Format: date-time */
@@ -13142,6 +13159,48 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    restartStack: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name, as it was installed. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Accepted */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Stack"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
             };
         };
     };
