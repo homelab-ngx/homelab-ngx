@@ -232,9 +232,11 @@ type Backup struct {
 	// Overdue No successful run within two schedule intervals (counted from daemon start when it never succeeded): the rule behind the backup-stale notification.
 	Overdue bool `json:"overdue" doc:"No successful run within two schedule intervals (counted from daemon start when it never succeeded): the rule behind the backup-stale notification."`
 	// Running A run is in flight; last_run is that run.
-	Running   bool      `json:"running" doc:"A run is in flight; last_run is that run."`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Running bool `json:"running" doc:"A run is in flight; last_run is that run."`
+	// Previewing A preview is in flight.
+	Previewing bool      `json:"previewing" doc:"A preview is in flight."`
+	CreatedAt  time.Time `json:"created_at"`
+	UpdatedAt  time.Time `json:"updated_at"`
 }
 
 // BackupInput creates a backup.
@@ -305,6 +307,48 @@ type BackupRunItem struct {
 	FinishedAt  *time.Time       `json:"finished_at"`
 	Error       string           `json:"error"`
 	Note        string           `json:"note"`
+}
+
+// BackupPreview is the newest preview of a backup: what a run would do to
+// each folder at each destination. A preview copies and deletes nothing.
+type BackupPreview struct {
+	BackupId   int64               `json:"backup_id"`
+	StartedAt  time.Time           `json:"started_at"`
+	FinishedAt *time.Time          `json:"finished_at"`
+	Result     BackupRunResult     `json:"result"`
+	Error      string              `json:"error"`
+	Items      []BackupPreviewItem `json:"items"`
+	// Progress The comparison in flight, counted in files; null when the preview is not comparing.
+	Progress *BackupProgress `json:"progress" doc:"The comparison in flight, counted in files; null when the preview is not comparing."`
+}
+
+// BackupPreviewItem is one destination, or one folder at one destination with
+// what a run would do to it. The counts are zero on a destination's own item.
+type BackupPreviewItem struct {
+	Kind        BackupItemKind   `json:"kind"`
+	Destination string           `json:"destination"`
+	Label       string           `json:"label"`
+	Path        string           `json:"path"`
+	Result      BackupItemResult `json:"result"`
+	Error       string           `json:"error"`
+	Note        string           `json:"note"`
+	// New Files that are not at the destination.
+	New      int64 `json:"new" doc:"Files that are not at the destination."`
+	NewBytes int64 `json:"new_bytes"`
+	// Changed Files that are at the destination and differ.
+	Changed      int64 `json:"changed" doc:"Files that are at the destination and differ."`
+	ChangedBytes int64 `json:"changed_bytes"`
+	Unchanged    int64 `json:"unchanged"`
+	// Extra Files that are only at the destination.
+	Extra int64 `json:"extra" doc:"Files that are only at the destination."`
+	// Deletes Whether a run removes the extra files (true) or leaves them.
+	Deletes bool `json:"deletes" doc:"Whether a run removes the extra files (true) or leaves them."`
+	// Errors Files that could not be compared.
+	Errors int64 `json:"errors" doc:"Files that could not be compared."`
+	// NewSample The first 100 new paths, relative to the folder.
+	NewSample     []string `json:"new_sample" doc:"The first 100 new paths, relative to the folder."`
+	ChangedSample []string `json:"changed_sample"`
+	ExtraSample   []string `json:"extra_sample"`
 }
 
 // BackupProgress is the copy in flight.
@@ -393,7 +437,7 @@ func (BackupItemKind) Schema(huma.Registry) *huma.Schema {
 
 // Schema documents BackupItemResult as its enum.
 func (BackupItemResult) Schema(huma.Registry) *huma.Schema {
-	return enumSchema[BackupItemResult]("pending", "running", "success", "partial", "failure", "skipped")
+	return enumSchema[BackupItemResult]("pending", "running", "success", "partial", "failure", "skipped", "cancelled")
 }
 
 func enumSchema[T ~string](values ...T) *huma.Schema {
@@ -420,6 +464,12 @@ func nullable(s *huma.Schema, prop, doc string) {
 // TransformSchema makes last_run nullable.
 func (Backup) TransformSchema(_ huma.Registry, s *huma.Schema) *huma.Schema {
 	nullable(s, "last_run", "The newest run; null if it never ran.")
+	return s
+}
+
+// TransformSchema makes progress nullable.
+func (BackupPreview) TransformSchema(_ huma.Registry, s *huma.Schema) *huma.Schema {
+	nullable(s, "progress", "The comparison in flight, counted in files; null when the preview is not comparing.")
 	return s
 }
 

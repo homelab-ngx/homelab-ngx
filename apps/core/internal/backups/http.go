@@ -58,6 +58,7 @@ type coverageOut struct{ Body Coverage }
 type destsOut struct{ Body []Destination }
 type destOut struct{ Body Destination }
 type destCreatedOut struct{ Body DestinationCreated }
+type previewOut struct{ Body BackupPreview }
 type destTestOut struct{ Body DestinationTest }
 type passwordOut struct{ Body DestinationPassword }
 
@@ -98,6 +99,30 @@ func (h *HTTP) Register(a httpx.APIs) {
 			"source, no destination, or a restic destination whose password is not confirmed.",
 		Errors: []int{http.StatusNotFound, http.StatusConflict},
 	}, h.runBackup)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "cancelBackup", Method: http.MethodPost, Path: "/backups/{id}/cancel", Tags: tags,
+		Summary: "Stop the backup's run or preview in flight.", DefaultStatus: http.StatusNoContent,
+		Description: "Answers once the run's unit has stopped. The run ends as `cancelled`; the files it has " +
+			"already copied stay at the destination. Errors: `404 unknown_backup`; `409 not_running`.",
+		Errors: []int{http.StatusNotFound, http.StatusConflict},
+	}, h.cancelBackup)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "previewBackup", Method: http.MethodPost, Path: "/backups/{id}/preview", Tags: tags,
+		Summary: "Start a preview: what a run would do, without copying.", DefaultStatus: http.StatusAccepted,
+		Description: "Compares every folder with its S3 and rclone destinations and changes nothing there. " +
+			"Restic destinations are left out, and no prepare step runs. It replaces the backup's earlier " +
+			"preview; read it with `GET /backups/{id}/preview`. Errors: `404 unknown_backup`; " +
+			"`409 already_running`; `409 shutting_down`; `409 not_ready`; `409 nothing_to_preview` when " +
+			"every destination is restic.",
+		Errors: []int{http.StatusNotFound, http.StatusConflict},
+	}, h.previewBackup)
+	httpx.Register(a, httpx.ScopeRead, huma.Operation{
+		OperationID: "getBackupPreview", Method: http.MethodGet, Path: "/backups/{id}/preview", Tags: tags,
+		Summary: "The backup's newest preview.",
+		Description: "While the preview is in flight the items and `progress` are live; poll it. A run of " +
+			"the backup removes its preview. Errors: `404 unknown_backup`; `404 no_preview`.",
+		Errors: []int{http.StatusNotFound},
+	}, h.getBackupPreview)
 	httpx.Register(a, httpx.ScopeRead, read("getBackupLogs", http.MethodGet, "/backups/{id}/logs",
 		"Recent journal lines of the backup's runs.", http.StatusNotFound), h.getBackupLogs)
 	httpx.Register(a, httpx.ScopeRead, read("listBackupRuns", http.MethodGet, "/backups/{id}/runs",
@@ -172,6 +197,12 @@ func problem(err error) error {
 		return httpx.NotFound("unknown_run", "%s", err)
 	case errors.Is(err, ErrAlreadyRunning):
 		return httpx.Conflict("already_running", "%s", err)
+	case errors.Is(err, ErrNotRunning):
+		return httpx.Conflict("not_running", "%s", err)
+	case errors.Is(err, ErrNothingToPreview):
+		return httpx.Conflict("nothing_to_preview", "%s", err)
+	case errors.Is(err, ErrNoPreview):
+		return httpx.NotFound("no_preview", "%s", err)
 	case errors.Is(err, ErrShuttingDown):
 		return httpx.Conflict("shutting_down", "%s", err)
 	case errors.Is(err, ErrNotReady):
@@ -228,6 +259,22 @@ func (h *HTTP) runBackup(ctx context.Context, in *idIn) (*startedOut, error) {
 		return nil, problem(err)
 	}
 	return &startedOut{Body: BackupRunStarted{RunId: id}}, nil
+}
+
+func (h *HTTP) cancelBackup(ctx context.Context, in *idIn) (*struct{}, error) {
+	return nil, problem(h.svc.Cancel(ctx, in.Id))
+}
+
+func (h *HTTP) previewBackup(ctx context.Context, in *idIn) (*struct{}, error) {
+	return nil, problem(h.svc.Preview(ctx, in.Id))
+}
+
+func (h *HTTP) getBackupPreview(ctx context.Context, in *idIn) (*previewOut, error) {
+	p, err := h.svc.PreviewDetail(ctx, in.Id)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &previewOut{Body: p}, nil
 }
 
 func (h *HTTP) getBackupLogs(ctx context.Context, in *idIn) (*logsOut, error) {

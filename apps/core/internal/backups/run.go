@@ -166,7 +166,7 @@ func (s *Service) buildPlan(ctx context.Context, b store.Backup) (*plan, error) 
 // launch starts the runner in a transient unit that sees the whole
 // filesystem read-only and may write only its own files and write. It
 // returns when the unit has started, or with wait when it has ended.
-func (s *Service) launch(ctx context.Context, unit, desc, specPath, statePath string, write []string, wait bool) (cmdrunner.Result, error) {
+func (s *Service) launch(ctx context.Context, unit, desc, specPath, statePath string, write []string, wait bool, runnerArgs ...string) (cmdrunner.Result, error) {
 	workDir := filepath.Dir(specPath)
 	for _, d := range []string{filepath.Dir(statePath), s.cfg.CacheDir} {
 		if err := os.MkdirAll(d, 0o700); err != nil {
@@ -214,6 +214,7 @@ func (s *Service) launch(ctx context.Context, unit, desc, specPath, statePath st
 		"--setenv=PATH="+os.Getenv("PATH"), "--setenv=HOME="+workDir, "--setenv=XDG_CACHE_HOME="+s.cfg.CacheDir,
 		"--", s.cfg.Runner, "--spec", specPath, "--state", statePath,
 	)
+	args = append(args, runnerArgs...)
 	return s.r.Run(ctx, cmdrunner.Cmd{Module: "backups", Name: "systemd-run", Args: args})
 }
 
@@ -264,6 +265,10 @@ func (s *Service) Trigger(ctx context.Context, id int64, trigger string) (int64,
 	s.mu.Lock()
 	s.running[id] = run.ID
 	s.mu.Unlock()
+	// A preview said what this run would do; after it, that is no longer true.
+	if err := s.q.DeleteBackupPreview(base, id); err != nil {
+		s.log.Warn("remove the backup's preview", "backup", b.Name, "error", err)
+	}
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -279,6 +284,8 @@ func (s *Service) release(id int64) {
 	s.mu.Lock()
 	delete(s.running, id)
 	delete(s.startCancel, id)
+	delete(s.previewing, id)
+	delete(s.cancelled, id)
 	if ch, ok := s.runDone[id]; ok {
 		close(ch)
 		delete(s.runDone, id)
@@ -394,8 +401,9 @@ func (s *Service) start(ctx context.Context, run store.BackupRun, b store.Backup
 		s.finish(ctx, run, ResultFailure, "the run could not be started: "+err.Error(), nil)
 		return false
 	}
+	// A stop asked for while the unit was starting found no unit to stop.
 	s.mu.Lock()
-	down := s.goingDown
+	down := s.goingDown || s.cancelled[b.ID]
 	s.mu.Unlock()
 	if down {
 		_ = s.stopUnit(context.WithoutCancel(ctx), unitName(b.ID))
@@ -413,24 +421,36 @@ func unitRunning(state string) bool {
 	return false
 }
 
-// watch follows a launched run until its runner has said how it ended, or
-// its unit is gone, and records the outcome. If ctx ends first the row stays
-// running for the next daemon to adopt.
+// watch follows a launched run to its end and records the outcome. If ctx
+// ends first the row stays running for the next daemon to adopt.
 func (s *Service) watch(ctx context.Context, run store.BackupRun) {
 	if run.BackupID == nil {
 		return
 	}
-	unit := unitName(*run.BackupID)
+	st, interrupted, done := s.await(ctx, unitName(*run.BackupID), s.statePath(run.ID), time.UnixMilli(run.StartedAt))
+	switch {
+	case !done:
+	case st == nil:
+		s.finish(ctx, run, ResultUnknown, errDaemonStopped.Error(), nil)
+	default:
+		s.finishFromState(ctx, run, st, interrupted)
+	}
+}
+
+// await follows a launched unit until its runner has said how it ended, or
+// the unit is gone. It returns what the runner left (nil when nothing can be
+// read) and, when the runner did not finish, why. done is false when ctx
+// ended first.
+func (s *Service) await(ctx context.Context, unit, statePath string, started time.Time) (st *runfile.State, interrupted string, done bool) {
 	failedReads := 0
 	for {
-		st, err := runfile.ReadState(s.statePath(run.ID))
+		st, err := runfile.ReadState(statePath)
 		if err == nil && st.Final() {
-			s.finishFromState(ctx, run, st, "")
-			return
+			return st, "", true
 		}
 		p := s.sd.PropsUnix(ctx, []string{unit}, "Id", "ActiveState")[unit]
 		if ctx.Err() != nil {
-			return
+			return nil, "", false
 		}
 		wait := s.pollEvery
 		switch {
@@ -449,39 +469,46 @@ func (s *Service) watch(ctx context.Context, run store.BackupRun) {
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return nil, "", false
 		case <-time.After(wait):
 		}
 	}
 	// The unit is gone. The runner may have written its last word between the
 	// two reads above.
-	st, err := runfile.ReadState(s.statePath(run.ID))
+	st, err := runfile.ReadState(statePath)
 	switch {
 	case err == nil && st.Final():
-		s.finishFromState(ctx, run, st, "")
+		return st, "", true
 	case err == nil:
 		reason := "the runner stopped before it finished"
-		if outcome, found, oerr := s.sd.LastRunOutcome(ctx, unit, time.UnixMilli(run.StartedAt)); oerr == nil && found && outcome != "success" {
+		if outcome, found, oerr := s.sd.LastRunOutcome(ctx, unit, started); oerr == nil && found && outcome != "success" {
 			reason += " (unit result " + outcome + ")"
 		}
-		s.finishFromState(ctx, run, st, reason)
-	default:
-		s.finish(ctx, run, ResultUnknown, errDaemonStopped.Error(), nil)
+		return st, reason, true
 	}
+	return nil, "", true
 }
 
-// finishFromState imports what the runner recorded. interrupted, when set,
-// is why the runner did not finish: its unfinished items become skipped and
-// the run a failure.
-func (s *Service) finishFromState(ctx context.Context, run store.BackupRun, st *runfile.State, interrupted string) {
-	result, msg := st.Result, st.Error
-	items := make([]runfile.Item, len(st.Items))
+// settle turns what the runner left into a result, a message and items.
+// interrupted, when set, is why the runner did not finish: the run is then a
+// failure, or cancelled when the operator stopped it, and its unfinished
+// items are closed.
+func (s *Service) settle(backupID int64, st *runfile.State, interrupted string) (result, msg string, items []runfile.Item) {
+	result, msg = st.Result, st.Error
+	items = make([]runfile.Item, len(st.Items))
 	copy(items, st.Items)
 	if interrupted != "" {
+		s.mu.Lock()
+		stopped := s.cancelled[backupID]
+		s.mu.Unlock()
 		result, msg = ResultFailure, interrupted
+		open := runfile.ResultSkipped
+		if stopped {
+			result, msg, open = ResultCancelled, "the run was stopped", runfile.ResultCancelled
+		}
 		for i := range items {
 			if items[i].Result == runfile.ResultPending || items[i].Result == runfile.ResultRunning {
-				items[i].Result = runfile.ResultSkipped
+				items[i].Result = open
 			}
 		}
 	}
@@ -493,6 +520,16 @@ func (s *Service) finishFromState(ctx context.Context, run store.BackupRun, st *
 	if msg == "" && result != ResultSuccess {
 		msg = summarize(items)
 	}
+	return result, msg, items
+}
+
+// finishFromState records what the runner left as the run's outcome.
+func (s *Service) finishFromState(ctx context.Context, run store.BackupRun, st *runfile.State, interrupted string) {
+	var id int64
+	if run.BackupID != nil {
+		id = *run.BackupID
+	}
+	result, msg, items := s.settle(id, st, interrupted)
 	s.finish(ctx, run, result, msg, items)
 }
 
@@ -563,6 +600,13 @@ func (s *Service) finish(ctx context.Context, run store.BackupRun, result, msg s
 	if run.BackupID == nil || result == ResultUnknown {
 		return // an unknown outcome leaves the problem as it is
 	}
+	if result == ResultCancelled {
+		// Somebody stopped it: that is not a failed backup. The problem stays
+		// as it was, the healthcheck gets no ping (it alerts by itself when no
+		// later run succeeds in time), and the stop is told once.
+		s.notifyStopped(ctx, *run.BackupID, run.ID, run.BackupName)
+		return
+	}
 	problem := ""
 	if result != ResultSuccess {
 		problem = msg
@@ -605,6 +649,20 @@ func (s *Service) notifyResult(ctx context.Context, id, runID int64, name, detai
 	}
 }
 
+// notifyStopped tells, as information, that a run was stopped.
+func (s *Service) notifyStopped(ctx context.Context, id, runID int64, name string) {
+	if s.notify == nil || !s.notify.Enabled() {
+		return
+	}
+	if _, err := s.notify.Send(ctx, notifications.Message{
+		Severity: notifications.Info, Title: "Backup stopped: " + name,
+		Body: "The run was stopped before it finished. Files already copied stay at the destination.",
+		Path: backupPath(id, runID), Key: fmt.Sprintf("backup-stopped:%d", id),
+	}); err != nil {
+		s.log.Warn("failed to send backup notification", "backup", name, "error", err)
+	}
+}
+
 // backupPath is the dashboard page of a backup, opened on one of its runs.
 func backupPath(id, runID int64) string {
 	if runID == 0 {
@@ -629,7 +687,7 @@ func (s *Service) adoptRunning(ctx context.Context) {
 		s.log.Warn("read backup runs left running", "error", err)
 		return
 	}
-	live := map[string]bool{}
+	live := s.adoptPreviews(ctx)
 	for i, run := range rows {
 		if run.BackupID == nil || (i > 0 && rows[i-1].BackupID != nil && *rows[i-1].BackupID == *run.BackupID) {
 			s.finish(ctx, run, ResultUnknown, errDaemonStopped.Error(), nil)

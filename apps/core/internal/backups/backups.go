@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -502,6 +503,9 @@ func (s *Service) List(ctx context.Context) ([]Backup, error) {
 	}
 	folders := s.stackFolders(ctx)
 	now := s.now()
+	s.mu.Lock()
+	previewing := maps.Clone(s.previewing)
+	s.mu.Unlock()
 	out := make([]Backup, 0, len(rows))
 	for _, row := range rows {
 		b := Backup{
@@ -530,6 +534,7 @@ func (s *Service) List(ctx context.Context) ([]Backup, error) {
 			v := runView(r)
 			b.LastRun, b.Running = &v, r.Result == ResultRunning
 		}
+		b.Previewing = previewing[row.ID]
 		if row.Enabled && row.Schedule != "" {
 			if sched, err := cron.ParseStandard(row.Schedule); err == nil {
 				n := sched.Next(now)

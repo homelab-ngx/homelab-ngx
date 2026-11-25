@@ -122,6 +122,55 @@ func backupCmd() *cli.Command {
 					return emit(c, started, fmt.Sprintf("Started backup %s (run %d). Follow it: homelab backup run-show %d --watch",
 						ref, started.RunId, started.RunId))
 				})},
+			{Name: "cancel", Usage: "Stop a backup's run or preview; files already copied stay at the destination", ArgsUsage: "<backup>",
+				Action: one("homelab backup cancel <backup>", func(c *cli.Context, id int64, ref string) error {
+					if err := send(c.Context, http.MethodPost, backupPath(id, "/cancel"), nil); err != nil {
+						return err
+					}
+					return emit(c, map[string]any{"cancelled": ref}, "Stopped backup "+ref)
+				})},
+			{Name: "preview", Usage: "Compare a backup with its destinations and copy nothing (S3 and rclone only)", ArgsUsage: "<backup>",
+				Action: one("homelab backup preview <backup>", func(c *cli.Context, id int64, ref string) error {
+					if err := send(c.Context, http.MethodPost, backupPath(id, "/preview"), nil); err != nil {
+						return err
+					}
+					return emit(c, map[string]any{"previewing": ref},
+						fmt.Sprintf("Started a preview of %s. Follow it: homelab backup preview-show %s --watch", ref, ref))
+				})},
+			{
+				Name: "preview-show", Usage: "Show a backup's newest preview: what a run would do per folder", ArgsUsage: "<backup>",
+				Flags: []cli.Flag{&cli.BoolFlag{Name: "watch", Usage: "follow the preview until it ends"}},
+				Action: func(c *cli.Context) error {
+					args, flags := argsAndBools(c, "watch")
+					if len(args) < 1 {
+						return fmt.Errorf("usage: homelab backup preview-show <backup> [--watch]")
+					}
+					id, err := backupID(c, args[0])
+					if err != nil {
+						return err
+					}
+					for {
+						p, err := call[backups.BackupPreview](c.Context, http.MethodGet, backupPath(id, "/preview"), nil)
+						if err != nil {
+							return err
+						}
+						if !flags["watch"] || p.Result != backups.BackupRunResultRunning {
+							if jsonFlag(c) {
+								return printJSON(p)
+							}
+							return printPreview(args[0], *p)
+						}
+						if !jsonFlag(c) {
+							fmt.Fprintln(os.Stdout, previewLine(*p))
+						}
+						select {
+						case <-c.Context.Done():
+							return c.Context.Err()
+						case <-time.After(3 * time.Second):
+						}
+					}
+				},
+			},
 			{Name: "enable", Usage: "Enable a backup", ArgsUsage: "<backup>", Action: enabledAction(true)},
 			{Name: "disable", Usage: "Disable a backup", ArgsUsage: "<backup>", Action: enabledAction(false)},
 			{Name: "logs", Usage: "Show the recent journal lines of a backup's runs", ArgsUsage: "<backup>",
@@ -487,6 +536,62 @@ func printRun(d backups.BackupRunDetail) error {
 		fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\t%s\t%s\n", it.Destination, label, it.Result, it.Files, fmtBytes(it.Bytes), t, detail)
 	}
 	return w.Flush()
+}
+
+// printPreview prints what a run would do, one row per folder and
+// destination, then the first paths of each kind.
+func printPreview(name string, p backups.BackupPreview) error {
+	fmt.Fprintf(os.Stdout, "Preview of %s: %s", name, p.Result)
+	if p.Error != "" {
+		fmt.Fprintf(os.Stdout, " (%s)", p.Error)
+	}
+	fmt.Fprintf(os.Stdout, "\nStarted %s, took %s. Nothing was copied or deleted.\n\n",
+		p.StartedAt.Local().Format(time.RFC3339), took(p.StartedAt, p.FinishedAt))
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	fmt.Fprintln(w, "DESTINATION\tFOLDER\tRESULT\tNEW\tCHANGED\tUNCHANGED\tONLY AT DESTINATION\tDETAIL")
+	for _, it := range p.Items {
+		detail := it.Error
+		if detail == "" {
+			detail = it.Note
+		}
+		if it.Kind == "destination" {
+			fmt.Fprintf(w, "%s\t(destination)\t%s\t\t\t\t\t%s\n", it.Destination, it.Result, detail)
+			continue
+		}
+		extra := fmt.Sprintf("%d kept", it.Extra)
+		if it.Deletes {
+			extra = fmt.Sprintf("%d deleted", it.Extra)
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%d (%s)\t%d (%s)\t%d\t%s\t%s\n", it.Destination, it.Label, it.Result,
+			it.New, fmtBytes(it.NewBytes), it.Changed, fmtBytes(it.ChangedBytes), it.Unchanged, extra, detail)
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	for _, it := range p.Items {
+		for _, s := range []struct {
+			what  string
+			n     int64
+			paths []string
+		}{{"new", it.New, it.NewSample}, {"changed", it.Changed, it.ChangedSample}, {"only at the destination", it.Extra, it.ExtraSample}} {
+			if len(s.paths) == 0 {
+				continue
+			}
+			fmt.Fprintf(os.Stdout, "\n%s -> %s, %s (%d of %d):\n", it.Label, it.Destination, s.what, len(s.paths), s.n)
+			for _, path := range s.paths {
+				fmt.Fprintln(os.Stdout, "  "+path)
+			}
+		}
+	}
+	return nil
+}
+
+// previewLine is one line about a preview in flight.
+func previewLine(p backups.BackupPreview) string {
+	if p.Progress == nil {
+		return "getting ready..."
+	}
+	return fmt.Sprintf("%s -> %s: %d files compared", p.Progress.Folder, p.Progress.Destination, p.Progress.FilesDone)
 }
 
 // progressLine is one line about a run in flight.

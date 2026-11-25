@@ -21,7 +21,7 @@ func TestOperationalCommandsAreExposed(t *testing.T) {
 		want  []string
 	}{
 		{servicesCmd(), []string{"status", "start", "stop", "restart", "logs"}},
-		{backupCmd(), []string{"status", "show", "run", "enable", "disable", "logs", "runs", "run-show", "coverage", "dest"}},
+		{backupCmd(), []string{"status", "show", "run", "cancel", "preview", "preview-show", "enable", "disable", "logs", "runs", "run-show", "coverage", "dest"}},
 		{destCmd(), []string{"list", "add", "set", "rm", "test", "confirm", "reveal"}},
 		{storageCmd(), []string{"mount", "unmount", "usage", "subvolume-create", "subvolume-delete",
 			"pool-create", "pool-add-disk", "pool-remove-disk", "pool-cancel", "pool-delete"}},

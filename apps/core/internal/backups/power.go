@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"sort"
 	"time"
 
@@ -47,8 +48,32 @@ func (s *Service) Running(ctx context.Context) ([]string, error) {
 		seen[r.BackupName] = true
 		out = append(out, r.BackupName)
 	}
+	// A preview reads the same folders as a run.
+	for _, name := range s.previewNames(ctx) {
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// previewNames returns the names of the backups with a preview in flight.
+func (s *Service) previewNames(ctx context.Context) []string {
+	var out []string
+	for id := range s.previewIDs() {
+		if b, err := s.q.GetBackup(ctx, id); err == nil {
+			out = append(out, b.Name)
+		}
+	}
+	return out
+}
+
+func (s *Service) previewIDs() map[int64]bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return maps.Clone(s.previewing)
 }
 
 // stopUnit stops a transient backup service unit and treats exit code 5 (unit
@@ -80,6 +105,12 @@ func (s *Service) Halt(ctx context.Context, name string) error {
 		}
 		seen[*r.BackupID] = true
 		ids = append(ids, *r.BackupID)
+	}
+	for id := range s.previewIDs() {
+		if b, err := s.q.GetBackup(ctx, id); err == nil && b.Name == name && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
 	}
 	var firstErr error
 	for _, id := range ids {

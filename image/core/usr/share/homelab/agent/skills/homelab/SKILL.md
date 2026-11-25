@@ -21,6 +21,8 @@ homelab stacks show <stack>     # generations, the last operation and its error,
 homelab services status         # every service of every stack, as <stack>-<unit>, with its state
 homelab doctor                  # host checks: daemon, caddy, disk, failed units, SMART, tunnel
 homelab backup status           # each backup's last and next run
+homelab backup preview <backup> # start a comparison with the destinations that copies nothing; read it with: backup preview-show <backup>
+homelab backup cancel <backup>  # stop its run or preview; files already copied stay
 ```
 
 `update_state` is `up_to_date`, `commits_available` (an approved commit is

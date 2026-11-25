@@ -54,6 +54,13 @@ var (
 	ErrNotReady = errors.New("backup is not ready to run")
 	// ErrConfirm means a reveal was not confirmed with the destination's name.
 	ErrConfirm = errors.New("confirmation does not match the destination's name")
+	// ErrNotRunning means the backup has no run or preview to stop.
+	ErrNotRunning = errors.New("backup is not running")
+	// ErrNothingToPreview means none of the backup's destinations can be
+	// previewed (restic ones cannot).
+	ErrNothingToPreview = errors.New("no destination of this backup can be previewed")
+	// ErrNoPreview means the backup has no preview to show.
+	ErrNoPreview = errors.New("backup has no preview")
 	// ErrShuttingDown means the host is shutting down and no new run may start.
 	ErrShuttingDown = errors.New("the host is shutting down")
 )
@@ -183,6 +190,8 @@ type Service struct {
 	running     map[int64]int64              // backup id -> run id in flight
 	startCancel map[int64]context.CancelFunc // cancels prepare/snapshot before launch
 	runDone     map[int64]chan struct{}      // closed by release when a run goroutine finishes
+	previewing  map[int64]bool               // the flight in running is a preview (run id 0)
+	cancelled   map[int64]bool               // the operator asked for the flight to stop
 	cron        *cron.Cron
 	sig         string // signature of what cron was built from
 	// started is when the Service was built (the daemon start): a backup that
@@ -208,6 +217,7 @@ func New(cfg Config, sd *systemd.Client, r cmdrunner.Runner, st *store.Store, st
 	return &Service{
 		cfg: cfg, sd: sd, r: r, st: st, q: st.Queries(), stacks: stacks, notify: notify, hc: hc, log: log,
 		base: context.Background(), running: map[int64]int64{}, startCancel: map[int64]context.CancelFunc{}, runDone: map[int64]chan struct{}{},
+		previewing: map[int64]bool{}, cancelled: map[int64]bool{},
 		started: time.Now(), runReady: make(chan struct{}),
 		now: time.Now, pollEvery: 2 * time.Second, retryEvery: 30 * time.Second,
 	}
