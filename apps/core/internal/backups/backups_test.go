@@ -891,15 +891,14 @@ func TestDaemonStopLeavesRunForAdoption(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { h.svc.Run(ctx); close(done) }()
-	// Run sets the base context; wait for its schedule so Trigger sees it.
-	waitFor(t, func() bool { return len(h.svc.scheduled()) == 1 })
+	waitChan(t, h.svc.runReady, "Run did not become ready")
 	runID, err := h.svc.Trigger(context.Background(), b.Id, TriggerManual)
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { return h.launchCount() == 1 })
 	cancel()
-	<-done
+	waitChan(t, done, "Run did not return after cancel")
 	if r := h.runRow(runID); r.Result != ResultRunning || r.FinishedAt != nil {
 		t.Fatalf("row after the daemon stopped = %+v", r)
 	}
@@ -912,9 +911,20 @@ func TestDaemonStopLeavesRunForAdoption(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.svc.adoptRunning(context.Background())
-	h.svc.Wait()
+	waited := make(chan struct{})
+	go func() { h.svc.Wait(); close(waited) }()
+	waitChan(t, waited, "adopted backup watcher did not finish")
 	if r := h.runRow(runID); r.Result != ResultSuccess {
 		t.Fatalf("row after adoption = %+v", r)
+	}
+}
+
+func waitChan(t *testing.T, ch <-chan struct{}, msg string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal(msg)
 	}
 }
 

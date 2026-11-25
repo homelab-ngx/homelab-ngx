@@ -182,9 +182,11 @@ type Service struct {
 	sig     string // signature of what cron was built from
 	// started is when the Service was built (the daemon start): a backup that
 	// never succeeded is measured from here.
-	started time.Time
-	wg      sync.WaitGroup
-	folders *folderCache
+	started   time.Time
+	wg        sync.WaitGroup
+	folders   *folderCache
+	runReady  chan struct{}
+	readyOnce sync.Once
 
 	// Seams overridden by tests.
 	now        func() time.Time
@@ -200,7 +202,7 @@ func New(cfg Config, sd *systemd.Client, r cmdrunner.Runner, st *store.Store, st
 	}
 	return &Service{
 		cfg: cfg, sd: sd, r: r, st: st, q: st.Queries(), stacks: stacks, notify: notify, hc: hc, log: log,
-		base: context.Background(), running: map[int64]int64{}, started: time.Now(),
+		base: context.Background(), running: map[int64]int64{}, started: time.Now(), runReady: make(chan struct{}),
 		now: time.Now, pollEvery: 2 * time.Second, retryEvery: 30 * time.Second,
 	}
 }
@@ -226,6 +228,9 @@ func (s *Service) Run(ctx context.Context) {
 	tick := time.NewTicker(staleCheckEvery)
 	defer tick.Stop()
 	s.checkStale(ctx)
+	if s.runReady != nil {
+		s.readyOnce.Do(func() { close(s.runReady) })
+	}
 	for {
 		select {
 		case <-tick.C:
