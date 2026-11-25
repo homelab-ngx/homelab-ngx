@@ -31,6 +31,8 @@ in
       openssh
       erofs-utils
       jq
+      # image/variant.sh runs veritysetup to hash a test variant.
+      cryptsetup
       # The check's release server: a signing key and a static file server.
       gnupg
       python3

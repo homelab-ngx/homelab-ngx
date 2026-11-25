@@ -350,6 +350,8 @@ func (s *S) boot(o bootOpts, disks ...vm.Disk) {
 		Disks:    disks,
 		Credentials: map[string][]byte{
 			"ssh.authorized_keys.root": s.r.KeyPub,
+			// Cap a stalled /dev/mapper/root wait in test VMs (still above loader-disk-wait's 30s udev wait).
+			"systemd.unit-dropin.dev-mapper-root.device": []byte("[Unit]\nJobTimeoutSec=30s\n"),
 		},
 		SSHPort:  1, // picked at the start
 		HTTPPort: 1,
