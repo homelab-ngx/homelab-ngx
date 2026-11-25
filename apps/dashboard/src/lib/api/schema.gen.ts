@@ -349,7 +349,7 @@ export interface paths {
         put?: never;
         /**
          * Start a backup now.
-         * @description Errors: `404 unknown_backup`; `409 already_running`; `409 not_ready` when it has no source, no destination, or a restic destination whose password is not confirmed.
+         * @description Errors: `404 unknown_backup`; `409 already_running`; `409 shutting_down`; `409 not_ready` when it has no source, no destination, or a restic destination whose password is not confirmed.
          */
         post: operations["runBackup"];
         delete?: never;
@@ -4260,20 +4260,20 @@ export interface components {
             /** @description The frozen stacks. A shutdown asks for thaw (they stop cleanly) or force (they are killed, and what they held is lost). Only while idle. */
             frozen: string[];
             /** @enum {string} */
-            phase: "idle" | "stopping_stacks" | "unmounting" | "going_down" | "failed";
+            phase: "idle" | "stopping_backups" | "stopping_stacks" | "unmounting" | "going_down" | "failed";
             /** @description A reboot or poweroff planned for later; it stops the stacks first like any other. */
             scheduled?: components["schemas"]["PowerScheduled"];
             /** Format: date-time */
             started_at?: string;
-            /** @description The stacks stopped, then the pools and partitions unmounted, in order. */
+            /** @description The backups stopped, then the stacks stopped, then the pools and partitions unmounted, in order. */
             steps: components["schemas"]["PowerStep"][];
         };
         PowerStep: {
-            /** @description Why a step failed. A stack that did not halt was killed; a mount still in use is unmounted last, as the host goes down. */
+            /** @description Why a step failed. A backup that did not stop cleanly timed out; a stack that did not halt was killed; a mount still in use is unmounted last, as the host goes down. */
             detail?: string;
             /** @enum {string} */
-            kind: "stack" | "mount";
-            /** @description The stack name, or the mountpoint. */
+            kind: "backup" | "stack" | "mount";
+            /** @description The backup name, stack name, or mountpoint. */
             name: string;
             /** @enum {string} */
             state: "waiting" | "working" | "done" | "failed";

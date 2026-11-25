@@ -5144,6 +5144,7 @@
           "phase": {
             "enum": [
               "idle",
+              "stopping_backups",
               "stopping_stacks",
               "unmounting",
               "going_down",
@@ -5160,7 +5161,7 @@
             "type": "string"
           },
           "steps": {
-            "description": "The stacks stopped, then the pools and partitions unmounted, in order.",
+            "description": "The backups stopped, then the stacks stopped, then the pools and partitions unmounted, in order.",
             "items": {
               "$ref": "#/components/schemas/PowerStep"
             },
@@ -5181,18 +5182,19 @@
         "additionalProperties": false,
         "properties": {
           "detail": {
-            "description": "Why a step failed. A stack that did not halt was killed; a mount still in use is unmounted last, as the host goes down.",
+            "description": "Why a step failed. A backup that did not stop cleanly timed out; a stack that did not halt was killed; a mount still in use is unmounted last, as the host goes down.",
             "type": "string"
           },
           "kind": {
             "enum": [
+              "backup",
               "stack",
               "mount"
             ],
             "type": "string"
           },
           "name": {
-            "description": "The stack name, or the mountpoint.",
+            "description": "The backup name, stack name, or mountpoint.",
             "type": "string"
           },
           "state": {
@@ -11564,7 +11566,7 @@
     },
     "/backups/{id}/run": {
       "post": {
-        "description": "Errors: `404 unknown_backup`; `409 already_running`; `409 not_ready` when it has no source, no destination, or a restic destination whose password is not confirmed.",
+        "description": "Errors: `404 unknown_backup`; `409 already_running`; `409 shutting_down`; `409 not_ready` when it has no source, no destination, or a restic destination whose password is not confirmed.",
         "operationId": "runBackup",
         "parameters": [
           {

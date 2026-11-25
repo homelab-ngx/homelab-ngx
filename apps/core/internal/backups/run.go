@@ -198,6 +198,18 @@ func (s *Service) launch(ctx context.Context, unit, desc, specPath, statePath st
 		// its own message, instead of failing the unit's start.
 		args = append(args, "-p", "ReadWritePaths=-"+w)
 	}
+	if s.cfg.PoolMounts != nil {
+		// At a shutdown systemd stops units in the reverse of their start order:
+		// a pool mount is unmounted only after the backup unit has stopped.
+		seen := map[string]bool{}
+		for _, mp := range s.cfg.PoolMounts() {
+			if mp == "" || seen[mp] {
+				continue
+			}
+			seen[mp] = true
+			args = append(args, "-p", "WantsMountsFor="+mp)
+		}
+	}
 	args = append(args,
 		"--setenv=PATH="+os.Getenv("PATH"), "--setenv=HOME="+workDir, "--setenv=XDG_CACHE_HOME="+s.cfg.CacheDir,
 		"--", s.cfg.Runner, "--spec", specPath, "--state", statePath,
@@ -229,11 +241,16 @@ func (s *Service) Trigger(ctx context.Context, id int64, trigger string) (int64,
 		return 0, err
 	}
 	s.mu.Lock()
+	if s.goingDown {
+		s.mu.Unlock()
+		return 0, ErrShuttingDown
+	}
 	if _, busy := s.running[id]; busy {
 		s.mu.Unlock()
 		return 0, fmt.Errorf("%w: %s", ErrAlreadyRunning, b.Name)
 	}
 	s.running[id] = 0
+	s.runDone[id] = make(chan struct{})
 	base := s.base
 	s.mu.Unlock()
 	run := store.BackupRun{BackupID: &id, BackupName: b.Name, Trigger: trigger, StartedAt: s.now().UnixMilli(), Result: ResultRunning}
@@ -261,6 +278,11 @@ func (s *Service) Trigger(ctx context.Context, id int64, trigger string) (int64,
 func (s *Service) release(id int64) {
 	s.mu.Lock()
 	delete(s.running, id)
+	delete(s.startCancel, id)
+	if ch, ok := s.runDone[id]; ok {
+		close(ch)
+		delete(s.runDone, id)
+	}
 	s.mu.Unlock()
 }
 
@@ -269,11 +291,34 @@ func (s *Service) release(id int64) {
 // unit to watch; when there is not, the run is already recorded.
 func (s *Service) start(ctx context.Context, run store.BackupRun, b store.Backup) bool {
 	log := s.log.With("backup", b.Name, "run_id", run.ID)
+	startCtx, cancelStart := context.WithCancel(ctx)
+	s.mu.Lock()
+	if s.goingDown {
+		s.mu.Unlock()
+		cancelStart()
+		s.finish(ctx, run, ResultCancelled, "the run was stopped", nil)
+		return false
+	}
+	s.startCancel[b.ID] = cancelStart
+	s.mu.Unlock()
+	defer func() {
+		cancelStart()
+		s.mu.Lock()
+		delete(s.startCancel, b.ID)
+		s.mu.Unlock()
+	}()
 	if b.HealthcheckUrl != "" && s.hc != nil {
 		s.hc.Ping(context.WithoutCancel(ctx), b.HealthcheckUrl+"/start")
 	}
-	p, err := s.buildPlan(ctx, b)
+	p, err := s.buildPlan(startCtx, b)
 	if err != nil {
+		if ctx.Err() != nil {
+			return false
+		}
+		if startCtx.Err() != nil {
+			s.finish(ctx, run, ResultCancelled, "the run was stopped", nil)
+			return false
+		}
 		s.finish(ctx, run, ResultFailure, err.Error(), nil)
 		return false
 	}
@@ -286,9 +331,13 @@ func (s *Service) start(ctx context.Context, run store.BackupRun, b store.Backup
 		case s.stacks == nil:
 		default:
 			log.Info("running the stack's prepare unit", "stack", pr.stack, "unit", pr.unit)
-			if err := s.stacks.RunPrepare(ctx, pr.stack, pr.unit); err != nil {
+			if err := s.stacks.RunPrepare(startCtx, pr.stack, pr.unit); err != nil {
 				if ctx.Err() != nil {
 					return false // the next daemon closes the run
+				}
+				if startCtx.Err() != nil {
+					s.finish(ctx, run, ResultCancelled, "the run was stopped", nil)
+					return false
 				}
 				log.Warn("prepare unit failed", "stack", pr.stack, "unit", pr.unit, "error", err)
 				fail = fmt.Sprintf("the prepare step %s failed: %s", pr.unit, err)
@@ -307,7 +356,7 @@ func (s *Service) start(ctx context.Context, run store.BackupRun, b store.Backup
 		}
 	}
 	if p.core && s.cfg.Snapshot != nil {
-		if err := s.cfg.Snapshot(ctx); err != nil {
+		if err := s.cfg.Snapshot(startCtx); err != nil {
 			log.Warn("database snapshot failed", "error", err)
 			for i := range p.spec.Folders {
 				if p.spec.Folders[i].Path == s.cfg.DBBackupDir {
@@ -317,6 +366,13 @@ func (s *Service) start(ctx context.Context, run store.BackupRun, b store.Backup
 		}
 	}
 	if ctx.Err() != nil {
+		return false
+	}
+	s.mu.Lock()
+	stopped := s.goingDown || startCtx.Err() != nil
+	s.mu.Unlock()
+	if stopped {
+		s.finish(ctx, run, ResultCancelled, "the run was stopped", nil)
 		return false
 	}
 	dir := s.runDir(run.ID)
@@ -337,6 +393,12 @@ func (s *Service) start(ctx context.Context, run store.BackupRun, b store.Backup
 		_ = os.RemoveAll(dir)
 		s.finish(ctx, run, ResultFailure, "the run could not be started: "+err.Error(), nil)
 		return false
+	}
+	s.mu.Lock()
+	down := s.goingDown
+	s.mu.Unlock()
+	if down {
+		_ = s.stopUnit(context.WithoutCancel(ctx), unitName(b.ID))
 	}
 	log.Info("backup run started", "unit", unitName(b.ID))
 	return true
@@ -581,6 +643,7 @@ func (s *Service) adoptRunning(ctx context.Context) {
 			continue
 		}
 		s.running[id] = run.ID
+		s.runDone[id] = make(chan struct{})
 		s.mu.Unlock()
 		live[filepath.Base(s.runDir(run.ID))] = true
 		s.log.Info("adopting a backup run the previous daemon left running", "backup", run.BackupName, "run_id", run.ID)

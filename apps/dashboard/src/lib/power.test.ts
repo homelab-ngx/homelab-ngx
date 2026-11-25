@@ -79,6 +79,9 @@ describe("helpers", () => {
   });
 
   it("names a step's state", () => {
+    expect(stepState({ kind: "backup", name: "Nightly", state: "working" })).toEqual({ tone: "info", word: "stopping" });
+    expect(stepState({ kind: "backup", name: "Nightly", state: "done" })).toEqual({ tone: "ok", word: "stopped" });
+    expect(stepState({ kind: "backup", name: "Nightly", state: "failed" })).toEqual({ tone: "warn", word: "failed" });
     expect(stepState({ kind: "mount", name: "/var/mnt/tank", state: "failed" })).toEqual({ tone: "warn", word: "busy" });
     expect(stepState({ kind: "stack", name: "media", state: "done" })).toEqual({ tone: "ok", word: "stopped" });
   });
@@ -168,6 +171,22 @@ describe("phaseRows", () => {
     expect(rows({ stage: "installing", phase: "idle", install: { deploy: d, past: false, reachable: false } })[0]).toBe("Install:restarting");
     expect(rows({ stage: "stopping", install: { past: true, reachable: true }, steps: stacks("working") }).slice(0, 2)).toEqual(["Install:done", "Stop stacks:0 of 1"]);
   });
+
+  it("shows backups before stacks only when backups are stopping", () => {
+    const bk = [{ kind: "backup" as const, name: "Nightly", state: "working" as const }];
+    expect(rows({ phase: "stopping_backups", steps: bk })).toEqual([
+      "Stop backups:0 of 1",
+      "Stop stacks:waiting",
+      "Unmount pools:waiting",
+      "Reboot:waiting",
+      "Back online:waiting",
+    ]);
+    expect(rows({ phase: "stopping_stacks", steps: [{ kind: "backup", name: "Nightly", state: "failed" }, ...stacks("working")] }).slice(0, 3)).toEqual([
+      "Stop backups:1 failed",
+      "  Nightly:failed",
+      "Stop stacks:0 of 1",
+    ]);
+  });
 });
 
 describe("titleOf", () => {
@@ -234,8 +253,9 @@ describe("the overall bar", () => {
     const shares = [
       share({ checked: false, status: undefined, reachable: false, install: { past: false } }),
       share({ install: { deploy: install({ phase: "Restart" }), past: false } }),
-      share({ install: { deploy: install({ result: "healthy" }), past: true }, status: status({ phase: "stopping_stacks" }) }),
-      share({ install: { past: true }, status: status({ phase: "unmounting", steps: [{ kind: "mount", name: "/var/mnt/tank", state: "working" }] }) }),
+      share({ install: { deploy: install({ result: "healthy" }), past: true }, status: status({ phase: "stopping_backups", steps: [{ kind: "backup", name: "Nightly", state: "working" }] }) }),
+      share({ install: { deploy: install({ result: "healthy" }), past: true }, status: status({ phase: "stopping_stacks", steps: [{ kind: "backup", name: "Nightly", state: "done" }, { kind: "stack", name: "media", state: "working" }] }) }),
+      share({ install: { past: true }, status: status({ phase: "unmounting", steps: [{ kind: "backup", name: "Nightly", state: "done" }, { kind: "stack", name: "media", state: "done" }, { kind: "mount", name: "/var/mnt/tank", state: "working" }] }) }),
       share({ install: { past: true }, status: status({ phase: "going_down" }) }),
       share({ install: { past: true }, reachable: false, downSince: 70_000 }),
       share({ install: { past: true }, reachable: false, downSince: -100_000 }),

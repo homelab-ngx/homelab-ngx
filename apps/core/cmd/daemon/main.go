@@ -205,9 +205,9 @@ func run(configPath string) error {
 	met := metrics.New(metrics.DefaultPaths(), stackScopes{stacksSvc}, mdb, logging.Logger("metrics"))
 	stacksSvc.SetUsage(met.Usage)
 
-	// Every shutdown stops the stacks, then unmounts the pools; the work it
-	// would cut off refuses one from the API.
-	pw := power.New(stacksSvc, stor, power.SystemLogind{}, st, r, logging.Logger("power"),
+	// Every shutdown stops any running backups and stacks, then unmounts the pools;
+	// the work it would cut off refuses one from the API.
+	pw := power.New(stacksSvc, bk, stor, power.SystemLogind{}, st, r, logging.Logger("power"),
 		func(context.Context) []string { return stacksSvc.Busy() }, sysMod.Busy, bk.Busy)
 	sysMod.SetPower(pw)
 	// The power profile is written to sysfs at every start: /sys resets at

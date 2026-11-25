@@ -67,6 +67,39 @@ func (f *fakeStacks) Halt(_ context.Context, name string) error {
 	return nil
 }
 
+type fakeBackups struct {
+	j       *journal // set by tests asserting backup ordering/freeze/thaw
+	running []string
+	failing string
+	gate    chan struct{}
+}
+
+func (f *fakeBackups) BeginShutdown() {
+	if f.j != nil {
+		f.j.add("freeze backups")
+	}
+}
+func (f *fakeBackups) CancelShutdown() {
+	if f.j != nil {
+		f.j.add("thaw backups")
+	}
+}
+func (f *fakeBackups) Running(context.Context) ([]string, error) {
+	return f.running, nil
+}
+func (f *fakeBackups) Halt(_ context.Context, name string) error {
+	if f.gate != nil {
+		<-f.gate
+	}
+	if f.j != nil {
+		f.j.add("halt backup " + name)
+	}
+	if name == f.failing {
+		return errors.New("timed out stopping backup")
+	}
+	return nil
+}
+
 type fakeMounts struct {
 	j    *journal
 	mps  []string
@@ -132,28 +165,30 @@ func (m *memMeta) SetMeta(_ context.Context, k, v string) error {
 }
 
 type rig struct {
-	j      *journal
-	stacks *fakeStacks
-	mounts *fakeMounts
-	logind *fakeLogind
-	meta   *memMeta
-	run    *cmdrunnertest.Fake
-	svc    *Service
-	busy   []string
+	j       *journal
+	stacks  *fakeStacks
+	backups *fakeBackups
+	mounts  *fakeMounts
+	logind  *fakeLogind
+	meta    *memMeta
+	run     *cmdrunnertest.Fake
+	svc     *Service
+	busy    []string
 }
 
 func newRig(t *testing.T) *rig {
 	t.Helper()
 	j := &journal{}
 	r := &rig{
-		j:      j,
-		stacks: &fakeStacks{j: j, running: []string{"immich", "players"}},
-		mounts: &fakeMounts{j: j, mps: []string{"/var/mnt/media/photos", "/var/mnt/media"}},
-		logind: &fakeLogind{j: j, down: make(chan PowerAction, 1)},
-		meta:   &memMeta{m: map[string]string{}},
-		run:    cmdrunnertest.NewFake(),
+		j:       j,
+		stacks:  &fakeStacks{j: j, running: []string{"immich", "players"}},
+		backups: &fakeBackups{},
+		mounts:  &fakeMounts{j: j, mps: []string{"/var/mnt/media/photos", "/var/mnt/media"}},
+		logind:  &fakeLogind{j: j, down: make(chan PowerAction, 1)},
+		meta:    &memMeta{m: map[string]string{}},
+		run:     cmdrunnertest.NewFake(),
 	}
-	r.svc = New(r.stacks, r.mounts, r.logind, r.meta, r.run, nil, func(context.Context) []string { return r.busy })
+	r.svc = New(r.stacks, r.backups, r.mounts, r.logind, r.meta, r.run, nil, func(context.Context) []string { return r.busy })
 	r.svc.bootID = "boot-1"
 	// Tests that read the status before a shutdown do not wait long for a
 	// page to see it ready; the tests of that wait set their own.
@@ -552,5 +587,70 @@ func TestAQuickStackNamesNothing(t *testing.T) {
 		if s.WaitingOn != nil {
 			t.Fatalf("step %+v", s)
 		}
+	}
+}
+
+func TestRequestStopsBackupsBeforeStacksAndMounts(t *testing.T) {
+	r := newRig(t)
+	r.backups.j = r.j
+	r.backups.running = []string{"Nightly", "Photos"}
+	gate := make(chan struct{})
+	r.backups.gate = gate
+	if err := r.svc.Request(context.Background(), Reboot, true, false); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for r.phase() != PhaseBackups {
+		if time.Now().After(deadline) {
+			t.Fatalf("never entered stopping_backups; phase=%s journal=%v", r.phase(), r.j.list())
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(gate)
+	r.wait(t)
+	got := r.j.list()
+	if !slices.Contains(got[:2], "freeze backups") || !slices.Contains(got[2:4], "halt backup Nightly") || !slices.Contains(got[2:4], "halt backup Photos") {
+		t.Fatalf("journal %v", got)
+	}
+	lastHaltBackup := max(slices.Index(got, "halt backup Nightly"), slices.Index(got, "halt backup Photos"))
+	firstHaltStack := min(slices.Index(got, "halt immich"), slices.Index(got, "halt players"))
+	if lastHaltBackup > firstHaltStack || firstHaltStack > slices.Index(got, "unmount /var/mnt/media/photos") {
+		t.Fatalf("order wrong: %v", got)
+	}
+	st := r.svc.Status(context.Background())
+	if st.Phase != PhaseDown || len(st.Steps) != 6 {
+		t.Fatalf("status %+v", st)
+	}
+	if st.Steps[0].Kind != StepBackup || st.Steps[1].Kind != StepBackup || st.Steps[0].State != StateDone || st.Steps[1].State != StateDone {
+		t.Fatalf("backup steps %+v", st.Steps[:2])
+	}
+}
+
+func TestFailedBackupHaltDoesNotBlockShutdown(t *testing.T) {
+	r := newRig(t)
+	r.backups.j = r.j
+	r.backups.running = []string{"Nightly"}
+	r.backups.failing = "Nightly"
+	if err := r.svc.Request(context.Background(), Reboot, true, false); err != nil {
+		t.Fatal(err)
+	}
+	r.wait(t)
+	st := r.svc.Status(context.Background())
+	if st.Steps[0].Kind != StepBackup || st.Steps[0].State != StateFailed || st.Steps[0].Detail == "" {
+		t.Fatalf("backup step = %+v", st.Steps[0])
+	}
+}
+
+func TestCallOffCancelsBackupShutdown(t *testing.T) {
+	r := newRig(t)
+	r.backups.j = r.j
+	ctx := context.Background()
+	r.svc.inhibit(ctx)
+	r.svc.prepare(ctx, true, PowerOff)
+	before := len(r.j.list())
+	r.svc.prepare(ctx, false, PowerOff)
+	tail := r.j.list()[before:]
+	if !slices.Equal(tail, []string{"restore", "thaw", "thaw backups", "inhibit"}) {
+		t.Fatalf("after calling off: %v", tail)
 	}
 }

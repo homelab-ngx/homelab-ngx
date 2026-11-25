@@ -101,18 +101,24 @@ function segments(action: PowerAction, install: boolean) {
 }
 const at = ([a, b]: readonly [number, number], f: number) => a + (b - a) * Math.min(1, Math.max(0, f));
 
-/** How far the daemon is in stopping the host: the stacks are the first half, the mounts the second. */
+/** How far the daemon is in stopping the host: backups (when running), stacks, then mounts. */
 function prepShare(s: PowerStatus | undefined): number {
   if (!s) return 0;
+  if (s.phase === "going_down") return 1;
   const part = (kind: PowerStep["kind"]) => {
     const all = s.steps.filter((x) => x.kind === kind);
     if (all.length === 0) return 0.5;
     const n = all.reduce((sum, x) => sum + (x.state === "done" || x.state === "failed" ? 1 : x.state === "working" ? 0.4 : 0), 0);
     return n / all.length;
   };
+  if (s.phase === "stopping_backups" || s.steps.some((x) => x.kind === "backup")) {
+    if (s.phase === "stopping_backups") return part("backup") / 3;
+    if (s.phase === "stopping_stacks") return (1 + part("stack")) / 3;
+    if (s.phase === "unmounting") return (2 + part("mount")) / 3;
+    return 0;
+  }
   if (s.phase === "stopping_stacks") return part("stack") / 2;
   if (s.phase === "unmounting") return 0.5 + part("mount") / 2;
-  if (s.phase === "going_down") return 1;
   return 0;
 }
 
@@ -191,7 +197,7 @@ export function titleOf(stage: Stage, action: PowerAction, installing: boolean):
 }
 
 // How far the old boot got, by the last phase read from it.
-const reached: Partial<Record<PowerStatus["phase"], number>> = { stopping_stacks: 0, unmounting: 1, going_down: 2, failed: 2 };
+const reached: Partial<Record<PowerStatus["phase"], number>> = { stopping_backups: 0, stopping_stacks: 1, unmounting: 2, going_down: 3, failed: 3 };
 
 export interface PhaseInput {
   action: PowerAction;
@@ -237,22 +243,25 @@ export function phaseRows(i: PhaseInput): Row[] {
       return out;
     }
   }
-  const at = i.sawReady ? 2 : (reached[i.phase ?? "idle"] ?? -1);
-  const group = (n: 0 | 1, kind: PowerStep["kind"], name: string, trouble: string) => {
+  const hasBackups = i.phase === "stopping_backups" || i.steps.some((s) => s.kind === "backup");
+  const first = hasBackups ? 0 : 1;
+  const at = i.sawReady ? 3 : (reached[i.phase ?? "idle"] ?? -1);
+  const group = (n: 0 | 1 | 2, kind: PowerStep["kind"], name: string, trouble: string) => {
     const all = i.steps.filter((s) => s.kind === kind);
     const over = all.filter((s) => s.state === "done" || s.state === "failed").length;
     const bad = all.filter((s) => s.state === "failed").length;
     const key = `group-${kind}`;
-    if (stage === "failed" && n === Math.min(at, 1)) return [row(key, name, "bad", "failed", "bad")];
+    if (stage === "failed" && n === Math.min(at, 2)) return [row(key, name, "bad", "failed", "bad")];
     if (at > n) return [row(key, name, bad ? "warn" : "ok", bad ? `${bad} ${trouble}` : "done", bad ? "warn" : "full"), ...troubled(all, away)];
     if (at === n && away) return [row(key, name, "idle", "not seen", "unknown")];
-    if (at === n || (n === 0 && (stage === "stopping" || stage === "starting"))) {
+    if (at === n || (n === first && (stage === "stopping" || stage === "starting"))) {
       return [row(key, name, "info", all.length ? `${over} of ${all.length}` : "starting", "run"), ...troubled(all, away)];
     }
-    if (n === 0 && !i.install && stage === "refused") return [row(key, name, "bad", "failed", "bad")];
+    if (n === first && !i.install && stage === "refused") return [row(key, name, "bad", "failed", "bad")];
     return [row(key, name, "idle", "waiting", "empty")];
   };
-  out.push(...group(0, "stack", "Stop stacks", "killed"), ...group(1, "mount", "Unmount pools", "busy"));
+  if (hasBackups) out.push(...group(0, "backup", "Stop backups", "failed"));
+  out.push(...group(1, "stack", "Stop stacks", "killed"), ...group(2, "mount", "Unmount pools", "busy"));
   out.push(...last(i));
   return out;
 }
@@ -297,7 +306,7 @@ export function stepState(s: PowerStep, hostGone = false): { tone: Tone; word: s
     case "working":
       return { tone: "info", word: mount ? "unmounting" : "stopping" };
     case "failed":
-      return mount ? { tone: "warn", word: "busy" } : { tone: "bad", word: "killed" };
+      return mount ? { tone: "warn", word: "busy" } : s.kind === "backup" ? { tone: "warn", word: "failed" } : { tone: "bad", word: "killed" };
   }
   return { tone: "idle", word: "waiting" };
 }

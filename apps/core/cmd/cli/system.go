@@ -190,6 +190,8 @@ func followPower(c *cli.Context, a power.PowerAction) error {
 
 func phaseText(p power.PowerPhase) string {
 	switch p {
+	case power.PhaseBackups:
+		return "stopping the backups"
 	case power.PhaseStacks:
 		return "stopping the stacks"
 	case power.PhaseMounts:
@@ -204,7 +206,10 @@ func phaseText(p power.PowerPhase) string {
 
 func stepText(s power.PowerStep) string {
 	what, done, doing := "stack "+s.Name, " stopped", "stopping "
-	if s.Kind == power.StepMount {
+	switch s.Kind {
+	case power.StepBackup:
+		what = "backup " + s.Name
+	case power.StepMount:
 		what, done, doing = s.Name, " unmounted", "unmounting "
 	}
 	switch s.State {

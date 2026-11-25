@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { createMutation, useQueryClient } from "@tanstack/svelte-query";
+  import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { api, call, describe, type Schema } from "#lib/api/client.ts";
@@ -28,6 +28,10 @@
   let installing = $state(false);
   let when = $state<"later" | "now" | "at">("later");
   let at = $state("03:30");
+
+  const power = createQuery(() => ({ queryKey: powerKey, queryFn: fetchPower, enabled: installing, staleTime: 0 }));
+  const busyWork = $derived(power.data?.busy ?? []);
+  const interrupts = $derived(when === "now" && busyWork.length > 0);
 
   const op = createMutation(() => ({
     mutationFn: (run: () => Promise<unknown>) => run(),
@@ -216,8 +220,16 @@
         <input type="time" class="input w-32" aria-label="Reboot time" bind:value={at} disabled={when !== "at"} />
       </label>
     </fieldset>
+    {#if interrupts}
+      <div role="status" class="mt-3 rounded-md bg-warn-soft px-3 py-2 text-warn">
+        <p>Interrupted:</p>
+        <ul class="mt-1 list-inside list-disc">
+          {#each busyWork as b (b)}<li>{b}</li>{/each}
+        </ul>
+      </div>
+    {/if}
   {/snippet}
   {#snippet actions()}
-    <button type="button" class="btn btn-primary" onclick={install}>Update</button>
+    <button type="button" class="btn {interrupts ? 'btn-danger' : 'btn-primary'}" onclick={install}>{interrupts ? "Update anyway" : "Update"}</button>
   {/snippet}
 </Modal>

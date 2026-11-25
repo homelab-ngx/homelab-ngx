@@ -94,7 +94,7 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "runBackup", Method: http.MethodPost, Path: "/backups/{id}/run", Tags: tags,
 		Summary: "Start a backup now.", DefaultStatus: http.StatusAccepted,
-		Description: "Errors: `404 unknown_backup`; `409 already_running`; `409 not_ready` when it has no " +
+		Description: "Errors: `404 unknown_backup`; `409 already_running`; `409 shutting_down`; `409 not_ready` when it has no " +
 			"source, no destination, or a restic destination whose password is not confirmed.",
 		Errors: []int{http.StatusNotFound, http.StatusConflict},
 	}, h.runBackup)
@@ -172,6 +172,8 @@ func problem(err error) error {
 		return httpx.NotFound("unknown_run", "%s", err)
 	case errors.Is(err, ErrAlreadyRunning):
 		return httpx.Conflict("already_running", "%s", err)
+	case errors.Is(err, ErrShuttingDown):
+		return httpx.Conflict("shutting_down", "%s", err)
 	case errors.Is(err, ErrNotReady):
 		return httpx.Conflict("not_ready", "%s", err)
 	case errors.Is(err, ErrNameTaken):

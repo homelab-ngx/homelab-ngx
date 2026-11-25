@@ -14,19 +14,21 @@ const (
 type PowerPhase string
 
 const (
-	PhaseIdle   PowerPhase = "idle" // no shutdown under way
-	PhaseStacks PowerPhase = "stopping_stacks"
-	PhaseMounts PowerPhase = "unmounting"
-	PhaseDown   PowerPhase = "going_down" // handed to systemd: the daemon stops next
-	PhaseFailed PowerPhase = "failed"     // the shutdown did not start; see Error
+	PhaseIdle    PowerPhase = "idle" // no shutdown under way
+	PhaseBackups PowerPhase = "stopping_backups"
+	PhaseStacks  PowerPhase = "stopping_stacks"
+	PhaseMounts  PowerPhase = "unmounting"
+	PhaseDown    PowerPhase = "going_down" // handed to systemd: the daemon stops next
+	PhaseFailed  PowerPhase = "failed"     // the shutdown did not start; see Error
 )
 
 // PowerStepKind is what a step stops.
 type PowerStepKind string
 
 const (
-	StepStack PowerStepKind = "stack"
-	StepMount PowerStepKind = "mount"
+	StepBackup PowerStepKind = "backup"
+	StepStack  PowerStepKind = "stack"
+	StepMount  PowerStepKind = "mount"
 )
 
 // PowerStepState is how a step is going.
@@ -39,12 +41,12 @@ const (
 	StateFailed  PowerStepState = "failed"
 )
 
-// PowerStep is one stack stopped or one file system unmounted.
+// PowerStep is one backup stopped, one stack stopped, or one file system unmounted.
 type PowerStep struct {
-	Kind   PowerStepKind  `json:"kind" enum:"stack,mount"`
-	Name   string         `json:"name" doc:"The stack name, or the mountpoint."`
+	Kind   PowerStepKind  `json:"kind" enum:"backup,stack,mount"`
+	Name   string         `json:"name" doc:"The backup name, stack name, or mountpoint."`
 	State  PowerStepState `json:"state" enum:"waiting,working,done,failed"`
-	Detail string         `json:"detail,omitempty" doc:"Why a step failed. A stack that did not halt was killed; a mount still in use is unmounted last, as the host goes down."`
+	Detail string         `json:"detail,omitempty" doc:"Why a step failed. A backup that did not stop cleanly timed out; a stack that did not halt was killed; a mount still in use is unmounted last, as the host goes down."`
 	// WaitingOn is set once a stack has been stopping for a while.
 	WaitingOn *PowerWait `json:"waiting_on,omitempty" doc:"A stack still stopping after 5 s: the unit it waits for and when systemd kills it."`
 }
@@ -67,9 +69,9 @@ type PowerScheduled struct {
 // needs to know.
 type PowerStatus struct {
 	Action    PowerAction `json:"action,omitempty" enum:"reboot,poweroff" doc:"The shutdown under way; empty when none is."`
-	Phase     PowerPhase  `json:"phase" enum:"idle,stopping_stacks,unmounting,going_down,failed"`
+	Phase     PowerPhase  `json:"phase" enum:"idle,stopping_backups,stopping_stacks,unmounting,going_down,failed"`
 	StartedAt *time.Time  `json:"started_at,omitempty"`
-	Steps     []PowerStep `json:"steps" doc:"The stacks stopped, then the pools and partitions unmounted, in order."`
+	Steps     []PowerStep `json:"steps" doc:"The backups stopped, then the stacks stopped, then the pools and partitions unmounted, in order."`
 	Error     string      `json:"error,omitempty" doc:"Why the shutdown did not start (phase failed)."`
 	Busy      []string    `json:"busy" doc:"Work a shutdown would interrupt now: stack operations, an update, backups. Only while idle."`
 	Frozen    []string    `json:"frozen" doc:"The frozen stacks. A shutdown asks for thaw (they stop cleanly) or force (they are killed, and what they held is lost). Only while idle."`

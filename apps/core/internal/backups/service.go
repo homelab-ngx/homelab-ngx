@@ -54,6 +54,8 @@ var (
 	ErrNotReady = errors.New("backup is not ready to run")
 	// ErrConfirm means a reveal was not confirmed with the destination's name.
 	ErrConfirm = errors.New("confirmation does not match the destination's name")
+	// ErrShuttingDown means the host is shutting down and no new run may start.
+	ErrShuttingDown = errors.New("the host is shutting down")
 )
 
 // InvalidError is a request the service refuses, with the field at fault.
@@ -175,11 +177,14 @@ type Service struct {
 	hc     HealthPinger
 	log    *slog.Logger
 
-	mu      sync.Mutex
-	base    context.Context // set by Run; parent of every run's context
-	running map[int64]int64 // backup id -> run id in flight
-	cron    *cron.Cron
-	sig     string // signature of what cron was built from
+	mu          sync.Mutex
+	base        context.Context // set by Run; parent of every run's context
+	goingDown   bool
+	running     map[int64]int64              // backup id -> run id in flight
+	startCancel map[int64]context.CancelFunc // cancels prepare/snapshot before launch
+	runDone     map[int64]chan struct{}      // closed by release when a run goroutine finishes
+	cron        *cron.Cron
+	sig         string // signature of what cron was built from
 	// started is when the Service was built (the daemon start): a backup that
 	// never succeeded is measured from here.
 	started   time.Time
@@ -202,7 +207,8 @@ func New(cfg Config, sd *systemd.Client, r cmdrunner.Runner, st *store.Store, st
 	}
 	return &Service{
 		cfg: cfg, sd: sd, r: r, st: st, q: st.Queries(), stacks: stacks, notify: notify, hc: hc, log: log,
-		base: context.Background(), running: map[int64]int64{}, started: time.Now(), runReady: make(chan struct{}),
+		base: context.Background(), running: map[int64]int64{}, startCancel: map[int64]context.CancelFunc{}, runDone: map[int64]chan struct{}{},
+		started: time.Now(), runReady: make(chan struct{}),
 		now: time.Now, pollEvery: 2 * time.Second, retryEvery: 30 * time.Second,
 	}
 }

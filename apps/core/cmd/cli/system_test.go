@@ -102,10 +102,16 @@ func TestRebootWithFrozenStacksAsksForThawOrForce(t *testing.T) {
 }
 
 func TestStepText(t *testing.T) {
+	if got := phaseText(power.PhaseBackups); got != "stopping the backups" {
+		t.Errorf("phaseText(PhaseBackups) = %q, want %q", got, "stopping the backups")
+	}
 	for _, tt := range []struct {
 		s    power.PowerStep
 		want string
 	}{
+		{power.PowerStep{Kind: power.StepBackup, Name: "Nightly", State: power.StateWorking}, "… stopping backup Nightly"},
+		{power.PowerStep{Kind: power.StepBackup, Name: "Nightly", State: power.StateDone}, "✔ backup Nightly stopped"},
+		{power.PowerStep{Kind: power.StepBackup, Name: "Nightly", State: power.StateFailed, Detail: "timed out"}, "✘ backup Nightly: timed out"},
 		{power.PowerStep{Kind: power.StepStack, Name: "immich", State: power.StateDone}, "✔ stack immich stopped"},
 		{power.PowerStep{Kind: power.StepMount, Name: "/var/mnt/media", State: power.StateWorking}, "… unmounting /var/mnt/media"},
 		{power.PowerStep{Kind: power.StepMount, Name: "/var/mnt/media", State: power.StateFailed, Detail: "still in use"}, "✘ /var/mnt/media: still in use"},

@@ -189,7 +189,7 @@
       refused: view.error,
       installing: reachable ? `Installing ${to}.` : "Restarting the daemon.",
       install_failed: view.error,
-      stopping: "Stopping the stacks and unmounting the pools.",
+      stopping: last?.phase === "stopping_backups" ? "Stopping the backups before the stacks and pools." : "Stopping the stacks and unmounting the pools.",
       failed: view.error,
       ready: action === "reboot" ? "Ready. Rebooting now." : "Ready. Powering off now.",
       down: "Offline while it reboots.",

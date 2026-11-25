@@ -1,6 +1,7 @@
 import { QueryClient } from "@tanstack/svelte-query";
-import { cleanup, render, screen } from "@testing-library/svelte";
-import { afterEach, describe, expect, it } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { api } from "#lib/api/client.ts";
 import type { ImageStatus } from "./core.ts";
 import Harness from "./ImageCardHarness.test.svelte";
 
@@ -51,5 +52,28 @@ describe("ImageCard", () => {
   it("hides the build without a source", () => {
     show(img({ source: "" }));
     expect(screen.queryByRole("button", { name: "Build from main" })).toBeNull();
+  });
+  it("warns when rebooting now would interrupt a running backup", async () => {
+    const get = vi.spyOn(api, "GET").mockResolvedValue({
+      data: { phase: "idle", steps: [], busy: ["backup All stacks except Immich"], frozen: [], boot_id: "b1", expected_seconds: 90 },
+      response: new Response(null, { status: 200 }),
+    } as never);
+    try {
+      show(img({ available: ["0.2.2"], core: { active: "0.0.202611182129", installed: [], available: ["0.2.2"] } }));
+      await fireEvent.click(screen.getByRole("button", { name: "Update to 0.2.2…" }));
+      expect(text()).not.toContain("Interrupted:");
+      expect(screen.getByRole("button", { name: "Update" })).toBeTruthy();
+
+      await fireEvent.click(screen.getByLabelText("Now"));
+      await vi.waitFor(() => expect(text()).toContain("backup All stacks except Immich"));
+      expect(text()).toContain("Interrupted:");
+      expect(screen.getByRole("button", { name: "Update anyway" })).toBeTruthy();
+
+      await fireEvent.click(screen.getByLabelText("At"));
+      expect(text()).not.toContain("Interrupted:");
+      expect(screen.getByRole("button", { name: "Update" })).toBeTruthy();
+    } finally {
+      get.mockRestore();
+    }
   });
 });

@@ -1,5 +1,5 @@
 // Package power reboots and powers off the host. Before the host goes down
-// the daemon stops the running stacks, then unmounts the pools and
+// the daemon stops any running backups and stacks, then unmounts the pools and
 // partitions, so nothing is cut off mid-write. It does so for every shutdown
 // that goes through systemd-logind (this API, `shutdown -r`, `systemctl
 // reboot`, the power button): it holds a delay lock, and logind waits for
@@ -42,6 +42,17 @@ type Stacks interface {
 	Holdup(ctx context.Context, name string) (unit, description string, killAt time.Time, ok bool)
 }
 
+// Backups is the backup runs the sequence stops (*backups.Service).
+type Backups interface {
+	// BeginShutdown refuses new backup triggers; CancelShutdown allows them again.
+	BeginShutdown()
+	CancelShutdown()
+	// Running names the backups with a run in flight.
+	Running(ctx context.Context) ([]string, error)
+	// Halt stops the named running backup before pools unmount.
+	Halt(ctx context.Context, name string) error
+}
+
 // Mounts is the file systems the sequence unmounts (*storage.Service).
 type Mounts interface {
 	// Mounted lists the daemon's mounts, the deepest first.
@@ -78,15 +89,16 @@ type lastShutdown struct {
 
 // Service runs the power actions.
 type Service struct {
-	stacks Stacks
-	mounts Mounts
-	logind Logind
-	meta   Meta
-	r      cmdrunner.Runner
-	busy   []func(context.Context) []string
-	log    *slog.Logger
-	now    func() time.Time
-	bootID string
+	stacks  Stacks
+	backups Backups
+	mounts  Mounts
+	logind  Logind
+	meta    Meta
+	r       cmdrunner.Runner
+	busy    []func(context.Context) []string
+	log     *slog.Logger
+	now     func() time.Time
+	bootID  string
 
 	mu       sync.Mutex
 	st       PowerStatus   // Steps, Phase, Action, StartedAt, Error
@@ -105,12 +117,12 @@ type Service struct {
 }
 
 // New makes the service. busy lists the work a reboot would interrupt.
-func New(stacks Stacks, mounts Mounts, logind Logind, meta Meta, r cmdrunner.Runner, log *slog.Logger, busy ...func(context.Context) []string) *Service {
+func New(stacks Stacks, backups Backups, mounts Mounts, logind Logind, meta Meta, r cmdrunner.Runner, log *slog.Logger, busy ...func(context.Context) []string) *Service {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Service{
-		stacks: stacks, mounts: mounts, logind: logind, meta: meta, r: r, busy: busy, log: log,
+		stacks: stacks, backups: backups, mounts: mounts, logind: logind, meta: meta, r: r, busy: busy, log: log,
 		now: time.Now, bootID: readBootID(), st: PowerStatus{Phase: PhaseIdle, Steps: []PowerStep{}},
 		expected: defaultReboot, ctx: context.Background(),
 		watchWindow: 3 * time.Second, lingerMax: 3 * time.Second,
@@ -225,6 +237,9 @@ func (s *Service) callOff(ctx context.Context) {
 		s.log.Warn("the shutdown was called off; mounting the pools and starting the stacks again")
 		s.mounts.Restore(ctx)
 		s.stacks.CancelShutdown()
+		if s.backups != nil {
+			s.backups.CancelShutdown()
+		}
 	}
 	s.mu.Lock()
 	held := s.release != nil
@@ -292,17 +307,51 @@ func (s *Service) Busy(ctx context.Context) []string {
 	return out
 }
 
-// sequence stops the stacks, then unmounts the pools and partitions, and
-// records the time for the next boot's countdown. Frozen stacks are killed
-// when kill, and otherwise thawed by their halt. It reports whether the host
-// may go down: always, unless ctx ended.
+// sequence stops any running backups and stacks, then unmounts the pools and
+// partitions, and records the time for the next boot's countdown. Frozen
+// stacks are killed when kill, and otherwise thawed by their halt. It reports
+// whether the host may go down: always, unless ctx ended.
 func (s *Service) sequence(ctx context.Context, a PowerAction, kill bool) bool {
 	s.stacks.BeginShutdown()
+	var bnames []string
+	if s.backups != nil {
+		s.backups.BeginShutdown()
+		var err error
+		bnames, err = s.backups.Running(ctx)
+		if err != nil {
+			s.log.Warn("cannot list the running backups", "error", err)
+		}
+	}
+	phase := PhaseStacks
+	if len(bnames) > 0 {
+		phase = PhaseBackups
+	}
 	now := s.now()
 	s.mu.Lock()
-	s.st = PowerStatus{Action: a, Phase: PhaseStacks, StartedAt: &now, Steps: []PowerStep{}}
+	s.st = PowerStatus{Action: a, Phase: phase, StartedAt: &now, Steps: []PowerStep{}}
 	s.downSeen = make(chan struct{})
 	s.mu.Unlock()
+
+	if len(bnames) > 0 {
+		for _, n := range bnames {
+			s.add(PowerStep{Kind: StepBackup, Name: n, State: StateWorking})
+		}
+		var bwg sync.WaitGroup
+		for _, n := range bnames {
+			bwg.Add(1)
+			go func() {
+				defer bwg.Done()
+				if err := s.backups.Halt(ctx, n); err != nil {
+					s.log.Warn("backup did not stop cleanly", "backup", n, "error", err)
+					s.set(StepBackup, n, StateFailed, err.Error())
+					return
+				}
+				s.set(StepBackup, n, StateDone, "")
+			}()
+		}
+		bwg.Wait()
+		s.phase(PhaseStacks)
+	}
 
 	names, err := s.stacks.Running(ctx)
 	if err != nil {
