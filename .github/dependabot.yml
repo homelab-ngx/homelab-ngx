@@ -1,0 +1,14 @@
+# Keeps the actions pinned by commit in .github current. Each pin carries
+# its version as a comment, and Dependabot updates both.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/*
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - "*"
