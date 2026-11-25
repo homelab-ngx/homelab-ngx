@@ -8,11 +8,14 @@
   import { fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
   import { clock } from "#lib/clock.svelte.ts";
   import NotificationsDialog from "#lib/components/NotificationsDialog.svelte";
+  import StatusMark from "#lib/components/StatusMark.svelte";
   import { help, toggleHelp } from "#lib/help.svelte.ts";
   import { fetchHostSettings, hostKeys } from "#lib/host.ts";
   import type { NavItem } from "#lib/nav.ts";
+  import { notificationsTray } from "#lib/notifications-tray.svelte.ts";
   import { attention, notificationKeys, type Snapshot } from "#lib/notifications.ts";
   import { fetchPower, powerHref, powerKey, underWay } from "#lib/power.ts";
+  import { fetchSettingsStatus, settingsAttentionTone, settingsStatusKey } from "#lib/settings.ts";
 
   interface Props {
     active: string;
@@ -56,7 +59,14 @@
     refetchInterval: 30_000,
   }));
   const count = $derived(attention(notes.data));
-  let tray = $state(false);
+
+  const settingsStatus = createQuery(() => ({
+    queryKey: settingsStatusKey,
+    queryFn: fetchSettingsStatus,
+    refetchInterval: 30_000,
+  }));
+  const settingsTone = $derived(settingsAttentionTone(settingsStatus.data));
+  const settingsHint = $derived(settingsTone === "bad" ? "needs attention" : settingsTone === "warn" ? "warning" : settingsTone === "info" ? "update ready" : "");
 
   const pending = $derived((stacks.data ?? []).filter((s) => s.generation > 0 && s.update_state !== "up_to_date").length);
 </script>
@@ -91,8 +101,8 @@
         type="button"
         class="relative flex shrink-0 items-center rounded-md py-1 pr-3 pl-2 text-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-accent aria-expanded:bg-accent-soft aria-expanded:text-accent"
         aria-label={count > 0 ? `Notifications, ${count} need attention` : "Notifications"}
-        aria-expanded={tray}
-        onclick={() => (tray = !tray)}
+        aria-expanded={notificationsTray.open}
+        onclick={() => (notificationsTray.open = !notificationsTray.open)}
       >
         <span class="relative">
           <Bell class="size-4" aria-hidden="true" />
@@ -112,11 +122,15 @@
       <a
         href={settings.href}
         aria-current={active === settings.href ? "page" : undefined}
-        class="relative flex shrink-0 items-center border-l border-line pl-2 text-muted hover:text-fg aria-[current=page]:font-semibold aria-[current=page]:text-core sm:pl-3"
+        class="relative flex shrink-0 items-center gap-1.5 border-l border-line pl-2 text-muted hover:text-fg aria-[current=page]:font-semibold aria-[current=page]:text-core sm:pl-3"
       >
         <!-- A phone has no room for the word; the gear keeps Settings on screen. -->
         <Settings class="size-4 sm:hidden" aria-hidden="true" />
         <span class="max-sm:sr-only">{settings.label}</span>
+        {#if settingsTone}
+          <StatusMark tone={settingsTone} />
+          <span class="sr-only">, {settingsHint}</span>
+        {/if}
       </a>
     </nav>
   </header>
@@ -126,4 +140,4 @@
   <footer class="px-4 py-4 text-center text-xs text-muted">homelab-ngx</footer>
 </div>
 
-{#if tray}<NotificationsDialog snapshot={notes.data} onClose={() => (tray = false)} />{/if}
+{#if notificationsTray.open}<NotificationsDialog snapshot={notes.data} onClose={() => (notificationsTray.open = false)} />{/if}

@@ -6,7 +6,7 @@
   import RowMenu from "#lib/components/RowMenu.svelte";
   import Switch from "#lib/components/Switch.svelte";
   import { bytes } from "#lib/format.ts";
-  import { capacity, diskState, fullness, poolBlocked, removal, role, running, segmentColor, segments } from "#lib/storage.ts";
+  import { capacity, flaggedDisks, fullness, poolBlocked, poolDiskState, removal, role, running, segmentColor, segments } from "#lib/storage.ts";
 
   type Pool = Schema<"Pool">;
   type Disk = Schema<"Disk">;
@@ -127,6 +127,27 @@
     {#if p.operation && (!advanced || !p.disks.some((d) => d.path === p.operation?.disk))}
       <div class="mt-3 border-t border-line pt-3">{@render removalLine(p.operation)}</div>
     {/if}
+    {#if !advanced}
+      {@const flagged = flaggedDisks(p.disks)}
+      {#if flagged.length > 0}
+        <ul class="mt-3 grid gap-1.5 border-t border-line pt-3" aria-label="Degraded disks">
+          {#each flagged as d (d.path)}
+            {@const st = poolDiskState(d)}
+            {@const h = d.health}
+            <li class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <Pill tone={st.tone}>{st.word}</Pill>
+              <span>{d.name}</span>
+              {#if d.friendly_name || d.model}
+                <span class="text-muted">{d.friendly_name || d.model}</span>
+              {/if}
+              {#if h && h.bad_sectors > 0}
+                <span class="text-xs text-warn tabular-nums">{h.bad_sectors} bad sectors</span>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    {/if}
   </div>
 
   {#if advanced}
@@ -150,7 +171,7 @@
         </thead>
         <tbody>
           {#each p.disks as d (d.path)}
-            {@const st = diskState(d)}
+            {@const st = poolDiskState(d)}
             {@const h = d.health}
             <tr class="border-b border-line last:border-0">
               <td class="px-3 py-2">

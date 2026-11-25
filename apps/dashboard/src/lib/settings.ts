@@ -90,3 +90,14 @@ export function movedTile(hash: string): string {
   if (key === "host") return "/settings/system#host";
   return MOVED.has(key) ? `/settings/${key}` : "/settings";
 }
+
+/** Header indicator tone: bad for any fault, warn for any warning, or info for a waiting update. */
+export function settingsAttentionTone(status: Schema<"SettingsStatus"> | undefined): "bad" | "warn" | "info" | null {
+  const tiles = status?.tiles;
+  if (!tiles) return null;
+  const states = Object.values(tiles).map((t) => t.state);
+  if (states.includes("bad")) return "bad";
+  if (states.includes("warn")) return "warn";
+  if (tiles.updates?.state === "info") return "info";
+  return null;
+}

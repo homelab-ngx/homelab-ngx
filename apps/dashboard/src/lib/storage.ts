@@ -33,6 +33,30 @@ export function capacity(p: Pool): Capacity | null {
   };
 }
 
+/** Space across all mounted pools with reported size. */
+export interface PoolsSummary extends Capacity {
+  count: number;
+  maxPercent: number;
+  singlePool: Pool | null;
+}
+
+export function poolsSummary(pools: Pool[]): PoolsSummary | null {
+  const sized = pools.flatMap((pool) => {
+    const cap = capacity(pool);
+    return cap ? [{ pool, cap }] : [];
+  });
+  if (sized.length === 0) return null;
+  if (sized.length === 1) {
+    const { pool, cap } = sized[0]!;
+    return { ...cap, count: 1, maxPercent: cap.percent, singlePool: pool };
+  }
+  const used = sized.reduce((n, x) => n + x.cap.used, 0);
+  const total = sized.reduce((n, x) => n + x.cap.total, 0);
+  const free = sized.reduce((n, x) => n + x.cap.free, 0);
+  const maxPercent = Math.max(...sized.map((x) => x.cap.percent));
+  return { used, total, free, percent: (used / total) * 100, count: sized.length, maxPercent, singlePool: null };
+}
+
 /** Tone for how full a pool is. */
 export const fullness = (percent: number): Tone => (percent > 90 ? "bad" : percent > 75 ? "warn" : "ok");
 
@@ -65,6 +89,21 @@ export function diskState(d: Disk): DiskState {
   if (!h.passed) return { tone: "bad", word: "failing" };
   if (h.bad_sectors > 0) return { tone: "warn", word: "bad sectors" };
   return { tone: "ok", word: "healthy" };
+}
+
+/** Disk health in a pool: includes bcachefs member state alongside SMART health. */
+export function poolDiskState(d: Disk): DiskState {
+  if (d.state === "failed") return { tone: "bad", word: "failed" };
+  if (d.state === "ro") return { tone: "warn", word: "read-only" };
+  return diskState(d);
+}
+
+/** Disks in a pool that need attention (failing, failed, read-only, or bad sectors). */
+export function flaggedDisks(disks: Disk[]): Disk[] {
+  return disks.filter((d) => {
+    const tone = poolDiskState(d).tone;
+    return tone === "bad" || tone === "warn";
+  });
 }
 
 /** One line on the disks as a whole: the worst first, or "all healthy". */

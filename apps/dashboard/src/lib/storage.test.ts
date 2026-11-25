@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Schema, Stack } from "./api/client.ts";
-import { ancestors, browseDefault, browseHref, editHref, hostPathProblem, hostTree, joinPath, parentOf, relativeTo, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, folderName, folderSuggestions, foldersOf, pathParts, trimSlash, maxCopies, measuredAt, folderGroups, poolBlocked, removal, removeBlocked, role, running, segmentColor, segments, swatchOf, systemDisk, tiering, usedBy, withContents } from "./storage.ts";
+import { ancestors, browseDefault, browseHref, editHref, hostPathProblem, hostTree, joinPath, parentOf, relativeTo, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, flaggedDisks, folderName, folderSuggestions, foldersOf, pathParts, trimSlash, maxCopies, measuredAt, folderGroups, poolBlocked, poolDiskState, poolsSummary, removal, removeBlocked, role, running, segmentColor, segments, swatchOf, systemDisk, tiering, usedBy, withContents } from "./storage.ts";
 
 type Pool = Schema<"Pool">;
 type Disk = Schema<"Disk">;
@@ -339,5 +339,43 @@ describe("the ledger", () => {
     expect(poolBlocked(pool())).toBe("");
     const leaving = pool({ operation: { kind: "remove", disk: "/dev/sdc", phase: "moving", left_bytes: 1, started_at: "" } as Pool["operation"] });
     expect(poolBlocked(leaving)).toBe("sdc is leaving the pool; disk changes wait until it is out.");
+  });
+});
+
+describe("poolDiskState, flaggedDisks, and poolsSummary", () => {
+  it("flags failed, read-only, failing, and bad-sector pool disks", () => {
+    const ok = { ...disk("a", {}), state: "rw" };
+    const worn = { ...disk("b", { bad_sectors: 5 }), state: "rw" };
+    const failing = { ...disk("c", { passed: false }), state: "rw" };
+    const ro = { ...disk("d", {}), state: "ro" };
+    const failed = { ...disk("e", {}), state: "failed" };
+
+    expect(poolDiskState(ok)).toEqual({ tone: "ok", word: "healthy" });
+    expect(poolDiskState(ro)).toEqual({ tone: "warn", word: "read-only" });
+    expect(poolDiskState(failed)).toEqual({ tone: "bad", word: "failed" });
+    expect(flaggedDisks([ok, worn, failing, ro, failed]).map((d) => d.bcachefs_label)).toEqual(["b", "c", "d", "e"]);
+  });
+
+  it("summarizes empty, single, and multiple sized pools", () => {
+    expect(poolsSummary([])).toBeNull();
+    expect(poolsSummary([pool({ usage: undefined })])).toBeNull();
+
+    const p1 = pool({ name: "tank", mountdir: "/var/mnt/tank", data_replicas: 2, usage: { total_bytes: 12 * TB, used_bytes: 3 * TB, available_bytes: 8 * TB, used_percent: 25 } });
+    const single = poolsSummary([p1])!;
+    expect(single.singlePool?.name).toBe("tank");
+    expect(single.count).toBe(1);
+    expect(single.used).toBe(1.5 * TB);
+    expect(single.free).toBe(4 * TB);
+    expect(single.percent).toBe(25);
+
+    const p2 = pool({ name: "apps", mountdir: "/var/mnt/apps", data_replicas: 1, usage: { total_bytes: 4 * TB, used_bytes: 3 * TB, available_bytes: 1 * TB, used_percent: 75 } });
+    const multi = poolsSummary([p1, p2])!;
+    expect(multi.singlePool).toBeNull();
+    expect(multi.count).toBe(2);
+    expect(multi.total).toBe(10 * TB);
+    expect(multi.used).toBe(4.5 * TB);
+    expect(multi.free).toBe(5 * TB);
+    expect(multi.percent).toBe(45);
+    expect(multi.maxPercent).toBe(75);
   });
 });

@@ -1,19 +1,25 @@
 <script lang="ts">
   import { createQuery, keepPreviousData } from "@tanstack/svelte-query";
   import { ChevronRight } from "@lucide/svelte";
-  import { api, call, describe, type Schema } from "#lib/api/client.ts";
-  import { fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
+  import { api, call, describe, type Schema, type ServiceInfo } from "#lib/api/client.ts";
+  import { fetchServices, fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
   import Chart from "#lib/components/Chart.svelte";
   import Help from "#lib/components/Help.svelte";
   import Pill, { type Tone } from "#lib/components/Pill.svelte";
+  import StatusMark from "#lib/components/StatusMark.svelte";
   import UpdatedDialog from "#lib/components/core/UpdatedDialog.svelte";
+  import { backupKeys, type Coverage } from "#lib/backups.ts";
   import { bytes } from "#lib/format.ts";
+  import { notificationKeys, type Snapshot } from "#lib/notifications.ts";
+  import { notificationsTray } from "#lib/notifications-tray.svelte.ts";
+  import { attentionItems } from "#lib/overview.ts";
   import { profileMarks } from "#lib/power-meter.ts";
   import { watts } from "#lib/power-profile.ts";
   import { LiveMetrics } from "#lib/live-metrics.svelte.ts";
   import { byScope, CORE_HUE, latest, machineLine, mood, PAIR_HUES, PARTS, stackHues, type Frames, type Line, type Mood, type Resource } from "#lib/metrics.ts";
+  import { fetchSettingsStatus, settingsStatusKey } from "#lib/settings.ts";
   import { stackTitles } from "#lib/stacks.ts";
-  import { capacity } from "#lib/storage.ts";
+  import { fullness, poolsSummary } from "#lib/storage.ts";
 
   type Range = "live" | "24h" | "7d" | "30d";
   const RANGES: { id: Range; label: string }[] = [
@@ -48,11 +54,45 @@
     placeholderData: keepPreviousData,
   }));
   const stacks = createQuery(() => ({ queryKey: keys.stacks, queryFn: fetchStacks, refetchInterval: idlePoll }));
+  const services = createQuery(() => ({ queryKey: keys.services, queryFn: fetchServices, refetchInterval: idlePoll }));
+  const coreServices = createQuery(() => ({
+    queryKey: ["daemon", "core-services"],
+    queryFn: () => call<ServiceInfo[]>(api.GET("/core-services")),
+    refetchInterval: idlePoll,
+    retry: false,
+  }));
+  const notifications = createQuery(() => ({
+    queryKey: notificationKeys.snapshot,
+    queryFn: () => call<Snapshot>(api.GET("/notifications")),
+    refetchInterval: 30_000,
+  }));
+  const settingsStatus = createQuery(() => ({
+    queryKey: settingsStatusKey,
+    queryFn: fetchSettingsStatus,
+    refetchInterval: 30_000,
+  }));
   const storage = createQuery(() => ({
     queryKey: ["daemon", "storage"],
     queryFn: () => call<Schema<"StorageStatus">>(api.GET("/storage")),
     refetchInterval: 60_000,
   }));
+  const coverage = createQuery(() => ({
+    queryKey: backupKeys.coverage,
+    queryFn: () => call<Coverage>(api.GET("/backup-coverage")),
+    refetchInterval: 60_000,
+  }));
+
+  const attention = $derived(
+    attentionItems({
+      services: services.data,
+      coreServices: coreServices.data,
+      notifications: notifications.data,
+      stacks: stacks.data,
+      settingsStatus: settingsStatus.data,
+      storage: storage.data,
+      coverage: coverage.data,
+    }),
+  );
 
   const now = $derived(live.frames);
   const shown: Frames | undefined = $derived(range === "live" ? live.frames : history.data?.frames);
@@ -76,8 +116,7 @@
   const powerWall = $derived(latest(now.power_wall));
   const hasPower = $derived(powerWall !== undefined || powerCpu !== undefined);
   const tempDisk = $derived(latest(now.temp_disk));
-  const pool = $derived((storage.data?.pools ?? []).find((p) => p.usage && p.usage.total_bytes > 0));
-  const poolCap = $derived(pool ? capacity(pool) : null);
+  const storageSummary = $derived(poolsSummary(storage.data?.pools ?? []));
 
   const health = $derived(mood(now));
   const MOOD: Record<Mood, { tone: Tone; word: string }> = {
@@ -143,6 +182,40 @@
   </div>
 </div>
 
+{#if attention.length > 0}
+  <section aria-label="Needs attention" class="mt-4 rounded-lg border border-line bg-surface px-3 py-2.5">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <h2 class="font-semibold">Needs attention</h2>
+      <ul class="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+        {#each attention as item (item.id)}
+          <li>
+            {#if item.href}
+              <a
+                href={item.href}
+                class="inline-flex items-center gap-1.5 rounded-sm text-fg hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              >
+                <StatusMark tone={item.tone} />
+                <span>{item.label}</span>
+                <ChevronRight class="size-3.5 text-muted" aria-hidden="true" />
+              </a>
+            {:else}
+              <button
+                type="button"
+                class="inline-flex items-center gap-1.5 rounded-sm text-fg hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                onclick={() => (notificationsTray.open = true)}
+              >
+                <StatusMark tone={item.tone} />
+                <span>{item.label}</span>
+                <ChevronRight class="size-3.5 text-muted" aria-hidden="true" />
+              </button>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+    </div>
+  </section>
+{/if}
+
 <section aria-label="Right now" class="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4 {hasPower ? 'lg:grid-cols-5' : ''}">
   <div class="card">
     <p class="text-muted">CPU usage</p>
@@ -160,19 +233,38 @@
     <p class="text-xs text-muted">CPU{tempDisk === undefined ? "" : ` · system disk ${degrees(tempDisk)}`}</p>
   </div>
   {#if hasPower}
-    <a class="card block hover:bg-sunken" href="/settings/system#profile">
-      <p class="text-muted">Power</p>
+    <a
+      class="card group block transition-colors hover:border-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      href="/settings/system#profile"
+    >
+      <p class="flex items-center justify-between text-muted">
+        <span>Power</span>
+        <ChevronRight class="size-3.5 text-muted transition-colors group-hover:text-fg" aria-hidden="true" />
+      </p>
       <p class="mt-1 text-lg tabular-nums">{watts(powerWall ?? powerCpu)}</p>
       <p class="text-xs text-muted">
         {powerWall === undefined ? "CPU package" : powerCpu === undefined ? "at the wall" : `at the wall · CPU ${watts(powerCpu)}`}
       </p>
     </a>
   {/if}
-  <a class="card block hover:bg-sunken" href="/storage">
-    <p class="text-muted">Storage</p>
-    {#if pool && poolCap}
-      <p class="mt-1 text-lg tabular-nums">{Math.round(poolCap.percent)}% used</p>
-      <p class="text-xs text-muted">{bytes(poolCap.free)} free on {pool.mountdir || pool.name}</p>
+  <a
+    class="card group block transition-colors hover:border-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+    href="/storage"
+  >
+    <p class="flex items-center justify-between text-muted">
+      <span>Storage</span>
+      <ChevronRight class="size-3.5 text-muted transition-colors group-hover:text-fg" aria-hidden="true" />
+    </p>
+    {#if storageSummary}
+      {@const sTone = fullness(storageSummary.maxPercent)}
+      <p class="mt-1 text-lg tabular-nums {sTone === 'bad' ? 'text-bad' : sTone === 'warn' ? 'text-warn' : ''}">{Math.round(storageSummary.percent)}% used</p>
+      <p class="text-xs text-muted">
+        {#if storageSummary.singlePool}
+          {bytes(storageSummary.free)} free on {storageSummary.singlePool.mountdir || storageSummary.singlePool.name}
+        {:else}
+          {bytes(storageSummary.free)} free across {storageSummary.count} pools
+        {/if}
+      </p>
     {:else}
       <p class="mt-1 text-lg">–</p>
       <p class="text-xs text-muted">
@@ -211,7 +303,7 @@
           system's services and this dashboard, User Sessions are logins and what they start, Kernel is the system's own work.
         </Help>
       </h2>
-      <Chart at={shown.at} lines={byScope(shown, "cpu", hues, title)} stacked format={pct} floor={5} ceiling={100} label="CPU usage by stack" />
+      <Chart at={shown.at} lines={byScope(shown, "cpu", hues, title)} stacked format={pct} floor={5} ceiling={100} sync="overview" label="CPU usage by stack" />
     </section>
     <section class="card min-w-0">
       <h2 class="font-semibold">
@@ -227,6 +319,7 @@
         format={bytes}
         floor={1e9}
         ceiling={memTotal || undefined}
+        sync="overview"
         label="Memory use by stack"
       />
     </section>
@@ -243,20 +336,21 @@
         format={pct}
         floor={5}
         ceiling={100}
+        sync="overview"
         label="Time spent waiting for CPU, memory and disks"
       />
     </section>
     <section class="card min-w-0">
       <h2 class="font-semibold">Disks</h2>
-      <Chart at={shown.at} lines={two("Read", shown.host.disk_read, "Written", shown.host.disk_write)} format={rate} floor={1e6} label="Disk reads and writes" />
+      <Chart at={shown.at} lines={two("Read", shown.host.disk_read, "Written", shown.host.disk_write)} format={rate} floor={1e6} sync="overview" label="Disk reads and writes" />
     </section>
     <section class="card min-w-0">
       <h2 class="font-semibold">Network</h2>
-      <Chart at={shown.at} lines={two("Received", shown.host.net_rx, "Sent", shown.host.net_tx)} format={rate} floor={1e5} label="Network traffic" />
+      <Chart at={shown.at} lines={two("Received", shown.host.net_rx, "Sent", shown.host.net_tx)} format={rate} floor={1e5} sync="overview" label="Network traffic" />
     </section>
     <section class="card min-w-0">
       <h2 class="font-semibold">Temperature</h2>
-      <Chart at={shown.at} lines={two("CPU", shown.temp_cpu, "System disk", shown.temp_disk)} format={degrees} floor={60} label="Temperatures" />
+      <Chart at={shown.at} lines={two("CPU", shown.temp_cpu, "System disk", shown.temp_disk)} format={degrees} floor={60} sync="overview" label="Temperatures" />
     </section>
     {#if powerLines(shown).length}
       <section class="card min-w-0">
@@ -269,6 +363,7 @@
           format={watts}
           floor={10}
           marks={range === "live" ? [] : profileMarks(history.data?.profile_changes)}
+          sync="overview"
           label="Power draw"
         />
       </section>

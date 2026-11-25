@@ -31,8 +31,10 @@
     label: string;
     /** Moments to mark with a dashed line and a name, such as a setting changing. */
     marks?: { at: number; label: string }[];
+    /** Shared cursor sync key across charts with matching x values. */
+    sync?: string;
   };
-  let { at, lines, stacked = false, format, floor = 1, ceiling, height = 180, label, marks = [] }: Props = $props();
+  let { at, lines, stacked = false, format, floor = 1, ceiling, height = 180, label, marks = [], sync }: Props = $props();
 
   const isDark = () => document.documentElement.classList.contains("dark");
   let dark = $state(isDark());
@@ -47,7 +49,7 @@
   const color = (l: Line) => (dark ? l.hue.dark : l.hue.light);
 
   /** The plot is rebuilt only when this changes. */
-  const shape = $derived(`${dark}|${stacked}|${height}|${lines.map((l) => `${l.label}:${l.hue.light}`).join(",")}`);
+  const shape = $derived(`${dark}|${stacked}|${height}|${sync ?? ""}|${lines.map((l) => `${l.label}:${l.hue.light}`).join(",")}`);
 
   // The raw (not summed) values the legend reads, and the marks, kept
   // current with the data.
@@ -76,7 +78,11 @@
     return {
       width,
       height,
-      cursor: { y: false, points: { size: 8 } },
+      cursor: {
+        y: false,
+        points: { size: 8 },
+        ...(sync ? { sync: { key: sync, setSeries: false, scales: ["x", null] } } : {}),
+      },
       legend: { live: true },
       scales: {
         y: {

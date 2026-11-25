@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { movedTile, SECTIONS, tileLabel, type Tile } from "./settings.ts";
+import { movedTile, SECTIONS, settingsAttentionTone, tileLabel, type Tile } from "./settings.ts";
 
 const byKey = (k: string): Tile => SECTIONS.flatMap((s) => s.tiles).find((t) => t.key === k)!;
 
@@ -49,5 +49,17 @@ describe("SECTIONS", () => {
     const tiles = SECTIONS.flatMap((s) => s.tiles);
     expect(new Set(tiles.map((t) => t.key)).size).toBe(tiles.length);
     for (const t of tiles) expect(t.href).toBe(`/settings/${t.key}`);
+  });
+});
+
+describe("settingsAttentionTone", () => {
+  it("flags bad, warn, and waiting updates with bad > warn > info priority", () => {
+    expect(settingsAttentionTone(undefined)).toBeNull();
+    expect(settingsAttentionTone({ tiles: { domain: { state: "ok" }, tunnel: { state: "off" } } })).toBeNull();
+    expect(settingsAttentionTone({ tiles: { power: { state: "info" }, tailscale: { state: "info" } } })).toBeNull();
+    expect(settingsAttentionTone({ tiles: { updates: { state: "info" } } })).toBe("info");
+    expect(settingsAttentionTone({ tiles: { updates: { state: "info" }, clock: { state: "warn" } } })).toBe("warn");
+    expect(settingsAttentionTone({ tiles: { updates: { state: "bad" }, clock: { state: "warn" } } })).toBe("bad");
+    expect(settingsAttentionTone({ tiles: { notifications: { state: "bad", count: 1 } } })).toBe("bad");
   });
 });

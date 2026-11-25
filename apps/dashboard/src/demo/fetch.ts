@@ -293,7 +293,8 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
       assistant: { state: "off" },
       security: { state: "off" },
     };
-    if (h.image.pending_reboot || h.image.available.length || h.image.core.available.length) tiles.updates = { state: "info" };
+    if (h.image.fell_back_from || h.image.core.fell_back_from || h.image.boot_check) tiles.updates = { state: "bad" };
+    else if (h.image.pending_reboot || h.image.available.length || h.image.core.available.length) tiles.updates = { state: "info" };
     if (h.power.scheduled) tiles.system = { state: "info" };
     return { tiles };
   },
