@@ -150,7 +150,7 @@ func (s *Service) logf(o *operation, format string, a ...any) {
 // buildLogged builds the output fragment (#attr.path) of the flake
 // reference url, with every output line in the attempt log, and returns its
 // store path.
-func (s *Service) buildLogged(ctx context.Context, o *operation, url, fragment string, extra ...string) (string, error) {
+func (s *Service) buildLogged(ctx context.Context, o *operation, sshKey, url, fragment string, extra ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, buildTimeout)
 	defer cancel()
 	ref, err := s.buildRef(ctx, url)
@@ -162,7 +162,7 @@ func (s *Service) buildLogged(ctx context.Context, o *operation, url, fragment s
 	args = append(append(args, extra...), "--", ref+fragment)
 	res, err := s.r.Run(ctx, cmdrunner.Cmd{
 		Module: "stacks", Name: "nix",
-		Args: args, Env: nixEnv(),
+		Args: args, Env: s.nixEnvFor(sshKey),
 		OnLine: func(_, line string) {
 			s.mu.Lock()
 			o.log.line(line)

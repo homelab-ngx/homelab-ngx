@@ -6781,6 +6781,10 @@
           "source": {
             "type": "string"
           },
+          "ssh_key": {
+            "description": "Name of the SSH key used for a private repository, when set.",
+            "type": "string"
+          },
           "subnet": {
             "type": "string"
           },
@@ -7380,6 +7384,53 @@
             "type": "integer"
           }
         },
+        "type": "object"
+      },
+      "StackSSHKey": {
+        "additionalProperties": false,
+        "properties": {
+          "fingerprint": {
+            "description": "SHA-256 fingerprint of the public key.",
+            "type": "string"
+          },
+          "public_key": {
+            "description": "OpenSSH public key line.",
+            "type": "string"
+          },
+          "repo": {
+            "description": "Repository the key is bound to, for a per-stack key.",
+            "type": "string"
+          },
+          "stack": {
+            "description": "Stack using this dedicated key; absent for the host key.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "fingerprint",
+          "public_key"
+        ],
+        "type": "object"
+      },
+      "StackSSHKeys": {
+        "additionalProperties": false,
+        "properties": {
+          "host": {
+            "$ref": "#/components/schemas/StackSSHKey",
+            "description": "The host's own SSH deploy key, tried first for every private repository."
+          },
+          "stacks": {
+            "description": "Dedicated deploy keys created for second or subsequent private GitHub repositories.",
+            "items": {
+              "$ref": "#/components/schemas/StackSSHKey"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "host",
+          "stacks"
+        ],
         "type": "object"
       },
       "StackStop": {
@@ -22299,6 +22350,65 @@
           }
         },
         "summary": "The nixpkgs channels offered for a version 7 stack: nixos-unstable and the newest NixOS releases.",
+        "tags": [
+          "stacks"
+        ]
+      }
+    },
+    "/stacks-ssh-keys": {
+      "get": {
+        "operationId": "getStackSSHKeys",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StackSSHKeys"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The host's SSH deploy key and any per-stack keys for private repositories.",
         "tags": [
           "stacks"
         ]

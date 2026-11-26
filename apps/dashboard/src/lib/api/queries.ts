@@ -2,11 +2,12 @@
  * Query keys and fetchers shared by the pages. A mutation invalidates
  * `keys.all`, so every view of stacks and services reads again.
  */
-import { api, call, type AssistantLimits, type AssistantSettings, type Draft, type DraftSummary, type Schema, type ServiceInfo, type Stack, type StackUpdate } from "./client";
+import { api, call, type AssistantLimits, type AssistantSettings, type Draft, type DraftSummary, type Schema, type ServiceInfo, type Stack, type StackSSHKeys, type StackUpdate } from "./client";
 
 export const keys = {
   all: ["daemon"] as const,
   stacks: ["daemon", "stacks"] as const,
+  sshKeys: ["daemon", "stacks", "ssh-keys"] as const,
   services: ["daemon", "services"] as const,
   updates: (stack: string) => ["daemon", "stack-updates", stack] as const,
   update: (id: number) => ["daemon", "stack-update", id] as const,
@@ -35,6 +36,7 @@ export const fetchDraft = (name: string) => call<Draft>(api.GET("/drafts/{name}"
 export const fetchStackFiles = (name: string) => call<Schema<"StackFiles">>(api.GET("/stacks/{name}/files", { params: { path: { name } } }));
 export const fetchUpdate = (id: number) =>
   call<StackUpdate>(api.GET("/stack-updates/{id}", { params: { path: { id } } }));
+export const fetchStackSSHKeys = () => call<StackSSHKeys>(api.GET("/stacks-ssh-keys"));
 
 /** Polling: fast while something runs, slow otherwise. */
 export const busyPoll = 2_000;

@@ -235,6 +235,7 @@ type Stack struct {
 	HostIds          string
 	Autostart        int64
 	MaskedUnits      string
+	SshKey           string
 }
 
 type StackDraft struct {

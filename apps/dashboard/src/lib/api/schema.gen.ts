@@ -1661,6 +1661,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks-ssh-keys": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The host's SSH deploy key and any per-stack keys for private repositories. */
+        get: operations["getStackSSHKeys"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks-store": {
         parameters: {
             query?: never;
@@ -4875,6 +4892,8 @@ export interface components {
             /** @description Approved commit. */
             rev: string;
             source: string;
+            /** @description Name of the SSH key used for a private repository, when set. */
+            ssh_key?: string;
             subnet: string;
             /** @description Locked flake reference of that commit. */
             url: string;
@@ -5076,6 +5095,22 @@ export interface components {
              * @description The generation to go back to.
              */
             generation?: number;
+        };
+        StackSSHKey: {
+            /** @description SHA-256 fingerprint of the public key. */
+            fingerprint: string;
+            /** @description OpenSSH public key line. */
+            public_key: string;
+            /** @description Repository the key is bound to, for a per-stack key. */
+            repo?: string;
+            /** @description Stack using this dedicated key; absent for the host key. */
+            stack?: string;
+        };
+        StackSSHKeys: {
+            /** @description The host's own SSH deploy key, tried first for every private repository. */
+            host: components["schemas"]["StackSSHKey"];
+            /** @description Dedicated deploy keys created for second or subsequent private GitHub repositories. */
+            stacks: components["schemas"]["StackSSHKey"][];
         };
         StackStop: {
             /** @description Cancel a start that is waiting for health before stopping the stack. */
@@ -13161,6 +13196,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StackNixpkgsChannels"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getStackSSHKeys: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StackSSHKeys"];
                 };
             };
             /** @description Error */

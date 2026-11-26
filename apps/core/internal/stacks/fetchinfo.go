@@ -39,12 +39,27 @@ type History interface {
 	Log(ctx context.Context, name, source, since, rev string) (commits []commit, dirty bool, err error)
 }
 
+// SSHHistory is an optional History capability for stacks fetched with an SSH
+// deploy key.
+type SSHHistory interface {
+	LogWithKey(ctx context.Context, name, source, sshKey, since, rev string) (commits []commit, dirty bool, err error)
+}
+
 // learn gathers the fetch info of commit f of the stack's source. It is not
 // fatal: a stack installs without its history.
-func (s *Service) learn(ctx context.Context, name, source string, f Fetched, since string) fetchInfo {
+func (s *Service) learn(ctx context.Context, name, source, sshKey string, f Fetched, since string) fetchInfo {
 	info := fetchInfo{Commits: []commit{}}
 	if s.history != nil {
-		c, dirty, err := s.history.Log(ctx, name, source, since, f.Rev)
+		var (
+			c     []commit
+			dirty bool
+			err   error
+		)
+		if sh, ok := s.history.(SSHHistory); ok && sshKey != "" {
+			c, dirty, err = sh.LogWithKey(ctx, name, source, sshKey, since, f.Rev)
+		} else {
+			c, dirty, err = s.history.Log(ctx, name, source, since, f.Rev)
+		}
 		if err != nil {
 			s.log.Warn("stack commits not read", "stack", name, "error", err)
 		} else {
@@ -77,6 +92,7 @@ type gitHistory struct {
 	r          cmdrunner.Runner
 	dir        string   // mirrors
 	tokenFiles []string // where the host's GitHub token may be; the first that has one
+	keys       *sshKeyStore
 }
 
 // maxCommits bounds the commits listed per fetch.
@@ -133,6 +149,25 @@ func (h gitHistory) Log(ctx context.Context, name, source, since, rev string) ([
 	if err != nil {
 		return nil, false, err
 	}
+	return h.logWith(ctx, name, u, ref, local, h.auth(u), since, rev)
+}
+
+func (h gitHistory) LogWithKey(ctx context.Context, name, source, sshKey, since, rev string) ([]commit, bool, error) {
+	if sshKey == "" || h.keys == nil {
+		return h.Log(ctx, name, source, since, rev)
+	}
+	u, ref, ok := sshGitURL(source)
+	if !ok {
+		return h.Log(ctx, name, source, since, rev)
+	}
+	env, err := h.keys.sshEnv(sshKey)
+	if err != nil {
+		return nil, false, err
+	}
+	return h.logWith(ctx, name, u, ref, "", env, since, rev)
+}
+
+func (h gitHistory) logWith(ctx context.Context, name, u, ref, local string, fetchEnv []string, since, rev string) ([]commit, bool, error) {
 	repo, dirty, as := local, false, ""
 	if local != "" {
 		// The operator's checkout: git runs as its owner (see local.go).
@@ -152,7 +187,7 @@ func (h gitHistory) Log(ctx context.Context, name, source, since, rev string) ([
 				return nil, false, err
 			}
 		}
-		if _, err := h.git(ctx, h.auth(u), "-C", repo, "fetch", "-q", "--filter=blob:none", "--no-tags",
+		if _, err := h.git(ctx, fetchEnv, "-C", repo, "fetch", "-q", "--filter=blob:none", "--no-tags",
 			"--", u, "+"+ref+":refs/heads/stack"); err != nil {
 			return nil, false, err
 		}

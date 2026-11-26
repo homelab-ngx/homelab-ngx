@@ -63,7 +63,7 @@ func (s *Service) Icon(ctx context.Context, name, unit string) (Icon, error) {
 	if err != nil {
 		return Icon{}, fmt.Errorf("stack %s: %w", name, err)
 	}
-	return s.icons.icon(ctx, m, url, unit)
+	return s.icons.iconWithEnv(ctx, m, url, unit, s.sshEnvFor(r.SshKey))
 }
 
 // iconCache resolves icons. Icons from the set are kept in dir, one file per
@@ -98,6 +98,10 @@ func noIcon(f string, a ...any) *httpx.Problem { return httpx.NotFound("no_icon"
 // icon resolves the icon m names for the stack (unit empty) or for unit.
 // url is the locked flake reference of the commit m was read from.
 func (c *iconCache) icon(ctx context.Context, m Manifest, url, unit string) (Icon, error) {
+	return c.iconWithEnv(ctx, m, url, unit, nil)
+}
+
+func (c *iconCache) iconWithEnv(ctx context.Context, m Manifest, url, unit string, env []string) (Icon, error) {
 	ref := m.Icon
 	if unit != "" {
 		ref = ""
@@ -117,7 +121,7 @@ func (c *iconCache) icon(ctx context.Context, m Manifest, url, unit string) (Ico
 	case IconURL:
 		return Icon{URL: ref}, nil
 	case IconFile:
-		return c.file(ctx, url, ref)
+		return c.file(ctx, url, ref, env)
 	default:
 		return c.slug(ref)
 	}
@@ -125,12 +129,12 @@ func (c *iconCache) icon(ctx context.Context, m Manifest, url, unit string) (Ico
 
 // file reads rel from the commit's tree. A symbolic link on the way, a file
 // that is not plain and one over MaxIconFile are refused.
-func (c *iconCache) file(ctx context.Context, url, rel string) (Icon, error) {
+func (c *iconCache) file(ctx context.Context, url, rel string, env []string) (Icon, error) {
 	typ := iconTypes[strings.ToLower(path.Ext(rel))]
 	if typ == "" || url == "" {
 		return Icon{}, noIcon("%s is not an icon file", rel)
 	}
-	root, err := c.trees.storePath(ctx, url)
+	root, err := c.trees.storePath(ctx, url, env)
 	if err != nil {
 		return Icon{}, err
 	}

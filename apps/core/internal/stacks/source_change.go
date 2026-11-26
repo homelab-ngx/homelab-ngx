@@ -23,7 +23,7 @@ func (s *Service) ApprovedTree(ctx context.Context, name string) (dir, source, r
 	if r.ApprovedRev == "" || r.ApprovedUrl == "" {
 		return "", "", "", httpx.Conflict("nothing_approved", "%s has no approved commit to copy", name)
 	}
-	f, err := prefetch(ctx, s.r, r.ApprovedUrl)
+	f, err := prefetchWithExtraEnv(ctx, s.r, r.ApprovedUrl, s.sshEnvFor(r.SshKey))
 	if err != nil {
 		return "", "", "", err
 	}
@@ -49,15 +49,22 @@ func (s *Service) SetSource(ctx context.Context, name, source string) (Stack, er
 	if r.Source == source {
 		return s.Get(ctx, name)
 	}
-	set := func(src string) error {
-		return s.st.Queries().SetStackSource(ctx, store.SetStackSourceParams{Name: name, Source: src})
-	}
-	if err := set(source); err != nil {
+	f, m, sshKey, err := s.fetchForAdd(ctx, source, name, name)
+	if err != nil {
 		return Stack{}, err
 	}
-	st, err := s.Fetch(ctx, name)
+	set := func(src, key string) error {
+		if err := s.st.Queries().SetStackSource(ctx, store.SetStackSourceParams{Name: name, Source: src}); err != nil {
+			return err
+		}
+		return s.st.Queries().SetStackSSHKey(ctx, store.SetStackSSHKeyParams{Name: name, SshKey: key})
+	}
+	if err := set(source, sshKey); err != nil {
+		return Stack{}, err
+	}
+	st, err := s.applyFetched(ctx, r, source, sshKey, f, m)
 	if err != nil {
-		if rerr := set(r.Source); rerr != nil {
+		if rerr := set(r.Source, r.SshKey); rerr != nil {
 			return Stack{}, errors.Join(err, fmt.Errorf("restoring the source: %w", rerr))
 		}
 		return Stack{}, err

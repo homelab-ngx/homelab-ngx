@@ -77,13 +77,21 @@ type prefetched struct {
 // prefetch copies ref into the store, as the folder's owner for a local
 // source.
 func prefetch(ctx context.Context, r cmdrunner.Runner, ref string) (prefetched, error) {
+	return prefetchWithExtraEnv(ctx, r, ref, nil)
+}
+
+func prefetchWithExtraEnv(ctx context.Context, r cmdrunner.Runner, ref string, extraEnv []string) (prefetched, error) {
+	return prefetchWithEnv(ctx, r, ref, append(nixEnv(), extraEnv...))
+}
+
+func prefetchWithEnv(ctx context.Context, r cmdrunner.Runner, ref string, env []string) (prefetched, error) {
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 	c := cmdrunner.Cmd{
 		Module: "stacks", Name: "nix",
 		Args: []string{"--extra-experimental-features", "nix-command flakes",
 			"flake", "prefetch", "--json", "--refresh", "--", ref},
-		Env: nixEnv(),
+		Env: append([]string{"GIT_TERMINAL_PROMPT=0"}, env...),
 	}
 	if p := localPath(ref); p != "" {
 		c.AsUser = ownerOf(p)

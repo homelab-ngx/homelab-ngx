@@ -318,6 +318,13 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
   }),
   "/stacks-manifest-schema": () => ({}),
   "/stacks-nixpkgs": () => ({ channels: ["nixos-26.05", "nixos-unstable"] }),
+  "/stacks-ssh-keys": () => ({
+    host: {
+      public_key: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDemoHostDeployKeyDemoHostDeployKeyDemoHostKey homelab-ngx",
+      fingerprint: "SHA256:DemoHostKeyFingerprint00000000000000000000000",
+    },
+    stacks: [],
+  }),
   "/stacks-store": (h) => ({ own_partition: true, collecting: false, total_bytes: 120 * GB, used_bytes: 47 * GB, free_bytes: 73 * GB, freed_bytes: 6 * GB, collected_at: iso(h.now() - DAY), measured_at: iso(h.now() - 10 * MIN) }),
   "/stacks-ids": () => ({ min: 2000, max: 2099, ids: [{ name: "immich", id: 2000 }, { name: "media", id: 2001 }] }),
   "/stacks/{name}": (h, c) => stackOf(h, c.path.name!),

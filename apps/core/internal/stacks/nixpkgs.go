@@ -135,7 +135,7 @@ func (s *Service) buildWrapped(ctx context.Context, o *operation, r store.Stack,
 	if err := w.Write(dir); err != nil {
 		return "", "", fmt.Errorf("building: %w", err)
 	}
-	system, err = s.buildLogged(ctx, o, "path:"+dir, "#"+WrapperSystem, "--no-write-lock-file")
+	system, err = s.buildLogged(ctx, o, r.SshKey, "path:"+dir, "#"+WrapperSystem, "--no-write-lock-file")
 	return system, ids, err
 }
 

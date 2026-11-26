@@ -46,6 +46,9 @@ type Host struct {
 	MirrorsDir string
 	// GitHubTokenFiles are where the token for private repos may be.
 	GitHubTokenFiles []string
+	// SSHKeysDir holds the host's and per-stack SSH keys for private stack
+	// repositories, and known_hosts.
+	SSHKeysDir string
 	// BuildsDir holds one wrapper flake per version 7 stack: the stack's
 	// module on the daemon's base. Daemon state, not backed up.
 	BuildsDir string
@@ -95,8 +98,9 @@ func DefaultHost(r cmdrunner.Runner) Host {
 	return Host{
 		Runner: r, StateDir: StacksStateDir, ProfilesDir: "/nix/var/nix/profiles/per-stack", RoutesDir: "/var/lib/homelab-stack-routes",
 		MirrorsDir: "/var/lib/homelab-daemon/stack-mirrors", GitHubTokenFiles: GitHubTokenFiles,
-		BuildsDir: "/var/lib/homelab-daemon/stack-builds",
-		StoreDir:  "/nix/store", StoreFile: "/var/lib/homelab-daemon/nix-store.json",
+		SSHKeysDir: "/var/lib/homelab-daemon/stack-ssh-keys",
+		BuildsDir:  "/var/lib/homelab-daemon/stack-builds",
+		StoreDir:   "/nix/store", StoreFile: "/var/lib/homelab-daemon/nix-store.json",
 		DiskFile: "/var/lib/homelab-daemon/stack-disk.json",
 		VarsDir:  "/run/homelab-stack-vars", AgeKeyFile: "/var/lib/sops-age/keys.txt",
 		NetworkDir: "/run/systemd/network", ProcSys: "/proc/sys", UnitsDir: "/run/homelab-stack-units",

@@ -1,6 +1,7 @@
 <script lang="ts">
-  import SshCard from "#lib/components/host/SshCard.svelte";
   import HostSettingsPage from "#lib/components/host/HostSettingsPage.svelte";
+  import SshCard from "#lib/components/host/SshCard.svelte";
+  import StackKeysCard from "#lib/components/host/StackKeysCard.svelte";
 </script>
 
 <HostSettingsPage
@@ -10,3 +11,7 @@
 >
   {#snippet card(p)}<SshCard {...p} />{/snippet}
 </HostSettingsPage>
+
+<div class="mt-4 max-w-4xl">
+  <StackKeysCard />
+</div>

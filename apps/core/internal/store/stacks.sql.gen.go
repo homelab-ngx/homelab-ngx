@@ -120,7 +120,7 @@ func (q *Queries) FinishStackUpdate(ctx context.Context, arg FinishStackUpdatePa
 }
 
 const getStack = `-- name: GetStack :one
-SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids, autostart, masked_units FROM stacks WHERE name = ?
+SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids, autostart, masked_units, ssh_key FROM stacks WHERE name = ?
 `
 
 func (q *Queries) GetStack(ctx context.Context, name string) (Stack, error) {
@@ -155,6 +155,7 @@ func (q *Queries) GetStack(ctx context.Context, name string) (Stack, error) {
 		&i.HostIds,
 		&i.Autostart,
 		&i.MaskedUnits,
+		&i.SshKey,
 	)
 	return i, err
 }
@@ -211,8 +212,8 @@ func (q *Queries) GetStackUpdate(ctx context.Context, id int64) (StackUpdate, er
 }
 
 const insertStack = `-- name: InsertStack :exec
-INSERT INTO stacks (name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at)
-VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?3)
+INSERT INTO stacks (name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, ssh_key)
+VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?3, ?7)
 `
 
 type InsertStackParams struct {
@@ -222,6 +223,7 @@ type InsertStackParams struct {
 	Rev      string
 	Url      string
 	Manifest string
+	SshKey   string
 }
 
 func (q *Queries) InsertStack(ctx context.Context, arg InsertStackParams) error {
@@ -232,6 +234,7 @@ func (q *Queries) InsertStack(ctx context.Context, arg InsertStackParams) error 
 		arg.Rev,
 		arg.Url,
 		arg.Manifest,
+		arg.SshKey,
 	)
 	return err
 }
@@ -375,7 +378,7 @@ func (q *Queries) ListStackUpdates(ctx context.Context, arg ListStackUpdatesPara
 }
 
 const listStacks = `-- name: ListStacks :many
-SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids, autostart, masked_units FROM stacks ORDER BY name
+SELECT name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, approved_rev, approved_url, approved_manifest, approved_at, generation, want_running, subnet, op_kind, op_step, op_prev, op_started_at, fetched_info, api_token_hash, booted_args, label, nixpkgs_rev, nixpkgs, booted_vars, host_ids, autostart, masked_units, ssh_key FROM stacks ORDER BY name
 `
 
 func (q *Queries) ListStacks(ctx context.Context) ([]Stack, error) {
@@ -416,6 +419,7 @@ func (q *Queries) ListStacks(ctx context.Context) ([]Stack, error) {
 			&i.HostIds,
 			&i.Autostart,
 			&i.MaskedUnits,
+			&i.SshKey,
 		); err != nil {
 			return nil, err
 		}
@@ -476,9 +480,9 @@ func (q *Queries) PreviousStackGeneration(ctx context.Context, arg PreviousStack
 
 const restoreStack = `-- name: RestoreStack :exec
 INSERT INTO stacks (name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at,
-    approved_rev, approved_url, approved_manifest, approved_at, want_running, autostart, subnet, label, nixpkgs_rev, nixpkgs, masked_units)
+    approved_rev, approved_url, approved_manifest, approved_at, want_running, autostart, subnet, label, nixpkgs_rev, nixpkgs, masked_units, ssh_key)
 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?3,
-    ?4, ?5, ?6, ?3, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+    ?4, ?5, ?6, ?3, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
 `
 
 type RestoreStackParams struct {
@@ -495,6 +499,7 @@ type RestoreStackParams struct {
 	NixpkgsRev  string
 	Nixpkgs     string
 	MaskedUnits string
+	SshKey      string
 }
 
 // Puts a stack back from the lock: its approved commit is also the fetched
@@ -514,6 +519,7 @@ func (q *Queries) RestoreStack(ctx context.Context, arg RestoreStackParams) erro
 		arg.NixpkgsRev,
 		arg.Nixpkgs,
 		arg.MaskedUnits,
+		arg.SshKey,
 	)
 	return err
 }
@@ -733,6 +739,20 @@ type SetStackOpStepParams struct {
 
 func (q *Queries) SetStackOpStep(ctx context.Context, arg SetStackOpStepParams) error {
 	_, err := q.db.ExecContext(ctx, setStackOpStep, arg.Step, arg.Name)
+	return err
+}
+
+const setStackSSHKey = `-- name: SetStackSSHKey :exec
+UPDATE stacks SET ssh_key = ?1 WHERE name = ?2
+`
+
+type SetStackSSHKeyParams struct {
+	SshKey string
+	Name   string
+}
+
+func (q *Queries) SetStackSSHKey(ctx context.Context, arg SetStackSSHKeyParams) error {
+	_, err := q.db.ExecContext(ctx, setStackSSHKey, arg.SshKey, arg.Name)
 	return err
 }
 

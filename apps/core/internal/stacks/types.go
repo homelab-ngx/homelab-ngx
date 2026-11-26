@@ -243,6 +243,7 @@ type StackLockEntry struct {
 	// Rev Approved commit.
 	Rev    string `json:"rev" doc:"Approved commit."`
 	Source string `json:"source"`
+	SSHKey string `json:"ssh_key,omitempty" doc:"Name of the SSH key used for a private repository, when set."`
 	Subnet string `json:"subnet"`
 
 	// Url Locked flake reference of that commit.
@@ -747,4 +748,20 @@ type StackIDList struct {
 // StackIDSet pins a name's id.
 type StackIDSet struct {
 	ID int64 `json:"id" minimum:"2000" maximum:"2099"`
+}
+
+// StackSSHKey is a public SSH key this host uses to fetch private stack
+// repositories.
+type StackSSHKey struct {
+	Fingerprint string `json:"fingerprint" doc:"SHA-256 fingerprint of the public key."`
+	PublicKey   string `json:"public_key" doc:"OpenSSH public key line."`
+	Repo        string `json:"repo,omitempty" doc:"Repository the key is bound to, for a per-stack key."`
+	Stack       string `json:"stack,omitempty" doc:"Stack using this dedicated key; absent for the host key."`
+}
+
+// StackSSHKeys is the host's default deploy key and any per-stack deploy
+// keys in use.
+type StackSSHKeys struct {
+	Host   StackSSHKey   `json:"host" doc:"The host's own SSH deploy key, tried first for every private repository."`
+	Stacks []StackSSHKey `json:"stacks" doc:"Dedicated deploy keys created for second or subsequent private GitHub repositories."`
 }

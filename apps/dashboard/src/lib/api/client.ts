@@ -30,6 +30,8 @@ export type SecurityAudit = Schema<"SecurityAudit">;
 export type SecurityAuditItem = Schema<"SecurityAuditItem">;
 export type AuditChunk = Schema<"AuditChunk">;
 export type Finding = Schema<"Finding">;
+export type StackSSHKey = Schema<"StackSSHKey">;
+export type StackSSHKeys = Schema<"StackSSHKeys">;
 
 /**
  * The demo build (`vite build --mode demo`) answers every call in the browser
@@ -50,6 +52,7 @@ export class ProblemError extends Error {
     readonly status: number,
     readonly code: string,
     readonly detail: string,
+    readonly extra: Record<string, unknown> = {},
   ) {
     super(detail || `HTTP ${status}`);
     this.name = "ProblemError";
@@ -75,7 +78,8 @@ export async function call<T>(request: Promise<Result<T>>): Promise<T> {
     const p = (error ?? {}) as { code?: string; detail?: string; title?: string };
     const code = p.code ?? "";
     if (response.status === 401 && (code === "setup_required" || code === "login_required")) signedOut?.(code);
-    throw new ProblemError(response.status, code, p.detail ?? p.title ?? response.statusText);
+    const extra = error && typeof error === "object" ? (error as Record<string, unknown>) : {};
+    throw new ProblemError(response.status, code, p.detail ?? p.title ?? response.statusText, extra);
   }
   return data as T;
 }

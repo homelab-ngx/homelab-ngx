@@ -102,6 +102,8 @@ type updateBody struct{ Body StackUpdate }
 
 type lockBody struct{ Body StackLock }
 
+type sshKeysBody struct{ Body StackSSHKeys }
+
 type nixStoreBody struct{ Body NixStore }
 
 type restoreIn struct{ Body StackLock }
@@ -416,6 +418,15 @@ func (h *HTTP) Register(a httpx.APIs) {
 				return nil, err
 			}
 			return &restoreBody{Body: res}, nil
+		})
+	httpx.Register(a, httpx.ScopeRead, op("getStackSSHKeys", http.MethodGet, "/stacks-ssh-keys",
+		"The host's SSH deploy key and any per-stack keys for private repositories.", 0),
+		func(ctx context.Context, _ *struct{}) (*sshKeysBody, error) {
+			k, err := h.svc.SSHKeys(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return &sshKeysBody{Body: k}, nil
 		})
 }
 

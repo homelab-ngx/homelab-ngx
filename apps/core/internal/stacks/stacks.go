@@ -31,6 +31,12 @@ type Source interface {
 	Fetch(ctx context.Context, source string) (Fetched, error)
 }
 
+// EnvSource is an optional Source capability that fetches with extra
+// environment variables, such as GIT_SSH_COMMAND for a private repository.
+type EnvSource interface {
+	FetchWithEnv(ctx context.Context, source string, env []string) (Fetched, error)
+}
+
 // Service owns the stacks tables and the running stacks.
 type Service struct {
 	st      *store.Store
@@ -113,8 +119,9 @@ type Service struct {
 	// update brought (OnBackupFoldersAdded); guarded by mu.
 	backupAdded func(ctx context.Context, stack string, keys []string)
 
-	trees *treeCache // each commit's tree in the store (tree.go)
-	icons *iconCache // the stacks' and services' icons (iconserve.go)
+	trees   *treeCache // each commit's tree in the store (tree.go)
+	icons   *iconCache // the stacks' and services' icons (iconserve.go)
+	sshKeys *sshKeyStore
 
 	// openShell opens a stack shell's terminal; nil: machined (shell.go).
 	// shellSlots bounds the shells open at once.
@@ -134,16 +141,11 @@ func New(st *store.Store, src Source, host Host, notifier Notifier, log *slog.Lo
 		statDir: isDir, timeZone: HostTimeZone, statOwner: statOwner, statfs: diskRoom, bootID: readBootID,
 	}
 	s.chown = chownPath(host.Runner)
+	s.sshKeys = newSSHKeyStore(host.SSHKeysDir)
 	s.trees = newTreeCache(func(ctx context.Context, url string) (string, error) {
-		f, err := prefetch(ctx, s.r, url)
-		if err != nil {
-			return "", err
-		}
-		if !strings.HasPrefix(f.StorePath, "/nix/store/") {
-			return "", errors.New("nix flake prefetch: no store path for the commit")
-		}
-		return f.StorePath, nil
+		return s.lookupTree(ctx, url, nil)
 	})
+	s.trees.lookupWithEnv = s.lookupTree
 	s.icons = newIconCache(host.IconsDir, s.trees, log)
 	s.resolveNixpkgs = func(ctx context.Context, spec string) (string, error) { return ResolveNixpkgs(ctx, s.r, spec) }
 	s.listChannels = func(ctx context.Context) ([]string, error) { return ListChannels(ctx, s.r) }
@@ -151,9 +153,20 @@ func New(st *store.Store, src Source, host Host, notifier Notifier, log *slog.Lo
 		return ReadNixpkgsRelease(ctx, s.r, rev)
 	}
 	if host.MirrorsDir != "" {
-		s.history = gitHistory{r: host.Runner, dir: host.MirrorsDir, tokenFiles: host.GitHubTokenFiles}
+		s.history = gitHistory{r: host.Runner, dir: host.MirrorsDir, tokenFiles: host.GitHubTokenFiles, keys: s.sshKeys}
 	}
 	return s
+}
+
+func (s *Service) lookupTree(ctx context.Context, url string, env []string) (string, error) {
+	f, err := prefetchWithExtraEnv(ctx, s.r, url, env)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(f.StorePath, "/nix/store/") {
+		return "", errors.New("nix flake prefetch: no store path for the commit")
+	}
+	return f.StorePath, nil
 }
 
 // List returns every stack, sorted by name.
@@ -195,7 +208,7 @@ func (s *Service) Add(ctx context.Context, source, name string) (Stack, error) {
 		return Stack{}, httpx.BadRequest("invalid_name",
 			"%q is not a stack name: use 1-32 characters of a-z, 0-9 and '-', starting with a letter", name)
 	}
-	f, m, err := s.fetch(ctx, source, name)
+	f, m, sshKey, err := s.fetchForAdd(ctx, source, name, "")
 	if err != nil {
 		return Stack{}, err
 	}
@@ -212,11 +225,11 @@ func (s *Service) Add(ctx context.Context, source, name string) (Stack, error) {
 	}
 	if err := s.st.Queries().InsertStack(ctx, store.InsertStackParams{
 		Name: name, Source: source, Now: s.now().UnixMilli(),
-		Rev: f.Rev, Url: f.URL, Manifest: encode(m),
+		Rev: f.Rev, Url: f.URL, Manifest: encode(m), SshKey: sshKey,
 	}); err != nil {
 		return Stack{}, err
 	}
-	s.storeInfo(ctx, name, s.learn(ctx, name, source, f, ""))
+	s.storeInfo(ctx, name, s.learn(ctx, name, source, sshKey, f, ""))
 	s.log.Info("stack installed", "stack", name, "source", source, "rev", f.Rev)
 	s.writeLock(ctx)
 	return s.Get(ctx, name)
@@ -304,10 +317,22 @@ func (s *Service) Fetch(ctx context.Context, name string) (Stack, error) {
 	if err != nil {
 		return Stack{}, err
 	}
-	f, m, err := s.fetch(ctx, r.Source, name)
+	fetchSource, env := r.Source, []string(nil)
+	if r.SshKey != "" {
+		if sshRef, ok := sshFlakeRef(r.Source); ok {
+			fetchSource = sshRef
+			env = s.nixEnvFor(r.SshKey)
+		}
+	}
+	f, m, err := s.fetchOne(ctx, fetchSource, name, env)
 	if err != nil {
 		return Stack{}, err
 	}
+	return s.applyFetched(ctx, r, r.Source, r.SshKey, f, m)
+}
+
+func (s *Service) applyFetched(ctx context.Context, r store.Stack, source, sshKey string, f Fetched, m Manifest) (Stack, error) {
+	name := r.Name
 	approved, hasApproved, err := approvedManifest(r)
 	if err != nil {
 		return Stack{}, err
@@ -341,7 +366,7 @@ func (s *Service) Fetch(ctx context.Context, name string) (Stack, error) {
 	if g, err := s.generation(ctx, r); err == nil && g != nil {
 		since = g.Rev
 	}
-	s.storeInfo(ctx, name, s.learn(ctx, name, r.Source, f, since))
+	s.storeInfo(ctx, name, s.learn(ctx, name, source, sshKey, f, since))
 	// A commit approved at once may have dropped an API scope.
 	s.syncAPITokenLogged(ctx, name)
 	s.writeLock(ctx)
@@ -480,7 +505,75 @@ func (s *Service) row(ctx context.Context, name string) (store.Stack, error) {
 // fetch reads and validates the newest commit. name, when set, is the name
 // the stack is installed under, which its units are shown with.
 func (s *Service) fetch(ctx context.Context, source, name string) (Fetched, Manifest, error) {
-	f, err := s.src.Fetch(ctx, source)
+	return s.fetchOne(ctx, source, name, nil)
+}
+
+func (s *Service) fetchForAdd(ctx context.Context, source, name, excludeStack string) (Fetched, Manifest, string, error) {
+	sshRef, canSSH := sshFlakeRef(source)
+	if s.sshKeys == nil || !canSSH {
+		f, m, err := s.fetch(ctx, source, name)
+		return f, m, "", err
+	}
+	if !strings.HasPrefix(source, "git+ssh://") {
+		f, m, err := s.fetchOne(ctx, source, name, nil)
+		if err == nil {
+			return f, m, "", nil
+		}
+		if !isPrivateRepoError(err) {
+			return Fetched{}, Manifest{}, "", err
+		}
+	}
+	hostKey, kerr := s.sshKeys.ensureHostKey()
+	if kerr != nil {
+		return Fetched{}, Manifest{}, "", httpx.BadGateway("fetch_failed", "preparing SSH deploy key: %v", kerr)
+	}
+	f, m, sshErr := s.fetchOne(ctx, sshRef, name, s.nixEnvFor(HostSSHKeyName))
+	if sshErr == nil {
+		return f, m, HostSSHKeyName, nil
+	}
+	if !isPrivateRepoError(sshErr) {
+		return Fetched{}, Manifest{}, "", sshErr
+	}
+	if owner, repo, isGH := githubRepo(source); isGH {
+		inUse, uerr := s.hostKeyUsedByOtherGitHubRepo(ctx, owner, repo, excludeStack)
+		if uerr != nil {
+			return Fetched{}, Manifest{}, "", uerr
+		}
+		if inUse {
+			dedName := repoKeyName(owner, repo)
+			if s.sshKeys.hasKey(dedName) {
+				f, m, dedErr := s.fetchOne(ctx, sshRef, name, s.nixEnvFor(dedName))
+				if dedErr == nil {
+					return f, m, dedName, nil
+				}
+				if !isPrivateRepoError(dedErr) {
+					return Fetched{}, Manifest{}, "", dedErr
+				}
+			}
+			dedKey, derr := s.sshKeys.ensureRepoKey(owner, repo)
+			if derr != nil {
+				return Fetched{}, Manifest{}, "", httpx.BadGateway("fetch_failed", "preparing SSH deploy key: %v", derr)
+			}
+			return Fetched{}, Manifest{}, "", privateRepoProblem(source, dedKey, false)
+		}
+	}
+	return Fetched{}, Manifest{}, "", privateRepoProblem(source, hostKey, true)
+}
+
+func (s *Service) fetchOne(ctx context.Context, source, name string, env []string) (Fetched, Manifest, error) {
+	var (
+		f   Fetched
+		err error
+	)
+	if env != nil {
+		if es, ok := s.src.(EnvSource); ok {
+			f, err = es.FetchWithEnv(ctx, source, env)
+		} else {
+			f, err = s.src.Fetch(ctx, source)
+		}
+	} else {
+		f, err = s.src.Fetch(ctx, source)
+	}
 	if errors.Is(err, ErrNoManifest) {
 		return Fetched{}, Manifest{}, httpx.Unprocessable("invalid_manifest", "%v", err)
 	}

@@ -28,7 +28,7 @@ func (s *Service) Tree(ctx context.Context, name string) (dir, source, rev strin
 	if url == "" {
 		return "", "", "", httpx.Conflict("nothing_fetched", "%s has no commit fetched yet", name)
 	}
-	dir, err = s.trees.storePath(ctx, url)
+	dir, err = s.trees.storePath(ctx, url, s.sshEnvFor(r.SshKey))
 	if err != nil {
 		return "", "", "", err
 	}
@@ -39,7 +39,8 @@ func (s *Service) Tree(ctx context.Context, name string) (dir, source, rev strin
 // for Tree.
 type treeCache struct {
 	// lookup returns the store path of a locked flake reference.
-	lookup func(ctx context.Context, url string) (string, error)
+	lookup        func(ctx context.Context, url string) (string, error)
+	lookupWithEnv func(ctx context.Context, url string, env []string) (string, error)
 
 	flight singleflight.Group
 	mu     sync.Mutex
@@ -52,7 +53,7 @@ func newTreeCache(lookup func(context.Context, string) (string, error)) *treeCac
 
 // storePath is the tree of the commit at url, looked up once per commit and
 // again when the store has collected it.
-func (c *treeCache) storePath(ctx context.Context, url string) (string, error) {
+func (c *treeCache) storePath(ctx context.Context, url string, env []string) (string, error) {
 	c.mu.Lock()
 	p, ok := c.paths[url]
 	c.mu.Unlock()
@@ -65,7 +66,15 @@ func (c *treeCache) storePath(ctx context.Context, url string) (string, error) {
 	// away does not cancel it for the others.
 	ctx = context.WithoutCancel(ctx)
 	v, err, _ := c.flight.Do(url, func() (any, error) {
-		p, err := c.lookup(ctx, url)
+		var (
+			p   string
+			err error
+		)
+		if len(env) > 0 && c.lookupWithEnv != nil {
+			p, err = c.lookupWithEnv(ctx, url, env)
+		} else {
+			p, err = c.lookup(ctx, url)
+		}
 		if err != nil {
 			return "", httpx.BadGateway("fetch_failed", "reading the stack's commit: %v", err)
 		}

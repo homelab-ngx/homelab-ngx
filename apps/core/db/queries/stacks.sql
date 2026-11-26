@@ -5,8 +5,8 @@ SELECT * FROM stacks ORDER BY name;
 SELECT * FROM stacks WHERE name = ?;
 
 -- name: InsertStack :exec
-INSERT INTO stacks (name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at)
-VALUES (sqlc.arg(name), sqlc.arg(source), sqlc.arg(now), sqlc.arg(rev), sqlc.arg(url), sqlc.arg(manifest), sqlc.arg(now));
+INSERT INTO stacks (name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at, ssh_key)
+VALUES (sqlc.arg(name), sqlc.arg(source), sqlc.arg(now), sqlc.arg(rev), sqlc.arg(url), sqlc.arg(manifest), sqlc.arg(now), sqlc.arg(ssh_key));
 
 -- name: SetStackFetched :exec
 UPDATE stacks SET fetched_rev = sqlc.arg(rev), fetched_url = sqlc.arg(url),
@@ -98,9 +98,9 @@ UPDATE stacks SET op_kind = '', op_step = '', op_prev = '', op_started_at = 0 WH
 -- one, and the subnet it had is kept.
 -- name: RestoreStack :exec
 INSERT INTO stacks (name, source, created_at, fetched_rev, fetched_url, fetched_manifest, fetched_at,
-    approved_rev, approved_url, approved_manifest, approved_at, want_running, autostart, subnet, label, nixpkgs_rev, nixpkgs, masked_units)
+    approved_rev, approved_url, approved_manifest, approved_at, want_running, autostart, subnet, label, nixpkgs_rev, nixpkgs, masked_units, ssh_key)
 VALUES (sqlc.arg(name), sqlc.arg(source), sqlc.arg(now), sqlc.arg(rev), sqlc.arg(url), sqlc.arg(manifest), sqlc.arg(now),
-    sqlc.arg(rev), sqlc.arg(url), sqlc.arg(manifest), sqlc.arg(now), sqlc.arg(want_running), sqlc.arg(autostart), sqlc.arg(subnet), sqlc.arg(label), sqlc.arg(nixpkgs_rev), sqlc.arg(nixpkgs), sqlc.arg(masked_units));
+    sqlc.arg(rev), sqlc.arg(url), sqlc.arg(manifest), sqlc.arg(now), sqlc.arg(want_running), sqlc.arg(autostart), sqlc.arg(subnet), sqlc.arg(label), sqlc.arg(nixpkgs_rev), sqlc.arg(nixpkgs), sqlc.arg(masked_units), sqlc.arg(ssh_key));
 
 -- name: SetStackFetchedInfo :exec
 UPDATE stacks SET fetched_info = sqlc.arg(info) WHERE name = sqlc.arg(name);
@@ -148,3 +148,6 @@ UPDATE stacks SET booted_vars = sqlc.arg(digest) WHERE name = sqlc.arg(name);
 
 -- name: SetStackSource :exec
 UPDATE stacks SET source = sqlc.arg(source) WHERE name = sqlc.arg(name);
+
+-- name: SetStackSSHKey :exec
+UPDATE stacks SET ssh_key = sqlc.arg(ssh_key) WHERE name = sqlc.arg(name);

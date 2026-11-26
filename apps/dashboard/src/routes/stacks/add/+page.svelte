@@ -39,8 +39,17 @@
   /** The added stack; set once the daemon has read its source, or from ?stack= when a written stack continues here. */
   let name = $state<string | null>(page.url.searchParams.get("stack"));
   let installing = $state(false);
+  interface PrivateKeyPrompt {
+    source: string;
+    publicKey: string;
+    fingerprint: string;
+    deployKeyUrl: string;
+  }
+  let privateKey = $state<PrivateKeyPrompt | null>(null);
+  let copied = $state(false);
 
   const source = $derived(kind === "git" ? gitSource(url, branch) : kind === "folder" ? folderSource(folder) : null);
+  const shownKey = $derived(privateKey && privateKey.source === source ? privateKey : null);
   const sourceHint = $derived(
     kind === "git"
       ? url.trim() && !source
@@ -90,25 +99,51 @@
     }
   }
 
-  async function add(e: SubmitEvent) {
-    e.preventDefault();
-    if (kind === "write") return write();
+  async function submitAdd() {
     if (!source || nameHint) return;
     error = "";
     working = true;
     try {
       const s = await call<Stack>(api.POST("/stacks", { body: { source, name: chosenName.trim() || undefined } }));
+      privateKey = null;
       name = s.name;
       client.setQueryData([...keys.stacks, s.name], s);
       await client.invalidateQueries({ queryKey: keys.stacks });
     } catch (err) {
-      error =
-        err instanceof ProblemError && err.code === "stack_exists"
-          ? `${describe(err)}. Set another name below.`
-          : describe(err);
+      if (err instanceof ProblemError && err.code === "private_repo" && typeof err.extra.public_key === "string" && err.extra.public_key) {
+        privateKey = {
+          source,
+          publicKey: err.extra.public_key,
+          fingerprint: typeof err.extra.fingerprint === "string" ? err.extra.fingerprint : "",
+          deployKeyUrl: typeof err.extra.deploy_key_url === "string" ? err.extra.deploy_key_url : "",
+        };
+        copied = false;
+      } else {
+        privateKey = null;
+        error =
+          err instanceof ProblemError && err.code === "stack_exists"
+            ? `${describe(err)}. Set another name below.`
+            : describe(err);
+      }
     } finally {
       working = false;
     }
+  }
+
+  async function copyKey() {
+    if (!shownKey) return;
+    try {
+      if (navigator.clipboard) await navigator.clipboard.writeText(shownKey.publicKey);
+      copied = true;
+    } catch {
+      copied = false;
+    }
+  }
+
+  async function add(e: SubmitEvent) {
+    e.preventDefault();
+    if (kind === "write") return write();
+    await submitAdd();
   }
 
   async function install(s: Stack) {
@@ -157,7 +192,7 @@
     <fieldset class="grid gap-3 sm:grid-cols-3">
       <legend class="label mb-2">
         <Help label="Source">
-          A git repository set up as a homelab stack (private GitHub repositories work), a git checkout on this host, or two
+          A git repository set up as a homelab stack (private repositories use an SSH deploy key), a git checkout on this host, or two
           files written in the dashboard from an example.
         </Help>
       </legend>
@@ -234,6 +269,21 @@
       {/if}
     </div>
   </form>
+  {#if shownKey}
+    <section class="card mt-5 max-w-2xl" aria-labelledby="deploy-key-h">
+      <h2 id="deploy-key-h" class="font-semibold">Deploy key needed</h2>
+      <p class="mt-1 text-muted">Add this read-only deploy key to the repository, then retry.</p>
+      <pre class="mt-3 overflow-x-auto rounded-md bg-sunken p-3 text-xs">{shownKey.publicKey}</pre>
+      {#if shownKey.fingerprint}<p class="mt-1.5 text-xs text-muted">{shownKey.fingerprint}</p>{/if}
+      <div class="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" class="btn" onclick={copyKey}>{copied ? "Copied" : "Copy key"}</button>
+        {#if shownKey.deployKeyUrl}
+          <a class="btn" href={shownKey.deployKeyUrl} target="_blank" rel="noopener noreferrer">Open deploy keys</a>
+        {/if}
+        <button type="button" class="btn btn-primary" disabled={working} onclick={submitAdd}>{working ? "Retrying…" : "Retry"}</button>
+      </div>
+    </section>
+  {/if}
 {:else if stack.data}
   {@const s = stack.data}
   {#if step === 1}

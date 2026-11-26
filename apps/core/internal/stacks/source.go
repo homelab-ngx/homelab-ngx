@@ -56,7 +56,13 @@ func NewNixSource(r cmdrunner.Runner) *NixSource {
 // Fetch resolves source to its newest commit, copies that commit into the
 // store and reads the manifest from it. Nothing from the repo is evaluated.
 func (n *NixSource) Fetch(ctx context.Context, source string) (Fetched, error) {
-	out, err := prefetch(ctx, n.r, committedRef(source))
+	return n.FetchWithEnv(ctx, source, nixEnv())
+}
+
+// FetchWithEnv resolves source to its newest commit using extra environment
+// variables (such as GIT_SSH_COMMAND for a private repository).
+func (n *NixSource) FetchWithEnv(ctx context.Context, source string, env []string) (Fetched, error) {
+	out, err := prefetchWithEnv(ctx, n.r, committedRef(source), env)
 	if err != nil {
 		return Fetched{}, err
 	}
