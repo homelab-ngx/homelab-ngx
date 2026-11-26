@@ -62,7 +62,7 @@
     } catch {
       // A private window keeps it for this page only.
     }
-    return typeof window !== "undefined" ? window.matchMedia("(min-width: 1280px)").matches : true;
+    return typeof window !== "undefined" ? (window.matchMedia?.("(min-width: 1280px)").matches ?? true) : true;
   }
   function toggleAssistant() {
     assistantOpen = !assistantOpen;
@@ -276,9 +276,9 @@
         <h1 class="truncate font-semibold">{draft.name}</h1>
       </div>
     {/if}
-    <div class="ml-auto flex flex-wrap items-center gap-2" role="toolbar" aria-label="Draft">
+    <div class="ml-auto flex flex-wrap items-center justify-end gap-2" role="toolbar" aria-label="Draft">
       {#if dirty}
-        <input class="input min-w-0 flex-1 px-2 py-0.5 text-xs sm:w-56 sm:flex-none" bind:value={message} aria-label="What changed" placeholder="What changed (optional)" maxlength="500" />
+        <input class="input w-full px-2 py-0.5 text-xs sm:w-56" bind:value={message} aria-label="What changed" placeholder="What changed (optional)" maxlength="500" />
       {/if}
       <button type="button" class="btn btn-sm {dirty ? 'btn-primary' : ''}" disabled={!dirty || !!working} onclick={save} title="Ctrl+S">
         {working === "save" ? "Saving…" : dirty ? "Save" : "Saved"}
@@ -376,7 +376,7 @@
           <Sparkles class="size-5" aria-hidden="true" />
           <span class="text-xs font-medium xl:hidden">Assistant</span>
         </button>
-        <span class="ml-auto truncate text-xs text-muted xl:hidden">{assistant.data!.model}</span>
+        {#if !assistantOpen}<span class="ml-auto truncate text-xs text-muted xl:hidden">{assistant.data!.model}</span>{/if}
       </div>
     {/if}
   </div>

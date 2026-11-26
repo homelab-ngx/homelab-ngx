@@ -1,10 +1,11 @@
 import { QueryClient } from "@tanstack/svelte-query";
 import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeNavigate, goto } from "$app/navigation";
 import { api, type Schema, type Stack } from "#lib/api/client.ts";
 import Harness from "./StackSourceHarness.test.svelte";
 
-vi.mock("$app/navigation", () => ({ beforeNavigate: vi.fn(), goto: vi.fn() }));
+vi.mock("$app/navigation", () => ({ beforeNavigate: vi.fn(), goto: vi.fn(async () => {}) }));
 vi.mock("#lib/components/CodeEditor.svelte", async () => ({ default: (await import("./FakeEditor.test.svelte")).default }));
 
 const manifest = '{ "version": 9 }\n';
@@ -17,8 +18,8 @@ const files = {
     { path: "icon.png", size: 2048, binary: true, content: "" },
   ],
 } as Schema<"StackFiles">;
-const stack = (source = files.source) =>
-  ({ name: "media", label: "Media", source, approved: { rev: "abcdef0123", url: "", at: "", manifest: {} } }) as unknown as Stack;
+const stack = (source = files.source, approved = true) =>
+  ({ name: "media", label: "Media", source, approved: approved ? { rev: "abcdef0123", url: "", at: "", manifest: {} } : null }) as unknown as Stack;
 const draft = { name: "media", files: files.files, installed_as: ["media"] };
 const ok = (data: unknown) => ({ data, response: new Response(null, { status: 200 }) }) as never;
 
@@ -28,6 +29,8 @@ const type = (text: string) => fireEvent.input(screen.getByLabelText("homelab-st
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.mocked(goto).mockClear();
+  vi.mocked(beforeNavigate).mockClear();
 });
 
 describe("StackSource", () => {
@@ -79,5 +82,24 @@ describe("StackSource", () => {
     show(stack("git+file:///srv/stacks/media"));
     await type("changed");
     expect(screen.getByRole("status").textContent).toMatch(/Edit the files in their folder and commit/);
+  });
+
+  it("confirms in a modal before leaving with unsaved changes", async () => {
+    show();
+    await type("changed");
+    const guard = vi.mocked(beforeNavigate).mock.calls.at(-1)![0];
+    const cancel = vi.fn();
+    guard({ type: "link", to: { url: new URL("http://host/stacks/media") }, cancel } as never);
+    expect(cancel).toHaveBeenCalled();
+    expect(await screen.findByRole("heading", { name: "Leave without saving?" })).toBeTruthy();
+    await fireEvent.click(screen.getByRole("button", { name: "Leave" }));
+    expect(goto).toHaveBeenCalledWith("/stacks/media");
+  });
+
+  it("explains why Fork is disabled before a stack is approved", () => {
+    show(stack(files.source, false));
+    const btn = screen.getByRole("button", { name: "Fork…" }) as HTMLButtonElement;
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toBe("Approve the stack first.");
   });
 });
