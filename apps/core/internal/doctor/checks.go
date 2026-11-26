@@ -27,6 +27,8 @@ const (
 	// defaultDaemonURL's host is a placeholder: the CLI's client dials the
 	// socket whatever the host.
 	defaultDaemonURL = "http://unix/api/version"
+	// defaultStorageURL queries the daemon's cached disk and SMART state.
+	defaultStorageURL = "http://unix/api/storage"
 	// SnapshotMaxAge is how old the newest database snapshot may be.
 	SnapshotMaxAge = 36 * time.Hour
 	diskFullPct    = 90
@@ -38,9 +40,10 @@ const (
 // tests set only what they exercise.
 type Deps struct {
 	// Daemon reaches the daemon's API (over its unix socket in the CLI); the
-	// daemon check sends GET DaemonURL through it.
-	Daemon    *http.Client
-	DaemonURL string
+	// daemon and SMART checks read DaemonURL and StorageURL through it.
+	Daemon     *http.Client
+	DaemonURL  string
+	StorageURL string
 	// Runner executes systemctl.
 	Runner cmdrunner.Runner
 	// HTTP fetches the dashboard and Scrutiny. Its own timeout is irrelevant:
@@ -56,8 +59,9 @@ type Deps struct {
 	// DashboardURL is the address the caddy check asks; empty takes the
 	// host's declared dashboard address.
 	DashboardURL string
-	// ScrutinyURL is Scrutiny's summary API; empty takes the host's
-	// configured one, and none means no SMART check.
+	// ScrutinyURL is Scrutiny's summary API; empty falls back to the host's
+	// configured one, and when both are empty the SMART check reads from the
+	// daemon's storage API instead.
 	ScrutinyURL string
 	// Mounts are the filesystems the disk check inspects; empty takes /, the
 	// cache directory and the pool.
@@ -76,6 +80,9 @@ func (d *Deps) defaults() {
 	}
 	if d.DaemonURL == "" {
 		d.DaemonURL = defaultDaemonURL
+	}
+	if d.StorageURL == "" {
+		d.StorageURL = defaultStorageURL
 	}
 	if d.Statfs == nil {
 		d.Statfs = statfs
@@ -355,9 +362,105 @@ func (d Deps) smart(ctx context.Context) Result {
 			url = nix.Doctor.ScrutinyURL
 		}
 	}
-	if url == "" {
-		return unknown("no disk health monitor (Scrutiny) on this host; SMART status unknown")
+	if url != "" {
+		return d.smartFromScrutiny(ctx, url)
 	}
+	return d.smartFromDaemon(ctx)
+}
+
+func (d Deps) smartFromDaemon(ctx context.Context) Result {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.StorageURL, nil)
+	if err != nil {
+		return unknown("bad storage URL: %v", err)
+	}
+	resp, err := d.Daemon.Do(req)
+	if err != nil {
+		if ctx.Err() != nil {
+			return unknown("daemon did not answer in time; SMART status unknown")
+		}
+		return unknown("daemon unreachable; SMART status unknown")
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return unknown("daemon storage endpoint returned HTTP %d; SMART status unknown", resp.StatusCode)
+	}
+	var st storage.StorageStatus
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(&st); err != nil {
+		return unknown("daemon storage response unreadable; SMART status unknown")
+	}
+
+	seen := map[string]bool{}
+	var disks []storage.Disk
+	add := func(list []storage.Disk) {
+		for _, dk := range list {
+			k := dk.Path
+			if k == "" {
+				k = dk.Name
+			}
+			if k == "" || seen[k] {
+				continue
+			}
+			seen[k] = true
+			disks = append(disks, dk)
+		}
+	}
+	for _, p := range st.Pools {
+		add(p.Disks)
+	}
+	add(st.Unassigned)
+
+	var checked int
+	var failing, warned []string
+	for _, dk := range disks {
+		if dk.Health == nil {
+			continue
+		}
+		checked++
+		name := dk.Name
+		if name == "" {
+			name = dk.Path
+		}
+		model := dk.FriendlyName
+		if model == "" {
+			model = dk.Model
+		}
+		label := name
+		if model != "" {
+			label = fmt.Sprintf("%s (%s)", name, model)
+		}
+		if !dk.Health.Passed {
+			failing = append(failing, label)
+		} else if dk.Health.BadSectors > 0 {
+			warned = append(warned, fmt.Sprintf("%s (%d bad sectors)", label, dk.Health.BadSectors))
+		}
+	}
+	sort.Strings(failing)
+	sort.Strings(warned)
+	if len(failing) > 0 {
+		return fail("open Storage in the dashboard, check the failing disk, and plan a replacement",
+			"failing disks: %s", strings.Join(failing, ", "))
+	}
+	if checked == 0 {
+		return unknown("no SMART readings from the daemon (%s)", pluralDisk(len(disks)))
+	}
+	detail := fmt.Sprintf("%s healthy", pluralDisk(checked))
+	if checked < len(disks) {
+		detail += fmt.Sprintf(" (%d without SMART)", len(disks)-checked)
+	}
+	if len(warned) > 0 {
+		detail += "; bad sectors on " + strings.Join(warned, ", ")
+	}
+	return ok("%s", detail)
+}
+
+func pluralDisk(n int) string {
+	if n == 1 {
+		return "1 disk"
+	}
+	return fmt.Sprintf("%d disks", n)
+}
+
+func (d Deps) smartFromScrutiny(ctx context.Context, url string) Result {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return unknown("bad Scrutiny URL: %v", err)

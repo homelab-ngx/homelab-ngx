@@ -76,6 +76,8 @@ type Snapshot struct {
 	TunnelCert string
 	// WireGuardKey is the server's private key (base64).
 	WireGuardKey string
+	// SMTPPassword is the upstream SMTP relay password.
+	SMTPPassword string
 	// Keymap is the console keyboard's kbd keymap, for getty's console.
 	Keymap string
 }
@@ -219,6 +221,7 @@ func (s *Service) snapshot(ctx context.Context) (Snapshot, error) {
 	dec("tunnel", &snap.Tunnel)
 	dec("tailscale", &snap.Tailscale)
 	dec("ddns", &snap.DDNS)
+	dec("smtp", &snap.SMTP)
 	dec("time", &snap.Time)
 	var con storedConsole
 	dec("console", &con)
@@ -245,6 +248,12 @@ func (s *Service) snapshot(ctx context.Context) (Snapshot, error) {
 	}
 	snap.WireGuardKey = ws.PrivateKey
 	snap.WireGuard.PublicKey = publicKey(ws.PrivateKey)
+	var ss smtpSecret
+	if err := s.open(rs["smtp"], &ss); err != nil {
+		return snap, fmt.Errorf("smtp: %w", err)
+	}
+	snap.SMTPPassword = ss.Password
+	snap.SMTP.PasswordSet = ss.Password != ""
 	snap.Network.LAN = nonNil(snap.Network.LAN)
 	snap.Firewall.Openings = nonNil(snap.Firewall.Openings)
 	snap.WireGuard.Peers = nonNil(snap.WireGuard.Peers)

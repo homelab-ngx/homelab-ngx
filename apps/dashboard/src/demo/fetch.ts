@@ -233,6 +233,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
     tunnel: { enabled: true, credentials_set: true, dns_managed: true, tunnel_id: "00000000-demo-4000-8000-000000000000", routes: [{ hostname: "photos.home.example", target: "http://photos:2283" }] },
     tailscale: { enabled: false },
     ddns: { enabled: true, name: "vpn", status: { record: "vpn.home.example", ips: ["203.0.113.7"], at: iso(h.now() - 3 * MIN) } },
+    smtp: { enabled: false, host: "", port: 587, tls: "starttls", username: "", password_set: false },
     time: { clock: "", ntp: [] },
     time_sync: { synced: true, server: "0.arch.pool.ntp.org" },
     console: { keyboard: "se" },
@@ -295,6 +296,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
       firewall: { count: s.firewall.openings.length },
       ssh: { count: s.host.ssh_keys?.length ?? 0 },
       notifications: { state: "ok", count: 2 },
+      mail: { state: s.smtp.enabled && s.smtp.host ? "ok" : "off" },
       assistant: { state: "off" },
       security: { state: "off" },
     };

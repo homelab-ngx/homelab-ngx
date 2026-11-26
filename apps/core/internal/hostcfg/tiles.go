@@ -24,12 +24,17 @@ func (s *Service) Tiles(ctx context.Context) (map[string]tilestatus.TileStatus, 
 
 // applyTile is the tile each part of the apply belongs to (Apply's part
 // names); etc and anything else are the system tile's.
-var applyTile = map[string]string{"caddy": "domain", "firewall": "firewall", "tunnel": "tunnel", "tailscale": "tailscale", "ssh": "ssh"}
+var applyTile = map[string]string{"caddy": "domain", "firewall": "firewall", "tunnel": "tunnel", "tailscale": "tailscale", "ssh": "ssh", "smtp": "mail"}
 
 func tiles(h HostSettings, ts TailscaleState) map[string]tilestatus.TileStatus {
 	t := map[string]tilestatus.TileStatus{}
 	if !h.TimeSync.Synced {
 		t["clock"] = tilestatus.Of(tilestatus.Warn)
+	}
+	if h.SMTP.Enabled && h.SMTP.Host != "" {
+		t["mail"] = tilestatus.Of(tilestatus.OK)
+	} else {
+		t["mail"] = tilestatus.Of(tilestatus.Off)
 	}
 	if h.Domain.Domain == "" {
 		t["domain"] = tilestatus.Of(tilestatus.Off)

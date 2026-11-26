@@ -34,3 +34,11 @@ for fs in ext4 xfs btrfs exfat vfat ntfs3; do
 done
 # The pinned pair: fail the build if the module is not there.
 modinfo -k "$(ls /usr/lib/modules | head -n1)" bcachefs >/dev/null
+# Stack client addresses (10.99.0.2..10.99.255.2): OpenSMTPD resolves every
+# connecting IP (and forward-checks the name) before sending its banner, and
+# private PTR lookups stall against systemd-resolved/mDNS. Keeping them in
+# /etc/hosts makes both lookups instant without touching DNS.
+for i in $(seq 0 255); do
+  printf '10.99.%d.2 stack-%d.homelab.internal\n' "$i" "$i"
+done >> /etc/hosts
+grep -q '^10\.99\.0\.2 stack-0\.homelab\.internal$' /etc/hosts

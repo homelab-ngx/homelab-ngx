@@ -8,6 +8,9 @@ describe("tileLabel", () => {
     expect(tileLabel(byKey("wireguard"), { state: "ok", count: 2 })).toBe("WireGuard VPN, on, 2 devices");
     expect(tileLabel(byKey("ssh"), { count: 1 })).toBe("SSH, 1 key");
     expect(tileLabel(byKey("notifications"), { state: "bad", count: 1 })).toBe("Notifications, failing, 1 channel");
+    expect(tileLabel(byKey("mail"), { state: "ok" })).toBe("Mail relay, on");
+    expect(tileLabel(byKey("mail"), { state: "bad" })).toBe("Mail relay, not applied");
+    expect(tileLabel(byKey("mail"), { state: "off" })).toBe("Mail relay, off");
   });
 
   it("falls back to a plain word for a state the tile does not name", () => {
@@ -43,6 +46,7 @@ describe("SECTIONS", () => {
     expect(SECTIONS.map((s) => s.title)).toEqual(["This host", "Network"]);
     const hostKeys = SECTIONS[0]!.tiles.map((t) => t.key);
     expect(hostKeys).toContain("system");
+    expect(hostKeys).toContain("mail");
     expect(hostKeys).toContain("security");
     expect(hostKeys).toContain("assistant");
     expect(hostKeys).toContain("account");

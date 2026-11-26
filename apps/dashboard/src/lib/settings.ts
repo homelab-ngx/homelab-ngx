@@ -2,7 +2,7 @@
  * Settings' index: its tiles, each a page of its own, and their
  * badges, which the daemon reports in one answer (GET /settings/status).
  */
-import { Bell, BrickWall, CircleUser, Clock, Cloud, Globe, Keyboard, KeyRound, Network, RefreshCw, ScrollText, ShieldCheck, ShieldHalf, SlidersHorizontal, Sparkles, Waypoints } from "@lucide/svelte";
+import { Bell, BrickWall, CircleUser, Clock, Cloud, Globe, Keyboard, KeyRound, Mail, Network, RefreshCw, ScrollText, ShieldCheck, ShieldHalf, SlidersHorizontal, Sparkles, Waypoints } from "@lucide/svelte";
 import { api, call, type Schema } from "./api/client.ts";
 
 /** A tile's badge: a tone, a count, both, or neither. */
@@ -47,6 +47,7 @@ export const SECTIONS: Section[] = [
       tile("console", "Console", Keyboard),
       tile("updates", "Updates", RefreshCw, { core: true, words: { info: "update waiting", bad: "fell back" } }),
       tile("notifications", "Notifications", Bell, { words: { ok: "on", bad: "failing", off: "no channels" }, noun: ["channel", "channels"] }),
+      tile("mail", "Mail relay", Mail, { words: { ok: "on", ...notApplied } }),
       tile("logs", "Logs", ScrollText),
       tile("security", "Security audit", ShieldCheck, { words: { ok: "good", info: "fair", warn: "weak", bad: "poor", off: "never run" } }),
       tile("assistant", "AI assistant", Sparkles, { words: { ok: "on" } }),

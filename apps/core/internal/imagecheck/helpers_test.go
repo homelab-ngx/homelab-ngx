@@ -1158,6 +1158,142 @@ func (s *S) stackRace() {
 	s.stackUp(0, "after systemd-networkd reloads during its start")
 }
 
+// hasSMTPRelay reports whether the running image includes opensmtpd and the
+// daemon API exposes the smtp host-settings section.
+func (s *S) hasSMTPRelay() func() (bool, error) {
+	return func() (bool, error) {
+		ok, err := s.probe("test -x /usr/bin/smtpd")()
+		if err != nil || !ok {
+			return ok, err
+		}
+		return s.apiHas("host-settings", func(v any) bool { return hasKey(v, "smtp") })()
+	}
+}
+
+// testSMTPRelay checks outbound mail relay from the host and across a stack's
+// veth boundary using a temporary socket-activated SMTP sink on 127.0.0.1:2525,
+// then leaves the authenticated STARTTLS relay configuration active.
+func (s *S) testSMTPRelay() {
+	s.t.Helper()
+	const sinkScript = `#!/bin/bash
+set -u
+printf '220 check-sink ESMTP\r\n'
+in_data=0
+msg=""
+while IFS= read -r line; do
+  line="${line%$'\r'}"
+  if ((in_data)); then
+    if [[ "$line" == "." ]]; then
+      in_data=0
+      printf '%s---\n' "$msg" >> /run/check-smtp-received.txt
+      msg=""
+      printf '250 OK\r\n'
+    else
+      msg+="${line}"$'\n'
+    fi
+    continue
+  fi
+  upper="${line^^}"
+  case "$upper" in
+    EHLO*|HELO*) printf '250 check-sink\r\n' ;;
+    MAIL\ FROM:*|RCPT\ TO:*|RSET*|NOOP*) printf '250 OK\r\n' ;;
+    DATA*) in_data=1; msg=""; printf '354 End data\r\n' ;;
+    QUIT*) printf '221 Bye\r\n'; break ;;
+    *) printf '250 OK\r\n' ;;
+  esac
+done
+`
+	s.putData("/run/check-smtp-sink.sh", sinkScript)
+	s.putData("/run/systemd/system/check-smtp-sink.socket", "[Socket]\nListenStream=127.0.0.1:2525\nAccept=yes\nTriggerLimitIntervalSec=0\n")
+	s.putData("/run/systemd/system/check-smtp-sink@.service", "[Unit]\nDescription=Temporary SMTP sink for imagecheck\nStartLimitIntervalSec=0\n\n[Service]\nType=simple\nStandardInput=socket\nStandardOutput=socket\nStandardError=journal\nExecStart=/bin/bash /run/check-smtp-sink.sh\n")
+	s.must("rm -f /run/check-smtp-received.txt && systemctl daemon-reload && systemctl start check-smtp-sink.socket")
+	cleanupSink := func() {
+		s.must("systemctl stop check-smtp-sink.socket && rm -f /run/systemd/system/check-smtp-sink.socket '/run/systemd/system/check-smtp-sink@.service' /run/check-smtp-sink.sh /run/check-smtp-received.txt && systemctl daemon-reload")
+	}
+
+	s.put("host-settings/smtp", map[string]any{"enabled": true, "host": "127.0.0.1", "port": 2525, "tls": "none"}, "smtp plaintext refused")
+	if errs := list(s.getJ("host-settings"), "applied.errors"); len(errs) > 0 {
+		cleanupSink()
+		s.die("smtp plaintext apply errors: %s", compact(errs))
+	}
+	if !s.test("systemctl is-active -q homelab-smtpd.service") {
+		cleanupSink()
+		s.die("homelab-smtpd.service is not active for local sink test")
+	}
+
+	s.must(`printf 'From: <host@example.test>\r\nTo: <dest@example.test>\r\nSubject: probe\r\n\r\nhost-relay-probe\r\n' | curl --silent --show-error --max-time 10 --url smtp://127.0.0.1:25 --mail-from host@example.test --mail-rcpt dest@example.test --upload-file -`)
+	if !s.until(15*time.Second, func() bool { return s.test("grep -qF host-relay-probe /run/check-smtp-received.txt") }) {
+		cleanupSink()
+		s.die("host mail did not reach the temporary SMTP sink through homelab-smtpd")
+	}
+
+	leader := s.out("machinectl show site -p Leader --value")
+	gw := ""
+	for _, l := range lines(s.out("ip -4 -o addr show dev " + stacks.HostIface("site"))) {
+		f := strings.Fields(l)
+		if len(f) >= 4 && strings.HasPrefix(f[3], "10.99.") {
+			gw = strings.Split(f[3], "/")[0]
+			break
+		}
+	}
+	if leader == "" || gw == "" {
+		cleanupSink()
+		s.die("no leader or gateway address for site stack")
+	}
+	sendFromSite := func(tag string, maxSec int, verbose bool) string {
+		vflag := ""
+		if verbose {
+			vflag = "-v "
+		}
+		return fmt.Sprintf(`printf 'From: <stack@example.test>\r\nTo: <dest@example.test>\r\nSubject: stack\r\n\r\n%s\r\n' | nsenter -t %s -n curl %s--silent --show-error --max-time %d --url smtp://%s:25 --mail-from stack@example.test --mail-rcpt dest@example.test --upload-file -`, tag, leader, vflag, maxSec, gw)
+	}
+	if s.test(sendFromSite("blocked-probe", 5, false)) {
+		cleanupSink()
+		s.die("stack site reached host port 25 without an egress grant")
+	}
+
+	// Open port 25 temporarily on site's veth input hook (matching an egress grant to host:25).
+	s.must(`nft insert rule inet homelab_stack_site input iifname "ve-site" tcp dport 25 accept`)
+	r := s.sh(sendFromSite("stack-relay-probe", 15, true))
+	if r.Code != 0 {
+		s.note("smtp stack failure evidence:\n%s", s.out(
+			`ss -tlnp 'sport = :25'; echo '=== RESOLV ==='; ls -la /etc/resolv.conf; cat /etc/resolv.conf; `+
+				`echo '=== RESOLVECTL ==='; timeout 6 resolvectl query 10.99.0.2 2>&1 || true; `+
+				`echo '=== SITE NFT ==='; nft -a list table inet homelab_stack_site; `+
+				`echo '=== HOST NFT ==='; nft list table inet homelab_host; `+
+				`echo '=== SMTPD CONF ==='; cat /var/lib/homelab/smtp/smtpd.conf; `+
+				`echo '=== SMTPD LOG ==='; journalctl -b -u homelab-smtpd --no-pager -n 20`))
+	}
+	h := s.out(`nft -a list chain inet homelab_stack_site input | awk '/tcp dport 25 accept/ {print $NF; exit}'`)
+	if h != "" {
+		s.must("nft delete rule inet homelab_stack_site input handle " + h)
+	}
+	if r.Code != 0 {
+		cleanupSink()
+		s.die("stack site failed to send to %s:25 with egress permitted (exit %d): %s", gw, r.Code, strings.TrimSpace(r.Stderr))
+	}
+	if !s.until(15*time.Second, func() bool { return s.test("grep -qF stack-relay-probe /run/check-smtp-received.txt") }) {
+		cleanupSink()
+		s.die("stack mail did not reach the temporary SMTP sink through homelab-smtpd")
+	}
+	cleanupSink()
+
+	s.put("host-settings/smtp", map[string]any{
+		"enabled": true, "host": "smtp.example.net", "port": 587, "tls": "starttls",
+		"username": "apikey", "password": "check-smtp-secret",
+	}, "smtp relay refused")
+	raw := string(s.get("host-settings"))
+	if strings.Contains(raw, "check-smtp-secret") {
+		s.die("GET /api/host-settings leaked the SMTP password")
+	}
+	if !bAt(parse([]byte(raw)), "smtp.password_set") {
+		s.die("smtp.password_set is false after saving password")
+	}
+	if perm := s.out("stat -c '%a:%G' /var/lib/homelab/smtp/secrets"); perm != "640:smtpd" {
+		s.die("/var/lib/homelab/smtp/secrets permissions = %s, want 640:smtpd", perm)
+	}
+}
+
 // hostCheck: everything the host settings asked for is in place. It is how
 // long the stack took to run.
 func (s *S) hostCheck() time.Duration {
@@ -1188,6 +1324,14 @@ func (s *S) hostCheck() time.Duration {
 	}
 	if !strings.Contains(s.out("readlink /etc/localtime"), "Europe/Stockholm") {
 		s.die("the time zone is not set")
+	}
+	if s.has("host SMTP relay", s.hasSMTPRelay()) {
+		if !strings.Contains(s.out("systemctl is-enabled homelab-smtpd"), "runtime") {
+			s.die("homelab-smtpd is not runtime-enabled")
+		}
+		if !s.test("systemctl is-active -q homelab-smtpd.service") {
+			s.die("homelab-smtpd.service is not running")
+		}
 	}
 	if !bAt(s.getJ("stacks/site"), "running") {
 		s.die("the stack is not running")

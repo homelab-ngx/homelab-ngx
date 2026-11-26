@@ -2,12 +2,14 @@ package doctor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"syscall"
 	"testing"
@@ -16,6 +18,8 @@ import (
 	"homelab-ngx.com/core/internal/cloudflare"
 	"homelab-ngx.com/core/internal/cmdrunner/cmdrunnertest"
 	"homelab-ngx.com/core/internal/config"
+	"homelab-ngx.com/core/internal/notifications"
+	"homelab-ngx.com/core/internal/storage"
 )
 
 // apiFor returns Deps whose daemon check talks to h.
@@ -252,6 +256,121 @@ func TestSmartCheckIsUnknownNotFailedWhenScrutinyMisbehaves(t *testing.T) {
 	status(t, byName(t, Deps{ScrutinyURL: "http://127.0.0.1:1"}, "smart"), Unknown)
 	status(t, byName(t, Deps{ScrutinyURL: scrutiny(t, "oops", 503)}, "smart"), Unknown)
 	status(t, byName(t, Deps{ScrutinyURL: scrutiny(t, "{not json", 200)}, "smart"), Unknown)
+}
+
+func storageStatusServer(t *testing.T, st storage.StorageStatus, code int) Deps {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/storage" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		w.WriteHeader(code)
+		if code == http.StatusOK {
+			_ = json.NewEncoder(w).Encode(st)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return Deps{
+		Daemon:     srv.Client(),
+		StorageURL: srv.URL + "/api/storage",
+		Nix:        func() (*config.Nix, error) { return &config.Nix{}, nil },
+	}
+}
+
+func TestSmartCheckFromDaemon(t *testing.T) {
+	t.Parallel()
+
+	// Healthy pool and unassigned disks -> OK.
+	deps := storageStatusServer(t, storage.StorageStatus{
+		Pools: []storage.Pool{{
+			Name: "pool",
+			Disks: []storage.Disk{
+				{Name: "sda", Path: "/dev/sda", FriendlyName: "Samsung SSD", Health: &storage.DiskHealth{Passed: true}},
+				{Name: "sdb", Path: "/dev/sdb", Model: "IronWolf", Health: &storage.DiskHealth{Passed: true, BadSectors: 2}},
+			},
+		}},
+		Unassigned: []storage.Disk{
+			{Name: "sdc", Path: "/dev/sdc", FriendlyName: "Spare HDD", Health: &storage.DiskHealth{Passed: true}},
+			{Name: "vda", Path: "/dev/vda", Model: "VirtIO"},
+		},
+	}, http.StatusOK)
+	res := status(t, byName(t, deps, "smart"), OK)
+	if !strings.Contains(res.Detail, "3 disks healthy") || !strings.Contains(res.Detail, "1 without SMART") || !strings.Contains(res.Detail, "sdb (IronWolf) (2 bad sectors)") {
+		t.Fatalf("healthy detail = %q", res.Detail)
+	}
+
+	// Failing pool disk -> Fail.
+	failingPool := storageStatusServer(t, storage.StorageStatus{
+		Pools: []storage.Pool{{
+			Name: "pool",
+			Disks: []storage.Disk{
+				{Name: "sda", Path: "/dev/sda", FriendlyName: "SSD", Health: &storage.DiskHealth{Passed: true}},
+				{Name: "sdb", Path: "/dev/sdb", FriendlyName: "IronWolf 4TB", Health: &storage.DiskHealth{Passed: false, BadSectors: 16}},
+			},
+		}},
+	}, http.StatusOK)
+	res = status(t, byName(t, failingPool, "smart"), Fail)
+	if !strings.Contains(res.Detail, "sdb (IronWolf 4TB)") || strings.Contains(res.Detail, "sda") || !strings.Contains(res.Fix, "Storage") {
+		t.Fatalf("failing pool = %+v", res)
+	}
+
+	// Failing unassigned disk -> Fail.
+	failingSpare := storageStatusServer(t, storage.StorageStatus{
+		Unassigned: []storage.Disk{
+			{Name: "sdd", Path: "/dev/sdd", Model: "Old Disk", Health: &storage.DiskHealth{Passed: false}},
+		},
+	}, http.StatusOK)
+	res = status(t, byName(t, failingSpare, "smart"), Fail)
+	if !strings.Contains(res.Detail, "sdd (Old Disk)") {
+		t.Fatalf("failing spare = %+v", res)
+	}
+
+	// No SMART readings (e.g. VM disks or before first background pass) -> Unknown.
+	noReadings := storageStatusServer(t, storage.StorageStatus{
+		Unassigned: []storage.Disk{{Name: "vda", Path: "/dev/vda"}},
+	}, http.StatusOK)
+	res = status(t, byName(t, noReadings, "smart"), Unknown)
+	if !strings.Contains(res.Detail, "no SMART readings from the daemon") {
+		t.Fatalf("no readings = %+v", res)
+	}
+
+	// Daemon unreachable or bad response -> Unknown.
+	status(t, byName(t, Deps{StorageURL: "http://127.0.0.1:1", Nix: func() (*config.Nix, error) { return &config.Nix{}, nil }}, "smart"), Unknown)
+	status(t, byName(t, storageStatusServer(t, storage.StorageStatus{}, http.StatusServiceUnavailable), "smart"), Unknown)
+
+	badJSON := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("{bad"))
+	}))
+	t.Cleanup(badJSON.Close)
+	status(t, byName(t, Deps{Daemon: badJSON.Client(), StorageURL: badJSON.URL, Nix: func() (*config.Nix, error) { return &config.Nix{}, nil }}, "smart"), Unknown)
+}
+
+func TestSmartDaemonAlertOpensAfterTwoFailures(t *testing.T) {
+	t.Parallel()
+	deps := storageStatusServer(t, storage.StorageStatus{
+		Pools: []storage.Pool{{
+			Disks: []storage.Disk{
+				{Name: "sdb", Path: "/dev/sdb", FriendlyName: "WD Red", Health: &storage.DiskHealth{Passed: false}},
+			},
+		}},
+	}, http.StatusOK)
+	checks := []Check{byName(t, deps, "smart")}
+	sink := &fakeSink{open: map[string]string{}}
+	aud := newAuditor(sink, "smart")
+	ctx := context.Background()
+
+	first := RunDaily(ctx, DailyConfig{Checks: checks, Auditor: aud})
+	if len(first.Outcome.Opened) != 0 {
+		t.Fatalf("first failure opened alert early: %+v", first.Outcome)
+	}
+	second := RunDaily(ctx, DailyConfig{Checks: checks, Auditor: aud})
+	if !reflect.DeepEqual(second.Outcome.Opened, []string{"audit:smart"}) {
+		t.Fatalf("second failure opened = %v, want [audit:smart]", second.Outcome.Opened)
+	}
+	if p, ok := sink.open["audit:smart"]; !ok || !strings.Contains(p, "SMART") {
+		t.Fatalf("open problem = %+v", sink.open)
+	}
+	var _ notifications.ProblemState
 }
 
 // ── cloudflare-tunnel ──

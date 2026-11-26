@@ -30,6 +30,7 @@ type wireguardIn struct{ Body WireGuard }
 type tunnelIn struct{ Body TunnelSet }
 type tailscaleIn struct{ Body Tailscale }
 type ddnsIn struct{ Body DDNSSet }
+type smtpIn struct{ Body SMTPSet }
 type timeIn struct{ Body Time }
 type consoleIn struct{ Body Console }
 type layoutsOut struct{ Body KeyboardLayouts }
@@ -67,6 +68,7 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeOperator, put("setHostTunnel", "tunnel", "Set the Cloudflare tunnel and its routes."), h.setTunnel)
 	httpx.Register(a, httpx.ScopeOperator, put("setHostTailscale", "tailscale", "Set Tailscale."), h.setTailscale)
 	httpx.Register(a, httpx.ScopeOperator, put("setHostDDNS", "ddns", "Set dynamic DNS: a name under the domain kept pointed at the home's public address, through the domain's DNS provider."), h.setDDNS)
+	httpx.Register(a, httpx.ScopeOperator, put("setHostSMTP", "smtp", "Set the host SMTP relay for stacks."), h.setSMTP)
 
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "addWireGuardDevice", Method: http.MethodPost, Path: "/host-settings/wireguard/peers", Tags: tags, Errors: errs,
@@ -139,6 +141,9 @@ func (h *HTTP) tunnelLogin(ctx context.Context, _ *struct{}) (*loginOut, error) 
 }
 func (h *HTTP) setDDNS(ctx context.Context, in *ddnsIn) (*settingsOut, error) {
 	return out(h.s.SetDDNS(ctx, in.Body))
+}
+func (h *HTTP) setSMTP(ctx context.Context, in *smtpIn) (*settingsOut, error) {
+	return out(h.s.SetSMTP(ctx, in.Body))
 }
 func (h *HTTP) addDevice(ctx context.Context, in *deviceIn) (*deviceOut, error) {
 	d, err := h.s.AddWireGuardDevice(ctx, in.Body)

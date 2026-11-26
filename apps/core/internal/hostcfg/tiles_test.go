@@ -10,7 +10,7 @@ func TestTiles(t *testing.T) {
 	var h HostSettings
 	h.Managed = ManagedImage
 	got := tiles(h, "")
-	for k, want := range map[string]tilestatus.TileState{"clock": tilestatus.Warn, "domain": tilestatus.Off, "lan": tilestatus.Off, "tailscale": tilestatus.Off, "wireguard": tilestatus.Off, "tunnel": tilestatus.Off, "ssh": tilestatus.Off} {
+	for k, want := range map[string]tilestatus.TileState{"clock": tilestatus.Warn, "mail": tilestatus.Off, "domain": tilestatus.Off, "lan": tilestatus.Off, "tailscale": tilestatus.Off, "wireguard": tilestatus.Off, "tunnel": tilestatus.Off, "ssh": tilestatus.Off} {
 		if got[k].State != want || got[k].Count != nil {
 			t.Errorf("empty host: %s = %+v, want %s", k, got[k], want)
 		}
@@ -20,6 +20,7 @@ func TestTiles(t *testing.T) {
 	}
 
 	h.TimeSync.Synced = true
+	h.SMTP = SMTP{Enabled: true, Host: "smtp.example.com"}
 	h.Domain.Domain = "home.example.com"
 	h.Network.LAN = []string{"192.168.1.0/24"}
 	h.Tailscale.Enabled = true
@@ -42,6 +43,9 @@ func TestTiles(t *testing.T) {
 	}
 	if got["tailscale"].State != tilestatus.Warn {
 		t.Errorf("tailscale = %+v", got["tailscale"])
+	}
+	if got["mail"].State != tilestatus.OK {
+		t.Errorf("mail = %+v", got["mail"])
 	}
 	check("wireguard", tilestatus.OK, 2)
 	check("tunnel", tilestatus.OK, 1)
@@ -72,9 +76,9 @@ func TestTilesTailscale(t *testing.T) {
 func TestTilesApplyErrors(t *testing.T) {
 	h := HostSettings{Managed: ManagedImage, TimeSync: TimeSync{Synced: true}}
 	h.Tunnel = Tunnel{Enabled: true, CredentialsSet: true, Routes: []Route{{}, {}}}
-	h.Applied.Errors = []string{"caddy: reload failed", "tunnel: no route", "etc: write failed", "something else", "ssh: x"}
+	h.Applied.Errors = []string{"caddy: reload failed", "tunnel: no route", "etc: write failed", "something else", "ssh: x", "smtp: failed"}
 	got := tiles(h, "")
-	for _, k := range []string{"domain", "tunnel", "system", "ssh"} {
+	for _, k := range []string{"domain", "tunnel", "system", "ssh", "mail"} {
 		if got[k].State != tilestatus.Bad {
 			t.Errorf("%s = %+v, want bad", k, got[k])
 		}

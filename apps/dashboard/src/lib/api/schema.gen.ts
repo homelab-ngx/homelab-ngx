@@ -698,6 +698,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/host-settings/smtp": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set the host SMTP relay for stacks.
+         * @description Applied at once on an image host. `409 managed_by_nixos` on a NixOS host.
+         */
+        put: operations["setHostSMTP"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/host-settings/ssh": {
         parameters: {
             query?: never;
@@ -3566,6 +3586,7 @@ export interface components {
              */
             managed: "image" | "nixos";
             network: components["schemas"]["Network"];
+            smtp: components["schemas"]["SMTP"];
             tailscale: components["schemas"]["Tailscale"];
             time: components["schemas"]["Time"];
             readonly time_sync: components["schemas"]["TimeSync"];
@@ -4505,6 +4526,36 @@ export interface components {
             /** @description Folder inside the bucket; empty for the bucket's root. */
             prefix: string;
             region: string;
+        };
+        SMTP: {
+            enabled: boolean;
+            /** @description Upstream SMTP server host name or IP address. */
+            host?: string;
+            /** @description An upstream SMTP password is stored; it is never shown. */
+            password_set: boolean;
+            /**
+             * Format: int64
+             * @description Upstream TCP port; 0 is 587 (or 465 for implicit TLS).
+             */
+            port?: number;
+            /**
+             * @description Transport security to the upstream: starttls (default, port 587), tls (implicit TLS, port 465), or none (plaintext, no authentication).
+             * @enum {string}
+             */
+            tls?: "" | "starttls" | "tls" | "none";
+            /** @description SMTP authentication user name; leave empty for an unauthenticated upstream. */
+            username?: string;
+        };
+        SMTPSet: {
+            enabled: boolean;
+            host?: string;
+            /** @description Upstream SMTP password. Absent keeps the stored one; empty clears it. */
+            password?: string;
+            /** Format: int64 */
+            port?: number;
+            /** @enum {string} */
+            tls?: "" | "starttls" | "tls" | "none";
+            username?: string;
         };
         SSHKeys: {
             /** @description One public key per entry, in OpenSSH format (ssh-ed25519 AAAA… comment). */
@@ -8838,6 +8889,106 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": components["schemas"]["Network"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostSettings"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    setHostSMTP: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SMTPSet"];
             };
         };
         responses: {

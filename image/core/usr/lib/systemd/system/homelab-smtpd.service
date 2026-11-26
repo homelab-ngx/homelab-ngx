@@ -1,0 +1,17 @@
+[Unit]
+Description=Homelab SMTP relay
+# Turned on at run time by the daemon from the host settings
+# (systemctl enable --runtime), with the config it writes.
+ConditionPathExists=/var/lib/homelab/smtp/smtpd.conf
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+ExecStartPre=/usr/bin/smtpd -n -f /var/lib/homelab/smtp/smtpd.conf
+ExecStart=/usr/bin/smtpd -f /var/lib/homelab/smtp/smtpd.conf
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

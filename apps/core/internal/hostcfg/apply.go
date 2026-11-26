@@ -121,6 +121,7 @@ func (a *ImageApplier) Apply(ctx context.Context, s Snapshot) []error {
 		{"tunnel", a.tunnel},
 		{"tailscale", a.tailscale},
 		{"ssh", a.ssh},
+		{"smtp", a.smtp},
 	} {
 		if err := part.fn(ctx, s); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", part.name, err))

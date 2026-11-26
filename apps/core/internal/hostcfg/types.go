@@ -38,6 +38,7 @@ type HostSettings struct {
 	Tunnel    Tunnel    `json:"tunnel"`
 	Tailscale Tailscale `json:"tailscale"`
 	DDNS      DDNS      `json:"ddns"`
+	SMTP      SMTP      `json:"smtp"`
 	Time      Time      `json:"time"`
 	Console   Console   `json:"console"`
 	// Wired is read from the host for every answer; it is not a setting.
