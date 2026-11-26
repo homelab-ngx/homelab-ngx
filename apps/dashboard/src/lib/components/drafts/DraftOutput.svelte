@@ -40,14 +40,14 @@
     {#if check}
       <span class="flex items-center gap-1.5 text-muted">
         Check <Pill tone={check.ok ? "ok" : "bad"}>{check.ok ? "valid" : `${check.problems.length} problem${check.problems.length === 1 ? "" : "s"}`}</Pill>
-        {#if checkStale}before the latest edits{:else if !check.saved}unsaved edits{/if}
+        {#if checkStale}· outdated{:else if !check.saved}· unsaved{/if}
       </span>
     {/if}
     {#if build}
       <span class="flex items-center gap-1.5 text-muted tabular-nums">
         Build <Pill tone={buildTone[build.result]}>{buildLabel[build.result]}</Pill>
         {shortRev(build.rev)} · {duration(build.started_at, build.finished_at)}{#if buildStale && build.result !== "running"}
-          · older version{/if}
+          · outdated{/if}
       </span>
     {/if}
     {#if check || build}
@@ -57,7 +57,7 @@
 
   <div bind:this={box} aria-live="polite" class="min-h-0 flex-1 overflow-auto px-3 py-2">
     {#if !check && !build}
-      <p class="text-muted">Check and Build print here.</p>
+      <p class="text-muted">No output yet.</p>
     {/if}
     {#if check && !check.ok}
       <ul class="mb-2 flex flex-col gap-1.5">

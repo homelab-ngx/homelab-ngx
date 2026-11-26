@@ -13,8 +13,8 @@
 <p class="text-muted"><a class="link" href="/settings">Settings</a> /</p>
 <h1 class="mt-1 text-xl font-semibold">
   <Help label="AI assistant">
-    Helps in the stack editor. It reads the stack's two files and the last check and build output, and suggests changes. Every
-    change is shown before it goes in.
+    Helps in the stack editor, explains failures, and runs security audits. In the editor, every proposed change is
+    shown as a diff before applying.
   </Help>
 </h1>
 

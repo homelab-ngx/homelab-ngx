@@ -333,7 +333,7 @@
           </div>
           <div class="h-[60vh] min-h-72 md:h-auto md:min-h-0 md:flex-1">
             {#if buffer[open] === null}
-              <p class="p-4 text-muted">A binary file, or larger than 256 KB: kept as it is, not edited here.</p>
+              <p class="p-4 text-muted">Binary or over 256 KB: kept unchanged.</p>
             {:else}
               <!-- Made again once nixd is ready, so the editor takes its extension. -->
               {#key `${open}:${isNix(open) && nixReady}`}
@@ -392,7 +392,7 @@
       </span>
     {/if}
     {#if assistant.data && !assistantOn}
-      <a class="link ml-auto" href="/settings/assistant">Set up the AI assistant</a>
+      <a class="link ml-auto" href="/settings/assistant">Set up assistant</a>
     {/if}
   </div>
 </div>

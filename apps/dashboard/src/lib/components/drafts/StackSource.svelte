@@ -60,7 +60,7 @@
       try {
         d = await call<Draft>(api.PUT("/drafts/{name}", { params: { path: { name: d.name } }, body: { changes } }));
       } catch (e) {
-        onUnsaved?.($state.snapshot(buffer), `Forked, but your changes are not saved yet: ${describe(e)}`);
+        onUnsaved?.($state.snapshot(buffer), `Forked, but edits are not saved yet: ${describe(e)}`);
       }
     }
     client.setQueryData(keys.draft(d.name), d);
@@ -116,9 +116,9 @@
     <div role="status" class="flex flex-wrap items-center gap-2 border-b border-line bg-warn-soft px-3 py-1.5 text-warn">
       <p class="min-w-48 flex-1">
         {#if src.local}
-          Not saved. Edit the files in their folder and commit, or fork to edit them here.
+          Not saved. Edit the folder and commit, or fork to edit here.
         {:else}
-          Not saved: {src.repo} is read only here. Fork to keep your changes.
+          Not saved: {src.repo} is read only. Fork to keep edits.
         {/if}
       </p>
       <button type="button" class="btn btn-sm" disabled={working} onclick={() => (buffer = bufferOf(files.files))}>Discard</button>
@@ -149,7 +149,7 @@
       </div>
       <div class="h-[60vh] min-h-72 md:h-auto md:min-h-0 md:flex-1">
         {#if buffer[open] === null}
-          <p class="p-4 text-muted">A binary file, or larger than 256 KB: not shown here.</p>
+          <p class="p-4 text-muted">Binary or over 256 KB: not shown.</p>
         {:else}
           {#key open}
             <CodeEditor bare value={buffer[open] ?? ""} file={open} label={open} onChange={(v) => (buffer[open] = v)} />

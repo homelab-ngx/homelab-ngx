@@ -99,8 +99,8 @@
   <div class="flex items-baseline gap-2">
     <h2 id="assistant-h" class="min-w-0 font-semibold">
       <Help label="Assistant">
-        Reads the list of files, the manifest, flake.nix, the open file and every changed one, and what Check and the last
-        Build said, then proposes changes to apply. Nothing is saved before Save. It never sees the stack's variable values.
+        Reads the file list, manifest, flake.nix, open and changed files, and Check and Build output. Proposes edits
+        without saving. Never sees variable values.
       </Help>
     </h2>
     <span class="ml-auto truncate text-xs text-muted">{model}</span>
@@ -115,7 +115,7 @@
           class="flex items-center gap-2 rounded-md border border-line px-2.5 py-1.5 has-checked:border-accent has-checked:bg-accent-soft {off
             ? 'cursor-not-allowed opacity-50'
             : 'cursor-pointer'}"
-          title={off ? "No failed check or build to fix." : undefined}
+          title={off ? "No check or build error to fix." : undefined}
         >
           <input
             type="radio"

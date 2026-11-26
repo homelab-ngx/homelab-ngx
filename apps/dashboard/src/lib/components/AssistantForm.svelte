@@ -163,8 +163,8 @@
   <fieldset class="grid gap-3 sm:grid-cols-2">
     <legend class="label mb-2">
       <Help label="Provider">
-        Each question sends the provider the stack's two files, the last check and build output and a writing guide. Never a
-        stack's values, such as passwords. It only proposes text.
+        Sends the open and changed stack files, manifest, flake.nix, Check and Build output, and a writing guide, or logs
+        for Ask. Never sends stack variable values.
       </Help>
     </legend>
     <label class="card flex cursor-pointer gap-3 has-checked:border-accent has-checked:bg-accent-soft">

@@ -46,7 +46,7 @@ describe("StackSource", () => {
     show();
     expect(screen.queryByRole("status")).toBeNull();
     await type('{ "version": 10 }\n');
-    expect(screen.getByRole("status").textContent).toMatch(/github.com\/homelab-ngx\/stack-media is read only here/);
+    expect(screen.getByRole("status").textContent).toMatch(/github.com\/homelab-ngx\/stack-media is read only\. Fork to keep edits/);
     await fireEvent.click(screen.getByRole("button", { name: "Discard" }));
     expect(screen.queryByRole("status")).toBeNull();
   });
@@ -81,7 +81,7 @@ describe("StackSource", () => {
   it("tells a folder's stack to edit the folder and commit", async () => {
     show(stack("git+file:///srv/stacks/media"));
     await type("changed");
-    expect(screen.getByRole("status").textContent).toMatch(/Edit the files in their folder and commit/);
+    expect(screen.getByRole("status").textContent).toMatch(/Edit the folder and commit/);
   });
 
   it("confirms in a modal before leaving with unsaved changes", async () => {
