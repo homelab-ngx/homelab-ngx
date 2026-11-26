@@ -1175,6 +1175,12 @@ func (s *S) hasSMTPRelay() func() (bool, error) {
 // then leaves the authenticated STARTTLS relay configuration active.
 func (s *S) testSMTPRelay() {
 	s.t.Helper()
+	if s.st.SMTPRelay {
+		return
+	}
+	if !s.has("host SMTP relay", s.hasSMTPRelay()) {
+		return
+	}
 	const sinkScript = `#!/bin/bash
 set -u
 printf '220 check-sink ESMTP\r\n'
@@ -1292,6 +1298,7 @@ done
 	if perm := s.out("stat -c '%a:%G' /var/lib/homelab/smtp/secrets"); perm != "640:smtpd" {
 		s.die("/var/lib/homelab/smtp/secrets permissions = %s, want 640:smtpd", perm)
 	}
+	s.st.SMTPRelay = true
 }
 
 // hostCheck: everything the host settings asked for is in place. It is how
@@ -1325,7 +1332,7 @@ func (s *S) hostCheck() time.Duration {
 	if !strings.Contains(s.out("readlink /etc/localtime"), "Europe/Stockholm") {
 		s.die("the time zone is not set")
 	}
-	if s.has("host SMTP relay", s.hasSMTPRelay()) {
+	if s.st.SMTPRelay {
 		if !strings.Contains(s.out("systemctl is-enabled homelab-smtpd"), "runtime") {
 			s.die("homelab-smtpd is not runtime-enabled")
 		}

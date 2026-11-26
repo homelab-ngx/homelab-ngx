@@ -166,6 +166,12 @@ func updateSteps(s *S) {
 			s.ok("%s booted once more from the API, then %s again", v, next)
 			s.poolLifecycle()
 			s.backupLifecycle()
+			if !s.st.SMTPRelay {
+				s.testSMTPRelay()
+				if s.st.SMTPRelay {
+					s.hostCheck()
+				}
+			}
 		})
 	} else {
 		s.Step(9, "core and image updates skipped: image/out has one version", func() {})

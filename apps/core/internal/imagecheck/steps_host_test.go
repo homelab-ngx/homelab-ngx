@@ -335,9 +335,7 @@ func hostSteps(s *S) {
 			"routes": []any{map[string]any{"hostname": "site.example.net", "target": "site"}}}, "tunnel refused")
 		s.put("host-settings/firewall", `{"openings":[{"port":8443,"proto":"tcp","from":["10.0.2.0/24"]}]}`, "firewall refused")
 		s.put("host-settings/host", `{"hostname":"checkhost","timezone":"Europe/Stockholm"}`, "host refused")
-		if s.has("host SMTP relay", s.hasSMTPRelay()) {
-			s.testSMTPRelay()
-		}
+		s.testSMTPRelay()
 		if s.has("doctor SMART from the daemon", s.apiHas("host-settings", func(v any) bool { return hasKey(v, "smtp") })) {
 			doc := parse([]byte(s.must("homelab doctor --check smart --json")))
 			res := find(doc, "results", "name", "smart")
