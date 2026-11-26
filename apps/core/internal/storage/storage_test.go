@@ -83,10 +83,24 @@ func newHarness(t *testing.T) *harness {
 	fake := cmdrunnertest.NewFake()
 	fake.On("bcachefs", "show-super", "/dev/sda").Reply(superFixture(t))
 	fake.On("smartctl").Reply(`{"model_name":"Disk Model X"}`)
-	svc := New(bcachefs.New(fake), cfg,
+	hostDir := filepath.Join(dir, "host")
+	if err := os.MkdirAll(hostDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bc := bcachefs.New(fake)
+	bc.StubHost(hostDir)
+	bc.StubZero(func(path string, _ int) error {
+		return fmt.Errorf("unexpected wipe of %s in test", path)
+	})
+	svc := New(bc, cfg,
 		slog.New(slog.NewTextHandler(testWriter{t}, nil)))
 	svc.discoverTimeout, svc.retryInterval = 40*time.Millisecond, 5*time.Millisecond
 	svc.mkdir = func(string) error { return nil }
+	svc.mkdirOne = func(string) error { return nil }
+	svc.readDir = func(string) ([]os.DirEntry, error) { return nil, os.ErrNotExist }
+	svc.rmdir = func(string) error { return nil }
+	svc.statfs = func(string) (uint64, uint64, error) { return 0, 0, os.ErrNotExist }
+	svc.mountinfo = filepath.Join(hostDir, "mountinfo")
 	return &harness{svc: svc, fake: fake, cfg: cfg}
 }
 
@@ -857,5 +871,41 @@ func TestCanonicalWritesOutTheMntLink(t *testing.T) {
 		if got := Canonical(in); got != want {
 			t.Errorf("Canonical(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestHarnessIsolatedFromHost(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.fake.On("lsblk").Reply(lsblk(false))
+	ctx := context.Background()
+
+	// Even on a host with /proc/mounts or /proc/self/mountinfo populated, the
+	// test harness keeps pools unmounted and reports no host mounts.
+	st, err := h.svc.Status(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Pools) != 1 || st.Pools[0].State != Unmounted {
+		t.Fatalf("pools = %+v, want unmounted", st.Pools)
+	}
+	if got := h.svc.Mounted(); len(got) != 0 {
+		t.Fatalf("Mounted() = %v, want empty", got)
+	}
+
+	// MakeFolder uses the readDir/mkdirOne seams rather than reading /var/mnt.
+	h2 := newHarness(t)
+	var readPath string
+	h2.svc.readDir = func(p string) ([]os.DirEntry, error) {
+		readPath = p
+		return nil, os.ErrNotExist
+	}
+	h2.svc.onBcachefs = func(string) bool { return false }
+	h2.fake.On("lsblk").Reply(lsblk(true))
+	if got, err := h2.svc.MakeFolder(ctx, "/var/mnt/pool", "immich"); err != nil || got != "/var/mnt/pool/immich" {
+		t.Fatalf("MakeFolder = %q, %v", got, err)
+	}
+	if readPath != "/var/mnt/pool/immich" {
+		t.Fatalf("readDir path = %q, want /var/mnt/pool/immich", readPath)
 	}
 }

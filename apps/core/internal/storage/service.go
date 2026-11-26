@@ -130,7 +130,10 @@ type Service struct {
 	retryInterval   time.Duration
 	onBcachefs      func(path string) bool
 	mkdir           func(path string) error
+	mkdirOne        func(path string) error
+	readDir         func(path string) ([]os.DirEntry, error)
 	statfs          func(path string) (total, free uint64, err error)
+	mountinfo       string
 
 	// parts remembers the mounted partitions; nil: partitions are not offered.
 	parts PartitionStore
@@ -156,7 +159,10 @@ func New(bc *bcachefs.Client, cfg *config.Manager, log *slog.Logger) *Service {
 		health: map[string]DiskHealth{}, sizes: map[string]folderSize{}, trees: map[string]folderTree{},
 		now: time.Now, ttl: statusTTL, onBcachefs: bc.OnBcachefs,
 		mkdir:           func(path string) error { return os.MkdirAll(path, 0o755) },
+		mkdirOne:        func(path string) error { return os.Mkdir(path, 0o755) },
+		readDir:         os.ReadDir,
 		statfs:          statfs,
+		mountinfo:       "/proc/self/mountinfo",
 		discoverTimeout: 2 * time.Minute, retryInterval: 5 * time.Second,
 		bg: context.Background(), ops: map[string]*poolOp{}, rmdir: os.Remove,
 		usageEvery: 5 * time.Second, stallAfter: 15 * time.Minute,

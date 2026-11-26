@@ -37,7 +37,9 @@ func newClient(t *testing.T, mounts string) (*Client, *cmdrunnertest.Fake) {
 		f.On("smartctl", "-j", "-i", d).Reply(fixture(t, "smartctl-hdd.json"))
 	}
 	c := New(f)
-	c.procMounts = filepath.Join(t.TempDir(), "mounts")
+	dir := t.TempDir()
+	c.StubHost(dir)
+	c.procMounts = filepath.Join(dir, "mounts")
 	if err := os.WriteFile(c.procMounts, []byte(mounts), 0o644); err != nil {
 		t.Fatal(err)
 	}

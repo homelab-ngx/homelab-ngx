@@ -20,7 +20,7 @@ const (
 // Mounted lists what the daemon mounted that is mounted now: the pools and
 // the partitions under MountRoot, and a pool stored with a mountpoint of its
 // own. The deepest come first, so each is unmounted before what holds it.
-func (s *Service) Mounted() []string { return s.mountedIn("/proc/self/mountinfo") }
+func (s *Service) Mounted() []string { return s.mountedIn(s.mountinfo) }
 
 func (s *Service) mountedIn(mountinfo string) []string {
 	ours := map[string]bool{}

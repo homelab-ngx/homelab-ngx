@@ -356,7 +356,7 @@ func (s *Service) MakeFolder(ctx context.Context, place, name string) (string, e
 		return "", fmt.Errorf("%w: %q is not a folder name", ErrNotAPlace, name)
 	}
 	path := place + "/" + name
-	if entries, err := os.ReadDir(path); err == nil {
+	if entries, err := s.readDir(path); err == nil {
 		if len(entries) > 0 {
 			return "", fmt.Errorf("%s is there already and has files in it: set it as the folder instead", path)
 		}
@@ -371,5 +371,5 @@ func (s *Service) MakeFolder(ctx context.Context, place, name string) (string, e
 		return path, nil
 	}
 	defer s.invalidate()
-	return path, os.Mkdir(path, 0o755)
+	return path, s.mkdirOne(path)
 }

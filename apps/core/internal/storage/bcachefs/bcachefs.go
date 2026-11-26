@@ -48,6 +48,17 @@ func New(r cmdrunner.Runner) *Client {
 	}
 }
 
+// StubHost points every /proc and /sys read, and statfs, away from the real
+// host into dir, for tests in other packages.
+func (c *Client) StubHost(dir string) {
+	c.procMounts = filepath.Join(dir, "mounts")
+	c.diskstats = filepath.Join(dir, "diskstats")
+	c.sysfs = filepath.Join(dir, "sys-bcachefs")
+	c.mountinfo = filepath.Join(dir, "mountinfo")
+	c.sysDevBlock = filepath.Join(dir, "sys-dev-block")
+	c.statfs = func(string, *syscall.Statfs_t) error { return syscall.ENOENT }
+}
+
 type DiskIOStats struct {
 	DeviceName   string `json:"device_name"`
 	ReadIOs      uint64 `json:"read_ios"`       // completed reads

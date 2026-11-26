@@ -144,6 +144,7 @@ func sysTree(t *testing.T) (sysDevBlock, mountinfo string) {
 
 func TestSystemDisks(t *testing.T) {
 	c := New(cmdrunnertest.NewFake())
+	c.StubHost(t.TempDir())
 	c.sysDevBlock, c.mountinfo = sysTree(t)
 	got := c.SystemDisks()
 	if len(got) != 1 || !got["nvme0n1"] {
@@ -182,6 +183,7 @@ func TestCandidates(t *testing.T) {
 	// sdj: lsblk sees nothing, a backup superblock still answers.
 	f.On("bcachefs", "show-super", "/dev/sdj").Reply("External UUID:   cccc-dddd\nLabel:   half\n")
 	c := New(f)
+	c.StubHost(t.TempDir())
 	c.sysDevBlock, c.mountinfo = sysTree(t)
 
 	list, err := c.Candidates(context.Background())

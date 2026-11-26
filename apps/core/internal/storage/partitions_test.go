@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -292,6 +293,47 @@ func TestMakeFolder(t *testing.T) {
 	}
 	if calls := h.fake.CallsMatching("bcachefs", "subvolume", "create"); len(calls) != 1 || calls[0].Args[2] != "/var/mnt/pool/immich" {
 		t.Fatalf("subvolume create = %+v", calls)
+	}
+	// On a mounted partition it makes a plain folder instead of a subvolume.
+	var created []string
+	h.svc.mkdirOne = func(p string) error {
+		created = append(created, p)
+		return nil
+	}
+	path, err = h.svc.MakeFolder(ctx, "/var/mnt/cache", "backups")
+	if err != nil || path != "/var/mnt/cache/backups" {
+		t.Fatalf("partition folder = %q, %v", path, err)
+	}
+	if !reflect.DeepEqual(created, []string{"/var/mnt/cache/backups"}) {
+		t.Fatalf("mkdirOne = %v", created)
+	}
+	if calls := h.fake.CallsMatching("bcachefs", "subvolume", "create"); len(calls) != 1 {
+		t.Fatalf("partition MakeFolder created a subvolume: %+v", calls)
+	}
+	// An existing empty folder is reused; a non-empty folder is refused.
+	nonEmpty := t.TempDir()
+	if err := os.WriteFile(nonEmpty+"/file", []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.readDir = func(p string) ([]os.DirEntry, error) {
+		switch p {
+		case "/var/mnt/pool/empty":
+			return nil, nil
+		case "/var/mnt/pool/taken":
+			return os.ReadDir(nonEmpty)
+		default:
+			return nil, os.ErrNotExist
+		}
+	}
+	path, err = h.svc.MakeFolder(ctx, "/var/mnt/pool", "empty")
+	if err != nil || path != "/var/mnt/pool/empty" {
+		t.Fatalf("empty folder = %q, %v", path, err)
+	}
+	if calls := h.fake.CallsMatching("bcachefs", "subvolume", "create"); len(calls) != 1 {
+		t.Fatalf("existing empty folder triggered subvolume create: %+v", calls)
+	}
+	if _, err := h.svc.MakeFolder(ctx, "/var/mnt/pool", "taken"); err == nil || !strings.Contains(err.Error(), "is there already and has files in it") {
+		t.Fatalf("non-empty folder err = %v", err)
 	}
 	// Not a pool or a partition, and not one folder's name.
 	for _, c := range [][2]string{{"/var/lib", "x"}, {"/var/mnt", "pool"}, {"/var/mnt/pool", "a/b"}, {"/var/mnt/pool", ".."}, {"/var/mnt/pool", ""}} {
