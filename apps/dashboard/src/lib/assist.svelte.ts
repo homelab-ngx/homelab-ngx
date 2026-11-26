@@ -69,6 +69,16 @@ export class AssistRun {
     delete this.proposal[path];
   }
 
+  /** Stop any in-flight request and clear the current answer and proposal. */
+  clear() {
+    this.stop();
+    this.text = "";
+    this.thinking = "";
+    this.answer = null;
+    this.proposal = {};
+    this.error = "";
+  }
+
   stop() {
     this.#abort?.abort();
     this.running = false;

@@ -50,16 +50,19 @@
   let error = $state(untrack(() => initialError));
   let working = $state<"" | "save" | "check" | "build" | "install" | "delete">("");
   let confirmDelete = $state(false);
+  let confirmDiscard = $state(false);
 
   // The assistant's side bar stays as it was left, per browser.
   const SIDEBAR_KEY = "draft-assistant-open";
   let assistantOpen = $state(readOpen());
   function readOpen(): boolean {
     try {
-      return localStorage.getItem(SIDEBAR_KEY) !== "0";
+      const saved = localStorage.getItem(SIDEBAR_KEY);
+      if (saved !== null) return saved !== "0";
     } catch {
-      return true;
+      // A private window keeps it for this page only.
     }
+    return typeof window !== "undefined" ? window.matchMedia("(min-width: 1280px)").matches : true;
   }
   function toggleAssistant() {
     assistantOpen = !assistantOpen;
@@ -170,6 +173,14 @@
     await goto("/stacks");
   }
 
+  function discardChanges() {
+    buffer = bufferOf(draft.files);
+    message = "";
+    error = "";
+    confirmDiscard = false;
+    if (!(open in buffer)) open = MANIFEST;
+  }
+
   /** nixd for the Nix files, started the first time one is shown. */
   let nixLsp = $state<NixLanguageServer | null>(null);
   onDestroy(() => nixLsp?.close());
@@ -250,14 +261,14 @@
      the editor, one output panel under it, the assistant in a side bar opened from
      the activity bar on the right, and a status bar. -->
 <div
-  class="flex flex-col overflow-hidden rounded-md border border-line bg-surface xl:min-h-[36rem] {embedded
+  class="flex flex-col overflow-hidden rounded-lg border border-line bg-surface xl:min-h-[36rem] {embedded
     ? 'xl:h-[calc(100dvh-8.5rem)]'
     : 'xl:h-[calc(100dvh-4.25rem)]'}"
 >
   <div class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-sunken px-3 py-1.5">
     {#if embedded}
       <h1 class="sr-only">{draft.name} source code</h1>
-      <p class="min-w-0 truncate text-muted">Draft {draft.name} · {shortRev(draft.rev)}</p>
+      <p class="min-w-0 truncate text-muted">Draft · {draft.name}</p>
     {:else}
       <div class="flex min-w-0 items-baseline gap-1.5">
         <a class="link text-muted" href="/stacks">Stacks</a>
@@ -267,9 +278,9 @@
     {/if}
     <div class="ml-auto flex flex-wrap items-center gap-2" role="toolbar" aria-label="Draft">
       {#if dirty}
-        <input class="input w-56 px-2 py-0.5 text-xs" bind:value={message} aria-label="What changed" placeholder="What changed (optional)" maxlength="500" />
+        <input class="input min-w-0 flex-1 px-2 py-0.5 text-xs sm:w-56 sm:flex-none" bind:value={message} aria-label="What changed" placeholder="What changed (optional)" maxlength="500" />
       {/if}
-      <button type="button" class="btn btn-sm" disabled={!dirty || !!working} onclick={save} title="Ctrl+S">
+      <button type="button" class="btn btn-sm {dirty ? 'btn-primary' : ''}" disabled={!dirty || !!working} onclick={save} title="Ctrl+S">
         {working === "save" ? "Saving…" : dirty ? "Save" : "Saved"}
       </button>
       <button type="button" class="btn btn-sm" disabled={!!working} onclick={check}>{working === "check" ? "Checking…" : "Check"}</button>
@@ -277,29 +288,28 @@
         {buildRunning ? "Building…" : "Build"}
       </button>
       {#if installedAs}
-        {#if !embedded}<a class="btn btn-sm btn-primary" href="/stacks/{installedAs}">Open stack</a>{/if}
+        {#if !embedded}<a class="btn btn-sm {dirty ? '' : 'btn-primary'}" href="/stacks/{installedAs}">Open stack</a>{/if}
       {:else}
-        <button type="button" class="btn btn-sm btn-primary" disabled={dirty || !!working} onclick={install} title={dirty ? "Save first." : undefined}>
+        <button type="button" class="btn btn-sm {dirty ? '' : 'btn-primary'}" disabled={dirty || !!working} onclick={install} title={dirty ? "Save first." : undefined}>
           {working === "install" ? "Reading…" : "Install…"}
         </button>
       {/if}
-      <RowMenu name={draft.name} items={installedAs ? [] : [{ label: "Delete draft…", danger: true, onSelect: () => (confirmDelete = true) }]} />
+      <RowMenu
+        name={draft.name}
+        items={[
+          ...(dirty ? [{ label: "Discard changes…", danger: true, onSelect: () => (confirmDiscard = true) }] : []),
+          ...(installedAs ? [] : [{ label: "Delete draft…", danger: true, onSelect: () => (confirmDelete = true) }]),
+        ]}
+      />
     </div>
   </div>
 
   {#if error}
     <p role="alert" class="border-b border-line bg-bad-soft px-3 py-1.5 text-bad">{error}</p>
   {/if}
-  {#if confirmDelete}
-    <div class="flex flex-wrap items-center gap-2 border-b border-line bg-bad-soft px-3 py-1.5">
-      <p>Delete {draft.name} and every saved version of it?</p>
-      <button type="button" class="btn btn-sm btn-danger ml-auto" disabled={!!working} onclick={remove}>Delete</button>
-      <button type="button" class="btn btn-sm" onclick={() => (confirmDelete = false)}>Cancel</button>
-    </div>
-  {/if}
 
   <div class="flex min-h-0 flex-1 flex-col xl:flex-row">
-    <section aria-label="Editor" class="flex min-h-0 min-w-0 flex-1 flex-col">
+    <section aria-label="Editor" class="flex min-h-0 min-w-0 flex-1 flex-col max-xl:order-3">
       <div class="flex min-h-0 flex-1 flex-col md:h-[65vh] md:min-h-80 md:flex-none md:flex-row xl:h-auto xl:flex-1">
         <div class="flex max-h-48 min-h-0 shrink-0 flex-col border-b border-line md:max-h-none md:w-56 md:border-r md:border-b-0">
           <FileList
@@ -317,7 +327,7 @@
         </div>
         <div class="flex min-h-0 min-w-0 flex-1 flex-col">
           <div class="flex shrink-0 border-b border-line bg-sunken">
-            <span class="-mb-px truncate border-t-2 border-r border-t-accent border-r-line bg-surface px-3 py-1.5">
+            <span class="-mb-px min-w-0 truncate border-t-2 border-r border-t-accent border-r-line bg-surface px-3 py-1.5">
               {open}{#if changed.includes(open)}<span class="ml-1 text-accent" aria-label="(changed)">•</span>{/if}
             </span>
           </div>
@@ -349,22 +359,24 @@
     </section>
 
     {#if assistantOn && assistantOpen}
-      <aside class="min-h-0 border-t border-line xl:w-[30rem] xl:shrink-0 xl:overflow-auto xl:border-t-0 xl:border-l">
+      <aside class="min-h-0 border-line max-xl:order-2 max-xl:border-b xl:w-[26rem] xl:shrink-0 xl:overflow-auto xl:border-l 2xl:w-[30rem]">
         <AssistantPanel name={draft.name} {buffer} unsaved={changes} {open} {fixText} model={assistant.data!.model} onApply={(f) => (buffer = f)} />
       </aside>
     {/if}
     {#if assistantOn}
-      <div role="toolbar" aria-label="Side bar" class="flex shrink-0 gap-1 border-line bg-sunken p-1 max-xl:order-first max-xl:border-b xl:flex-col xl:border-l">
+      <div role="toolbar" aria-label="Side bar" class="flex shrink-0 items-center gap-2 border-line bg-sunken p-1 max-xl:order-1 max-xl:border-b max-xl:px-3 xl:flex-col xl:gap-1 xl:border-l">
         <button
           type="button"
-          class="rounded-md p-1.5 text-muted hover:text-fg aria-pressed:bg-accent-soft aria-pressed:text-accent"
+          class="inline-flex items-center gap-1.5 rounded-md p-1.5 text-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent aria-pressed:bg-accent-soft aria-pressed:text-accent"
           aria-pressed={assistantOpen}
           aria-label="Assistant"
           title="Assistant"
           onclick={toggleAssistant}
         >
           <Sparkles class="size-5" aria-hidden="true" />
+          <span class="text-xs font-medium xl:hidden">Assistant</span>
         </button>
+        <span class="ml-auto truncate text-xs text-muted xl:hidden">{assistant.data!.model}</span>
       </div>
     {/if}
   </div>
@@ -395,5 +407,19 @@
   <p class="text-muted">Unsaved changes in this draft will be lost.</p>
   {#snippet actions()}
     <button type="button" class="btn btn-danger" onclick={confirmLeave}>Leave</button>
+  {/snippet}
+</Modal>
+
+<Modal open={confirmDiscard} onOpenChange={(o) => (confirmDiscard = o)} title="Discard unsaved changes?">
+  <p class="text-muted">Unsaved edits in {changed.length} {changed.length === 1 ? "file" : "files"} will be lost.</p>
+  {#snippet actions()}
+    <button type="button" class="btn btn-danger" onclick={discardChanges}>Discard</button>
+  {/snippet}
+</Modal>
+
+<Modal open={confirmDelete} onOpenChange={(o) => (confirmDelete = o)} title="Delete {draft.name}?">
+  <p class="text-muted">Deletes this draft and every saved version.</p>
+  {#snippet actions()}
+    <button type="button" class="btn btn-danger" disabled={!!working} onclick={remove}>Delete</button>
   {/snippet}
 </Modal>

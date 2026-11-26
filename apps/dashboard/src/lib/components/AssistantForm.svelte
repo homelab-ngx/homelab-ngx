@@ -17,7 +17,7 @@
   const client = useQueryClient();
   const start = untrack(() => current);
   let provider = $state<AssistantSettings["provider"]>(start.provider === "none" ? "anthropic" : start.provider);
-  let enabled = $state(start.provider !== "none");
+  const enabled = $derived(current.provider !== "none");
   let model = $state(start.model || CLAUDE_MODELS[0]!);
   let auditModel = $state(start.audit_model);
   let baseUrl = $state(start.base_url);
@@ -120,7 +120,6 @@
       client.setQueryData(keys.assistant, s);
       void client.invalidateQueries({ queryKey: keys.assistantLimits });
       apiKey = "";
-      enabled = true;
       saved = "Applied. Not tested yet.";
       test = null;
     } catch (err) {
@@ -150,7 +149,6 @@
     try {
       const s = await call<AssistantSettings>(api.PUT("/settings/assistant", { body: { provider: "none" } }));
       client.setQueryData(keys.assistant, s);
-      enabled = false;
       test = null;
       saved = "Off. The key is deleted.";
     } catch (err) {
@@ -169,14 +167,14 @@
         stack's values, such as passwords. It only proposes text.
       </Help>
     </legend>
-    <label class="card flex cursor-pointer gap-3 has-checked:border-accent">
+    <label class="card flex cursor-pointer gap-3 has-checked:border-accent has-checked:bg-accent-soft">
       <input type="radio" name="provider" checked={provider === "anthropic"} onchange={() => pick("anthropic")} class="mt-1 accent-accent" />
       <span>
         Claude
         <span class="mt-0.5 block text-xs text-muted">Anthropic API key, pay per use</span>
       </span>
     </label>
-    <label class="card flex cursor-pointer gap-3 has-checked:border-accent">
+    <label class="card flex cursor-pointer gap-3 has-checked:border-accent has-checked:bg-accent-soft">
       <input type="radio" name="provider" checked={provider === "openai"} onchange={() => pick("openai")} class="mt-1 accent-accent" />
       <span>
         OpenAI-compatible
@@ -292,7 +290,7 @@
           <li class="grid grid-cols-[5rem_auto_1fr] items-center gap-3">
             <span>{LIMIT_WINDOWS[l.window] ?? l.window}</span>
             <Pill tone={l.status === "ok" ? "ok" : "warn"}>{l.status}</Pill>
-            <span class="text-muted tabular-nums">
+            <span class="min-w-0 text-muted tabular-nums">
               {Math.round(l.percent)}%{#if l.resets_at}{" · "}resets {dateTime(l.resets_at, { weekday: "short", hour: "2-digit", minute: "2-digit" })}{/if}
             </span>
           </li>

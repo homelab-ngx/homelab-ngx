@@ -35,7 +35,7 @@
 
 <!-- The workbench's bottom panel: what Check and Build said, in one output. -->
 <div class="flex h-full min-h-0 flex-col">
-  <div class="flex shrink-0 items-center gap-3 border-b border-line px-3 py-1.5 text-xs">
+  <div class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-sunken px-3 py-1.5 text-xs">
     <span class="font-medium">Output</span>
     {#if check}
       <span class="flex items-center gap-1.5 text-muted">
@@ -76,7 +76,9 @@
       {#if build.error}
         <pre class="mb-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-bad">{build.error}</pre>
       {/if}
-      <pre class="font-mono text-xs leading-relaxed whitespace-pre-wrap text-muted">{#each build.log.split("\n") as line, i (i)}{#each segments(line) as s, j (j)}<span class={s.cls}>{s.text}</span>{/each}{"\n"}{/each}</pre>
+      {#if build.log}
+        <pre class="font-mono text-xs leading-relaxed whitespace-pre-wrap text-muted">{#each build.log.split("\n") as line, i (i)}{#each segments(line) as s, j (j)}<span class={s.cls}>{s.text}</span>{/each}{"\n"}{/each}</pre>
+      {/if}
     {/if}
   </div>
 </div>

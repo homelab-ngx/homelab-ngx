@@ -112,7 +112,7 @@
   <div class="flex items-center gap-2 border-b border-line bg-sunken px-3 py-1">
     <h2 class="label">Files</h2>
     {#if !readonly}
-      <button type="button" class="ml-auto rounded-md p-1 text-muted hover:text-fg" aria-label="New file" title="New file" onclick={startNew}>
+      <button type="button" class="ml-auto rounded-md p-1 text-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-accent" aria-label="New file" title="New file" onclick={startNew}>
         <FilePlus class="size-4" aria-hidden="true" />
       </button>
     {/if}
@@ -128,7 +128,7 @@
           <div class="group flex items-center text-muted hover:bg-sunken hover:text-fg">
             <button
               type="button"
-              class="flex min-w-0 flex-1 items-center gap-1 py-0.5 pr-1 text-left"
+              class="flex min-w-0 flex-1 items-center gap-1 py-1.5 pr-1 text-left md:py-0.5"
               style="padding-left: {0.75 + row.depth * 0.75}rem"
               aria-expanded={on}
               onclick={() => onToggle(row.path)}
@@ -137,28 +137,29 @@
               <span class="truncate">{row.name}/</span>
             </button>
             {#if !readonly && onDelete}
-              <span class="shrink-0 pr-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+              <span class="shrink-0 pr-1 max-md:opacity-100 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
                 <RowMenu name={row.path} items={[{ label: "Delete…", danger: true, onSelect: () => onDelete(row.path) }]} />
               </span>
             {/if}
           </div>
         {:else if row.kind === "folder"}
-          <div class="truncate px-3 py-0.5 text-muted" style="padding-left: {0.75 + row.depth * 0.75}rem">{row.name}/</div>
+          <div class="truncate px-3 py-1.5 text-muted md:py-0.5" style="padding-left: {0.75 + row.depth * 0.75}rem">{row.name}/</div>
         {:else if naming?.from === row.path}
           {@render nameField(`New path of ${row.path}`)}
         {:else}
           <div class="group flex items-center {open === row.path ? 'bg-accent-soft text-fg' : 'text-muted hover:bg-sunken hover:text-fg'}">
             <button
               type="button"
-              class="min-w-0 flex-1 truncate py-0.5 pr-1 text-left"
+              class="min-w-0 flex-1 truncate py-1.5 pr-1 text-left md:py-0.5"
               style="padding-left: {0.75 + row.depth * 0.75 + (onToggle ? 1 : 0)}rem"
+              title={row.path}
               aria-current={open === row.path ? "page" : undefined}
               onclick={() => onOpen(row.path)}
             >
               {row.name}{#if changed.includes(row.path)}<span class="ml-1 text-accent" aria-label="(changed)">•</span>{/if}
             </button>
             {#if !readonly && !required.includes(row.path)}
-              <span class="shrink-0 pr-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+              <span class="shrink-0 pr-1 max-md:opacity-100 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
                 <RowMenu
                   name={row.path}
                   items={[
