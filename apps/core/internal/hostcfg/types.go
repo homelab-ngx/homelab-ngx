@@ -221,12 +221,15 @@ type Route struct {
 	Hostname string `json:"hostname" doc:"The public hostname on Cloudflare, such as photos.example.net."`
 	Target   string `json:"target" doc:"What it serves: a name under the private domain (photos) or a full host name."`
 	Path     string `json:"path,omitempty" doc:"Only paths matching this regular expression, such as ^/opds; empty is every path."`
+	Public   bool   `json:"public,omitempty" doc:"Anonymously reachable on purpose, without Cloudflare Access."`
 }
 
 // Tunnel is the Cloudflare tunnel publishing some private routes.
 type Tunnel struct {
 	Enabled        bool    `json:"enabled"`
+	Name           string  `json:"name,omitempty" doc:"The tunnel's name at Cloudflare, set at login."`
 	TunnelID       string  `json:"tunnel_id,omitempty" doc:"From the stored credentials."`
+	Zone           string  `json:"zone,omitempty" doc:"The zone approved at Cloudflare's login, such as example.net."`
 	CredentialsSet bool    `json:"credentials_set" doc:"The tunnel's credentials file is stored; it is never shown."`
 	DNSManaged     bool    `json:"dns_managed" doc:"The tunnel was connected through Cloudflare's login, so the host adds each route's DNS record itself. Otherwise each record is added at Cloudflare by hand."`
 	Routes         []Route `json:"routes"`

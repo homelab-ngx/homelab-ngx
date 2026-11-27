@@ -44,9 +44,10 @@ const (
 
 // Login is a login the daemon runs: its link while it waits, and how it ended.
 type Login struct {
-	State LoginState `json:"state" enum:"idle,waiting,done,failed" doc:"idle: none started since the daemon started. waiting: open url to approve the host. done or failed: how the last one ended."`
-	URL   string     `json:"url,omitempty" doc:"The link to open and approve the host at, while waiting."`
-	Error string     `json:"error,omitempty" doc:"Why the last login failed."`
+	State     LoginState `json:"state" enum:"idle,waiting,done,failed" doc:"idle: none started since the daemon started. waiting: open url to approve the host. done or failed: how the last one ended."`
+	URL       string     `json:"url,omitempty" doc:"The link to open and approve the host at, while waiting."`
+	ExpiresAt *time.Time `json:"expires_at,omitempty" doc:"When the login link expires, while waiting."`
+	Error     string     `json:"error,omitempty" doc:"Why the last login failed."`
 }
 
 // loginURL finds the link a login prints.
@@ -84,6 +85,20 @@ func (j *loginJob) cancelWaiting() {
 	}
 }
 
+// cancelJob aborts a waiting login and returns the job to idle.
+func (j *loginJob) cancelJob() Login {
+	j.mu.Lock()
+	cancel := j.cancel
+	j.cancel = nil
+	j.gen++
+	j.l = Login{State: LoginIdle}
+	j.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	return Login{State: LoginIdle}
+}
+
 // start runs fn unless a login is waiting already, and returns once fn has
 // seen its link, has ended, or after loginWait. fn gets a context that ends
 // with the link's lifetime and passes every line of output to line.
@@ -93,11 +108,12 @@ func (j *loginJob) start(fn func(ctx context.Context, line func(stream, s string
 		defer j.mu.Unlock()
 		return j.l
 	}
+	exp := time.Now().Add(loginTimeout)
 	ctx, cancel := context.WithTimeout(context.Background(), loginTimeout)
 	j.gen++
 	myGen := j.gen
 	j.cancel = cancel
-	j.l = Login{State: LoginWaiting}
+	j.l = Login{State: LoginWaiting, ExpiresAt: &exp}
 	j.mu.Unlock()
 
 	seen := make(chan struct{})
@@ -739,6 +755,14 @@ func (s *Service) TunnelLogin(ctx context.Context) (Login, error) {
 // TunnelLoginState reports the last tunnel login.
 func (s *Service) TunnelLoginState() Login { return s.tunnelLogin.get() }
 
+// TunnelLoginCancel aborts a waiting tunnel login and returns to idle.
+func (s *Service) TunnelLoginCancel() (Login, error) {
+	if s.managed == ManagedNixOS {
+		return Login{}, ErrManaged
+	}
+	return s.tunnelLogin.cancelJob(), nil
+}
+
 func (s *Service) connectTunnel(ctx context.Context, name string, line func(string, string)) error {
 	// cloudflared writes the certificate to $HOME/.cloudflared/cert.pem.
 	home, err := os.MkdirTemp("", "homelab-cloudflared-")
@@ -771,11 +795,16 @@ func (s *Service) connectTunnel(ctx context.Context, name string, line func(stri
 	if err != nil {
 		return err
 	}
-	return s.storeTunnel(context.WithoutCancel(ctx), string(creds), string(cert))
+	zone := s.resolveZone(context.WithoutCancel(ctx), string(cert))
+	if err := s.storeTunnel(context.WithoutCancel(ctx), string(creds), string(cert), name, zone); err != nil {
+		return err
+	}
+	s.kickTunnelProbe(true)
+	return nil
 }
 
 // storeTunnel keeps a tunnel's credentials and certificate and turns it on.
-func (s *Service) storeTunnel(ctx context.Context, creds, cert string) error {
+func (s *Service) storeTunnel(ctx context.Context, creds, cert, name, zone string) error {
 	if err := checkTunnelCredentials(creds); err != nil {
 		return err
 	}
@@ -784,7 +813,7 @@ func (s *Service) storeTunnel(ctx context.Context, creds, cert string) error {
 		if r, ok := rs["tunnel"]; ok {
 			_ = json.Unmarshal(r.value, &t)
 		}
-		return s.save(ctx, "tunnel", Tunnel{Enabled: true, Routes: nonNil(t.Routes)}, tunnelSecret{Credentials: strings.TrimSpace(creds), Cert: cert})
+		return s.save(ctx, "tunnel", Tunnel{Enabled: true, Name: name, Zone: zone, Routes: nonNil(t.Routes)}, tunnelSecret{Credentials: strings.TrimSpace(creds), Cert: cert})
 	})
 	return err
 }
@@ -792,11 +821,15 @@ func (s *Service) storeTunnel(ctx context.Context, creds, cert string) error {
 // TunnelForget drops the tunnel's credentials and certificate and turns it
 // off. The tunnel and its DNS records stay at Cloudflare.
 func (s *Service) TunnelForget(ctx context.Context) (HostSettings, error) {
-	return s.change(ctx, func(rs map[string]row) error {
+	st, err := s.change(ctx, func(rs map[string]row) error {
 		var t Tunnel
 		if r, ok := rs["tunnel"]; ok {
 			_ = json.Unmarshal(r.value, &t)
 		}
 		return s.save(ctx, "tunnel", Tunnel{Routes: nonNil(t.Routes)}, nil)
 	})
+	if err == nil {
+		s.clearTunnelProbe()
+	}
+	return st, err
 }

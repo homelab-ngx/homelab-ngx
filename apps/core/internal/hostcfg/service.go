@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
@@ -106,6 +107,12 @@ type Service struct {
 	tailscaleLogin loginJob
 	tunnelLogin    loginJob
 	ddns           *ddnsLoop
+	tunnelProbe    *tunnelProbeLoop
+	stackRoutes    func(ctx context.Context) []string
+	zoneMu         sync.Mutex
+	zoneCheckedFor string
+	cfAPIBase      string
+	cfHTTP         *http.Client
 
 	// addrs are the wired interfaces' IPv4 addresses, and inferEvery how
 	// often InferLAN looks for one; variables for tests.
@@ -116,11 +123,15 @@ type Service struct {
 // SetRunner gives the service the runner its logins use.
 func (s *Service) SetRunner(r cmdrunner.Runner) { s.run = r }
 
+// SetStackRoutes provides the installed stacks' approved route hostnames for
+// checking whether a tunnel route points at a live target.
+func (s *Service) SetStackRoutes(fn func(ctx context.Context) []string) { s.stackRoutes = fn }
+
 // New keeps the settings in st, sealing secrets with keyFile. A host whose
 // managed is ManagedNixOS shows nix and refuses changes; apply may be nil
 // there.
 func New(st *store.Store, keyFile string, managed Managed, nix *config.Nix, apply Applier, log *slog.Logger) *Service {
-	return &Service{st: st, keyFile: keyFile, managed: managed, nix: nix, apply: apply, log: log, now: time.Now, tzdir: "/usr/share/zoneinfo", xkbRules: xkbRules, kbdMap: kbdModelMap, ddns: newDDNSLoop(), addrs: wiredAddrs, inferEvery: 5 * time.Second}
+	return &Service{st: st, keyFile: keyFile, managed: managed, nix: nix, apply: apply, log: log, now: time.Now, tzdir: "/usr/share/zoneinfo", xkbRules: xkbRules, kbdMap: kbdModelMap, ddns: newDDNSLoop(), tunnelProbe: newTunnelProbeLoop(), addrs: wiredAddrs, inferEvery: 5 * time.Second}
 }
 
 // Detect tells an image host from a NixOS one by its os-release.
@@ -367,6 +378,9 @@ func valuesOf(st HostSettings) Values {
 	}
 	for _, r := range st.Tunnel.Routes {
 		v.Tunnel.Hostnames = append(v.Tunnel.Hostnames, r.Hostname)
+		if r.Public {
+			v.Tunnel.PublicHostnames[r.Hostname] = "marked open to anyone in host settings"
+		}
 	}
 	fw := config.Firewall{Enabled: true, TCPPorts: []int{22, 80, 443}}
 	for _, o := range st.Firewall.Openings {
@@ -426,7 +440,8 @@ func (s *Service) fromNix() HostSettings {
 	st.Tunnel.Enabled = n.CloudflareTunnel.Enabled
 	st.Tunnel.Routes = []Route{}
 	for _, h := range n.CloudflareTunnel.Hostnames {
-		st.Tunnel.Routes = append(st.Tunnel.Routes, Route{Hostname: h})
+		_, pub := n.CloudflareTunnel.PublicHostnames[h]
+		st.Tunnel.Routes = append(st.Tunnel.Routes, Route{Hostname: h, Public: pub})
 	}
 	st.Tailscale = tailscaleFromFlags(n.Security.Tailscale.UpFlags, n.Security.Tailscale.SetFlags)
 	st.Tailscale.Enabled = n.Security.Tailscale.Enabled
@@ -882,7 +897,7 @@ func (s *Service) SetTunnel(ctx context.Context, in TunnelSet) (HostSettings, er
 		seen[k] = true
 		in.Routes[i] = r
 	}
-	return s.change(ctx, func(rs map[string]row) error {
+	st, err := s.change(ctx, func(rs map[string]row) error {
 		var d Domain
 		if r, ok := rs["domain"]; ok {
 			_ = json.Unmarshal(r.value, &d)
@@ -891,6 +906,10 @@ func (s *Service) SetTunnel(ctx context.Context, in TunnelSet) (HostSettings, er
 			if isDashboardTarget(rt.Target, d) {
 				return invalid("routes[%d].target: the dashboard cannot be published through the tunnel; use the VPN or Tailscale instead", i)
 			}
+		}
+		var prev Tunnel
+		if r, ok := rs["tunnel"]; ok {
+			_ = json.Unmarshal(r.value, &prev)
 		}
 		var sec tunnelSecret
 		if err := s.open(rs["tunnel"], &sec); err != nil && in.Credentials == nil {
@@ -908,14 +927,27 @@ func (s *Service) SetTunnel(ctx context.Context, in TunnelSet) (HostSettings, er
 			sec.Credentials = c
 			if c == "" {
 				sec.Cert = ""
+				prev.Name = ""
+				prev.Zone = ""
 			}
 		}
 		if in.Enabled && sec.Credentials == "" {
 			return invalid("credentials: the tunnel needs its credentials file to run")
 		}
-		t := Tunnel{Enabled: in.Enabled, Routes: nonNil(in.Routes)}
+		if sec.Cert != "" && prev.Zone != "" {
+			for i, rt := range in.Routes {
+				if !inZone(rt.Hostname, prev.Zone) {
+					return invalid("routes[%d].hostname: %s is not in %s", i, rt.Hostname, prev.Zone)
+				}
+			}
+		}
+		t := Tunnel{Enabled: in.Enabled, Name: prev.Name, Zone: prev.Zone, Routes: nonNil(in.Routes)}
 		return s.save(ctx, "tunnel", t, sec)
 	})
+	if err == nil {
+		s.kickTunnelProbe(true)
+	}
+	return st, err
 }
 
 // checkTunnelCredentials refuses what is not a tunnel's credentials file.

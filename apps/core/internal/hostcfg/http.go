@@ -99,6 +99,18 @@ func (h *HTTP) Register(a httpx.APIs) {
 		Summary: "Take the host off its tailnet.",
 	}, h.tailscaleLogout)
 	httpx.Register(a, httpx.ScopeRead, huma.Operation{
+		OperationID: "getTunnelStatus", Method: http.MethodGet, Path: "/host-settings/tunnel/status", Tags: tags,
+		Summary: "Live Cloudflare tunnel connector health and per-route DNS and Access exposure.",
+	}, h.tunnelStatus)
+	httpx.Register(a, httpx.ScopeControl, huma.Operation{
+		OperationID: "restartTunnel", Method: http.MethodPost, Path: "/host-settings/tunnel/restart", Tags: tags, Errors: []int{http.StatusBadRequest, http.StatusConflict, http.StatusBadGateway},
+		Summary: "Restart cloudflared and report its new status.",
+	}, h.tunnelRestart)
+	httpx.Register(a, httpx.ScopeControl, huma.Operation{
+		OperationID: "checkTunnelRoute", Method: http.MethodPost, Path: "/host-settings/tunnel/routes/{hostname}/check", Tags: tags, Errors: []int{http.StatusBadRequest},
+		Summary: "Probe one published tunnel route now and return the updated tunnel status.",
+	}, h.checkTunnelRoute)
+	httpx.Register(a, httpx.ScopeRead, huma.Operation{
 		OperationID: "getTunnelLogin", Method: http.MethodGet, Path: "/host-settings/tunnel/login", Tags: tags,
 		Summary: "The last Cloudflare login: its link while it waits, and how it ended.",
 	}, h.tunnelLoginState)
@@ -107,6 +119,10 @@ func (h *HTTP) Register(a httpx.APIs) {
 		Summary:     "Connect the tunnel through Cloudflare's login.",
 		Description: "Runs cloudflared tunnel login and answers with its link once printed (within 15 s). Once a zone is approved there, the host creates its tunnel (or takes back the one named after it), keeps its credentials and turns it on, and adds each route's DNS record. The link stays open for 10 minutes. `409 managed_by_nixos` on a NixOS host.",
 	}, h.tunnelLogin)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "cancelTunnelLogin", Method: http.MethodPost, Path: "/host-settings/tunnel/login/cancel", Tags: tags, Errors: []int{http.StatusConflict},
+		Summary: "Abort a waiting Cloudflare login and return to idle.",
+	}, h.tunnelLoginCancel)
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "forgetTunnel", Method: http.MethodPost, Path: "/host-settings/tunnel/forget", Tags: tags, Errors: errs,
 		Summary: "Drop the tunnel's credentials and turn it off. The tunnel and its DNS records stay at Cloudflare.",
@@ -119,6 +135,10 @@ type tailscaleLoginIn struct {
 	Body *TailscaleLoginInput `required:"false"`
 }
 type loginOut struct{ Body Login }
+type tunnelStatusOut struct{ Body TunnelStatus }
+type routeCheckIn struct {
+	Hostname string `path:"hostname" doc:"The route's public hostname."`
+}
 
 func (h *HTTP) tailscaleStatus(ctx context.Context, _ *struct{}) (*tailscaleOut, error) {
 	return &tailscaleOut{Body: h.s.TailscaleStatus(ctx)}, nil
@@ -144,11 +164,35 @@ func (h *HTTP) tailscaleLogout(ctx context.Context, _ *struct{}) (*tailscaleOut,
 	}
 	return &tailscaleOut{Body: st}, nil
 }
+func (h *HTTP) tunnelStatus(ctx context.Context, _ *struct{}) (*tunnelStatusOut, error) {
+	return &tunnelStatusOut{Body: h.s.TunnelStatus(ctx)}, nil
+}
+func (h *HTTP) tunnelRestart(ctx context.Context, _ *struct{}) (*tunnelStatusOut, error) {
+	st, err := h.s.TunnelRestart(ctx)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &tunnelStatusOut{Body: st}, nil
+}
+func (h *HTTP) checkTunnelRoute(ctx context.Context, in *routeCheckIn) (*tunnelStatusOut, error) {
+	st, err := h.s.RecheckTunnelRoute(ctx, in.Hostname)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &tunnelStatusOut{Body: st}, nil
+}
 func (h *HTTP) tunnelLoginState(_ context.Context, _ *struct{}) (*loginOut, error) {
 	return &loginOut{Body: h.s.TunnelLoginState()}, nil
 }
 func (h *HTTP) tunnelLogin(ctx context.Context, _ *struct{}) (*loginOut, error) {
 	l, err := h.s.TunnelLogin(ctx)
+	if err != nil {
+		return nil, problem(err)
+	}
+	return &loginOut{Body: l}, nil
+}
+func (h *HTTP) tunnelLoginCancel(_ context.Context, _ *struct{}) (*loginOut, error) {
+	l, err := h.s.TunnelLoginCancel()
 	if err != nil {
 		return nil, problem(err)
 	}

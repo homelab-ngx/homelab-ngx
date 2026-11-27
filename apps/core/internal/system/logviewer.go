@@ -33,6 +33,13 @@ type StackUnits interface {
 	BackupLogUnits(ctx context.Context) []BackupUnit
 }
 
+// ExtraCoreUnits is optionally implemented alongside StackUnits to add
+// runtime-enabled core units (such as homelab-cloudflared.service) to the
+// Logs page without listing inactive optional units.
+type ExtraCoreUnits interface {
+	CoreLogUnits(ctx context.Context) []string
+}
+
 // logUnit is one entry of the Logs page's unit list and where its journal is.
 type logUnit struct {
 	ID         string
@@ -47,15 +54,25 @@ type logUnit struct {
 func (s *System) logUnits(ctx context.Context, snap *config.Snapshot) []logUnit {
 	var stackUnits []StackUnit
 	var backupUnits []BackupUnit
+	var extraCore []string
 	if s.stacks != nil {
 		stackUnits = s.stacks.LogUnits(ctx)
 		backupUnits = s.stacks.BackupLogUnits(ctx)
+		if ex, ok := s.stacks.(ExtraCoreUnits); ok {
+			extraCore = ex.CoreLogUnits(ctx)
+		}
 	}
-	return logViewerUnits(snap, backupUnits, stackUnits)
+	return logViewerUnits(snap, extraCore, backupUnits, stackUnits)
 }
 
-func logViewerUnits(snap *config.Snapshot, backupUnits []BackupUnit, stackUnits []StackUnit) []logUnit {
-	units := make([]logUnit, 0, len(snap.Nix.CoreServices)+len(backupUnits)+len(stackUnits))
+func logViewerUnits(snap *config.Snapshot, extraCore []string, backupUnits []BackupUnit, stackUnits []StackUnit) []logUnit {
+	coreNames := slices.Clone(snap.Nix.CoreServices)
+	for _, u := range extraCore {
+		if u != "" && !slices.Contains(coreNames, u) {
+			coreNames = append(coreNames, u)
+		}
+	}
+	units := make([]logUnit, 0, len(coreNames)+len(backupUnits)+len(stackUnits))
 	add := func(g LogViewerUnitGroup, entries []logUnit) {
 		slices.SortStableFunc(entries, func(a, b logUnit) int { return cmp.Compare(a.Label, b.Label) })
 		for _, e := range entries {
@@ -80,7 +97,7 @@ func logViewerUnits(snap *config.Snapshot, backupUnits []BackupUnit, stackUnits 
 		id := strings.TrimSuffix(u.Name, ".service")
 		stacks = append(stacks, logUnit{ID: id, Label: titleCase(id), Unit: u.Unit, JournalDir: u.JournalDir})
 	}
-	add(LogViewerUnitGroupCore, host(snap.Nix.CoreServices))
+	add(LogViewerUnitGroupCore, host(coreNames))
 	add(LogViewerUnitGroupBackup, backups)
 	add(LogViewerUnitGroupStack, stacks)
 	return units

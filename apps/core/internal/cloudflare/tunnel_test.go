@@ -34,6 +34,9 @@ cloudflared_tunnel_server_locations{connection_id="3",edge_location="arn02"} 0
 # TYPE cloudflared_tunnel_response_by_code counter
 cloudflared_tunnel_response_by_code{status_code="200"} 1700
 cloudflared_tunnel_response_by_code{status_code="404"} 71
+# HELP build_info Build and version information
+# TYPE build_info gauge
+build_info{goversion="go1.22.5",revision="abcdef0",type="release",version="2026.10.0"} 1
 # HELP quic_client_sent_bytes Bytes sent
 # TYPE quic_client_sent_bytes gauge
 quic_client_sent_bytes{conn_index="0"} 7.3011349e+07
@@ -70,7 +73,7 @@ func TestFetchTunnelStatsParsesRealCloudflaredOutput(t *testing.T) {
 	if got.TotalRequests != 1771 || got.RequestErrors != 3 || got.ConcurrentRequests != 2 {
 		t.Errorf("counters = %+v", got)
 	}
-	if !got.Ready || got.ReadyConnections != 4 || got.ConnectorID != "0f602283-c71d" {
+	if !got.Ready || got.ReadyConnections != 4 || got.ConnectorID != "0f602283-c71d" || got.Version != "2026.10.0" {
 		t.Errorf("ready info = %+v", got)
 	}
 	// 73011349 + 94100563. Prometheus renders these in scientific notation, so

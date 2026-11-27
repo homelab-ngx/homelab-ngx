@@ -421,6 +421,33 @@ func TestCloudflareTunnelCheckWithoutATunnel(t *testing.T) {
 	status(t, byName(t, broken, "cloudflare-tunnel"), Unknown)
 }
 
+func TestCloudflareTunnelCheckUsesHostTunnelOnImage(t *testing.T) {
+	t.Parallel()
+	var seen config.CloudflareTunnel
+	d := Deps{
+		Nix: func() (*config.Nix, error) { return &config.Nix{}, nil },
+		HostTunnel: func(context.Context) (config.CloudflareTunnel, bool) {
+			return config.CloudflareTunnel{
+				Enabled:         true,
+				Hostnames:       []string{"open.example.net"},
+				PublicHostnames: map[string]string{},
+				Connectors:      4,
+			}, true
+		},
+		Tunnel: func(_ context.Context, cfg config.CloudflareTunnel) cloudflare.Report {
+			seen = cfg
+			return cloudflare.Report{
+				Stats:     cloudflare.TunnelStats{Ready: true, ReadyConnections: 4},
+				Hostnames: []cloudflare.HostnameStatus{{Hostname: "open.example.net", Protection: cloudflare.Open}},
+			}
+		},
+	}
+	res := status(t, byName(t, d, "cloudflare-tunnel"), Fail)
+	if !seen.Enabled || !strings.Contains(res.Detail, "open.example.net") {
+		t.Fatalf("seen=%+v detail=%q", seen, res.Detail)
+	}
+}
+
 // ── db-snapshot ──
 
 func TestDBSnapshotCheck(t *testing.T) {

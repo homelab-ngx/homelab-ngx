@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"homelab-ngx.com/core/internal/cmdrunner"
@@ -34,6 +35,12 @@ func wgPort(w WireGuard) int {
 	return w.ListenPort
 }
 
+type routeDNSResult struct {
+	status RouteDNSState
+	err    string
+	at     time.Time
+}
+
 // ImageApplier writes what the image host reads from the settings, under
 // Root ("" is /), and has the host pick it up through Runner. Every part is
 // rewritten on every apply; a part whose files did not change is not
@@ -42,9 +49,21 @@ type ImageApplier struct {
 	Runner cmdrunner.Runner
 	Root   string
 
-	// routed holds the tunnel routes whose DNS record was added since the
-	// daemon started, as "<tunnel id> <hostname>".
-	routed map[string]bool
+	// dnsRes holds per-route DNS sync outcomes since the daemon started,
+	// keyed by "<tunnel id> <hostname>".
+	dnsMu  sync.Mutex
+	dnsRes map[string]routeDNSResult
+}
+
+// TunnelRouteDNS reports the last route dns outcome recorded for a route.
+func (a *ImageApplier) TunnelRouteDNS(tunnelID, hostname string) (RouteDNSState, string, bool) {
+	a.dnsMu.Lock()
+	defer a.dnsMu.Unlock()
+	if a.dnsRes == nil {
+		return "", "", false
+	}
+	r, ok := a.dnsRes[tunnelID+" "+hostname]
+	return r.status, r.err, ok
 }
 
 func (a *ImageApplier) path(p string) string { return filepath.Join(a.Root, p) }
@@ -467,6 +486,11 @@ func (a *ImageApplier) tunnel(ctx context.Context, s Snapshot) error {
 		_, err1 := remove(cfg)
 		_, err2 := remove(creds)
 		_, err3 := remove(cert)
+		if s.TunnelCredentials == "" {
+			a.dnsMu.Lock()
+			a.dnsRes = nil
+			a.dnsMu.Unlock()
+		}
 		_ = a.run(ctx, "systemctl", "disable", "--runtime", "--now", tunnelUnit)
 		return errors.Join(err1, err2, err3)
 	}
@@ -506,23 +530,35 @@ func (a *ImageApplier) routeDNS(ctx context.Context, s Snapshot, cert string) er
 	if _, err := a.write(cert, s.TunnelCert, 0o600, ""); err != nil {
 		return err
 	}
-	if a.routed == nil {
-		a.routed = map[string]bool{}
-	}
 	var errs []error
 	for _, r := range s.Tunnel.Routes {
 		if isDashboardTarget(r.Target, s.Domain) {
 			continue
 		}
 		k := s.Tunnel.TunnelID + " " + r.Hostname
-		if a.routed[k] {
+		a.dnsMu.Lock()
+		done := a.dnsRes != nil && a.dnsRes[k].status == RouteDNSAdded
+		a.dnsMu.Unlock()
+		if done {
 			continue
 		}
 		if err := a.run(ctx, "cloudflared", "tunnel", "--origincert", cert, "route", "dns", "--overwrite-dns", s.Tunnel.TunnelID, r.Hostname); err != nil {
-			errs = append(errs, fmt.Errorf("DNS record for %s (is it in the zone approved at the tunnel's login?): %s", r.Hostname, commandError(err)))
+			msg := commandError(err)
+			a.dnsMu.Lock()
+			if a.dnsRes == nil {
+				a.dnsRes = map[string]routeDNSResult{}
+			}
+			a.dnsRes[k] = routeDNSResult{status: RouteDNSFailed, err: msg, at: time.Now()}
+			a.dnsMu.Unlock()
+			errs = append(errs, fmt.Errorf("DNS record for %s (is it in the zone approved at the tunnel's login?): %s", r.Hostname, msg))
 			continue
 		}
-		a.routed[k] = true
+		a.dnsMu.Lock()
+		if a.dnsRes == nil {
+			a.dnsRes = map[string]routeDNSResult{}
+		}
+		a.dnsRes[k] = routeDNSResult{status: RouteDNSAdded, at: time.Now()}
+		a.dnsMu.Unlock()
 	}
 	return errors.Join(errs...)
 }

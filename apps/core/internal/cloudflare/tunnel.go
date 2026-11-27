@@ -26,6 +26,7 @@ const maxMetricsBody = 4 << 20
 type TunnelStats struct {
 	Ready              bool             `json:"ready"`
 	ConnectorID        string           `json:"connector_id,omitempty"`
+	Version            string           `json:"version,omitempty"`
 	ReadyConnections   int              `json:"ready_connections"`
 	TotalRequests      int64            `json:"total_requests"`
 	RequestErrors      int64            `json:"request_errors"`
@@ -217,6 +218,13 @@ func FetchTunnelStats(ctx context.Context, client *http.Client, baseURL string) 
 		out.EdgeLocations = append(out.EdgeLocations, loc)
 	}
 	sort.Strings(out.EdgeLocations)
+
+	for _, m := range families["build_info"] {
+		if v := m.labels["version"]; v != "" {
+			out.Version = v
+			break
+		}
+	}
 
 	out.Ready, out.ReadyConnections, out.ConnectorID = fetchReady(ctx, client, base)
 	return out, nil

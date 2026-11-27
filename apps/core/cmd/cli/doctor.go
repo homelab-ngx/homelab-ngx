@@ -12,6 +12,7 @@ import (
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/config"
 	"homelab-ngx.com/core/internal/doctor"
+	"homelab-ngx.com/core/internal/hostcfg"
 	"homelab-ngx.com/core/internal/logging"
 )
 
@@ -23,12 +24,25 @@ func doctorChecks() ([]doctor.Check, error) {
 		nix  *config.Nix
 		nerr error
 	)
+	getNix := func() (*config.Nix, error) {
+		once.Do(func() { nix, nerr = loadNix() })
+		return nix, nerr
+	}
 	return doctor.Checks(doctor.Deps{
 		Daemon: httpClient(),
 		Runner: cmdrunner.OS{},
-		Nix: func() (*config.Nix, error) {
-			once.Do(func() { nix, nerr = loadNix() })
-			return nix, nerr
+		Nix:    getNix,
+		HostTunnel: func(ctx context.Context) (config.CloudflareTunnel, bool) {
+			n, err := getNix()
+			if err != nil || n == nil {
+				return config.CloudflareTunnel{}, false
+			}
+			st, err := openStore(ctx, n)
+			if err != nil {
+				return config.CloudflareTunnel{}, false
+			}
+			defer st.Close()
+			return hostcfg.TunnelFromStore(ctx, st)
 		},
 	}), nil
 }

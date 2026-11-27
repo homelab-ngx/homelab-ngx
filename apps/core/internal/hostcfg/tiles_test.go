@@ -11,7 +11,7 @@ func TestTiles(t *testing.T) {
 	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
 	var h HostSettings
 	h.Managed = ManagedImage
-	got := tiles(h, TailscaleStatus{}, now)
+	got := tiles(h, TailscaleStatus{}, nil, now)
 	for k, want := range map[string]tilestatus.TileState{"clock": tilestatus.Warn, "mail": tilestatus.Off, "domain": tilestatus.Off, "lan": tilestatus.Off, "tailscale": tilestatus.Off, "wireguard": tilestatus.Off, "tunnel": tilestatus.Off, "ssh": tilestatus.Off} {
 		if got[k].State != want || got[k].Count != nil {
 			t.Errorf("empty host: %s = %+v, want %s", k, got[k], want)
@@ -30,7 +30,7 @@ func TestTiles(t *testing.T) {
 	h.Tunnel = Tunnel{Enabled: true, CredentialsSet: true, Routes: []Route{{}}}
 	h.Firewall.Openings = []Opening{{Port: 8080}, {Port: 8443}, {Port: 9000}}
 	h.Host.SSHKeys = []string{"ssh-ed25519 AAAA"}
-	got = tiles(h, TailscaleStatus{State: TailscaleNeedsLogin}, now)
+	got = tiles(h, TailscaleStatus{State: TailscaleNeedsLogin}, &TunnelStatus{State: TunnelConnected}, now)
 	for _, k := range []string{"clock", "domain", "lan", "system"} {
 		if s, ok := got[k]; ok {
 			t.Errorf("%s = %+v, want no badge", k, s)
@@ -56,8 +56,37 @@ func TestTiles(t *testing.T) {
 
 	// Enabled without credentials is not on yet.
 	h.Tunnel.CredentialsSet = false
-	if s := tiles(h, TailscaleStatus{State: TailscaleRunning}, now)["tunnel"]; s.State != tilestatus.Off {
+	if s := tiles(h, TailscaleStatus{State: TailscaleRunning}, nil, now)["tunnel"]; s.State != tilestatus.Off {
 		t.Errorf("tunnel without credentials = %+v", s)
+	}
+}
+
+func TestTilesTunnel(t *testing.T) {
+	now := time.Date(2026, 11, 27, 12, 0, 0, 0, time.UTC)
+	base := HostSettings{
+		Managed:  ManagedImage,
+		TimeSync: TimeSync{Synced: true},
+		Tunnel:   Tunnel{Enabled: true, CredentialsSet: true, Routes: []Route{{Hostname: "a.example.net"}, {Hostname: "b.example.net"}}},
+	}
+	cases := []struct {
+		name string
+		st   *TunnelStatus
+		want tilestatus.TileState
+	}{
+		{"connected", &TunnelStatus{State: TunnelConnected, Connections: 4, Want: 4, Routes: []RouteStatus{{DNS: RouteDNSAdded, Protection: RouteProtectionProtected}}}, tilestatus.OK},
+		{"starting", &TunnelStatus{State: TunnelStarting}, tilestatus.Info},
+		{"degraded", &TunnelStatus{State: TunnelDegraded, Connections: 2, Want: 4}, tilestatus.Warn},
+		{"down", &TunnelStatus{State: TunnelDown}, tilestatus.Bad},
+		{"open route warns", &TunnelStatus{State: TunnelConnected, Routes: []RouteStatus{{DNS: RouteDNSAdded, Protection: RouteProtectionOpen}}}, tilestatus.Warn},
+		{"public route clears warning", &TunnelStatus{State: TunnelConnected, Routes: []RouteStatus{{DNS: RouteDNSAdded, Protection: RouteProtectionPublic}}}, tilestatus.OK},
+		{"no target warns", &TunnelStatus{State: TunnelConnected, Routes: []RouteStatus{{DNS: RouteDNSAdded, Protection: RouteProtectionProtected, NoTarget: true}}}, tilestatus.Warn},
+		{"dns failed is bad", &TunnelStatus{State: TunnelConnected, Routes: []RouteStatus{{DNS: RouteDNSFailed, Protection: RouteProtectionUnreachable}}}, tilestatus.Bad},
+	}
+	for _, tc := range cases {
+		got := tiles(base, TailscaleStatus{}, tc.st, now)["tunnel"]
+		if got.State != tc.want || got.Count == nil || *got.Count != 2 {
+			t.Errorf("%s: got %+v, want %s count=2", tc.name, got, tc.want)
+		}
 	}
 }
 
@@ -102,7 +131,7 @@ func TestTilesApplyErrors(t *testing.T) {
 	h := HostSettings{Managed: ManagedImage, TimeSync: TimeSync{Synced: true}}
 	h.Tunnel = Tunnel{Enabled: true, CredentialsSet: true, Routes: []Route{{}, {}}}
 	h.Applied.Errors = []string{"caddy: reload failed", "tunnel: no route", "etc: write failed", "something else", "ssh: x", "smtp: failed"}
-	got := tiles(h, TailscaleStatus{}, now)
+	got := tiles(h, TailscaleStatus{}, nil, now)
 	for _, k := range []string{"domain", "tunnel", "system", "ssh", "mail"} {
 		if got[k].State != tilestatus.Bad {
 			t.Errorf("%s = %+v, want bad", k, got[k])
@@ -117,7 +146,7 @@ func TestTilesApplyErrors(t *testing.T) {
 
 	// A NixOS host's settings are not applied by the daemon.
 	h.Managed = ManagedNixOS
-	if s := tiles(h, TailscaleStatus{}, now)["system"]; s.State == tilestatus.Bad {
+	if s := tiles(h, TailscaleStatus{}, nil, now)["system"]; s.State == tilestatus.Bad {
 		t.Errorf("nixos host = %+v", s)
 	}
 }

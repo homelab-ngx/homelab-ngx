@@ -163,6 +163,22 @@ func run(configPath string) error {
 	stackHost.IconsDir = filepath.Join(nix.Paths.StateDir, "icons")
 	stackHost.GPU = stacks.GPU{Packages: nix.Stacks.GPU.Packages, LibvaDriver: nix.Stacks.GPU.LibvaDriver}
 	stacksSvc := stacks.New(st, stacks.NewNixSource(r), stackHost, notify, logging.Logger("stacks"))
+	hostSvc.SetStackRoutes(func(ctx context.Context) []string {
+		list, err := stacksSvc.List(ctx)
+		if err != nil {
+			return nil
+		}
+		var out []string
+		for _, sk := range list {
+			if sk.Approved == nil {
+				continue
+			}
+			for _, rt := range sk.Approved.Manifest.Routes {
+				out = append(out, rt.Host)
+			}
+		}
+		return out
+	})
 	hostSvc.OnChange(func(v hostcfg.Values) {
 		stacks.SetPrivateDomain(v.Domain)
 		stacksSvc.SetHostValues(v.DashboardURL, stacks.Nets{LAN: v.LAN, VPN: v.VPN, Tailnet: v.Tailnet})
@@ -221,7 +237,7 @@ func run(configPath string) error {
 	met.SetProfile(pp.Profile)
 
 	// Ask reads the same log viewer list the Logs page does.
-	logs := system.New(cfg, r, logSources{stackUnits{stacksSvc}, bk})
+	logs := system.New(cfg, r, logSources{stackUnits{stacksSvc}, bk, hostSvc})
 	askSvc := ask.New(assistant, ask.Sources{
 		Logs: logs, Backups: bk, Stacks: stacksSvc, Deploys: sysMod, Notifications: notify,
 	}, logging.Logger("llm"))
@@ -271,6 +287,11 @@ func run(configPath string) error {
 	// Dynamic DNS, while it is on: the record follows the public address.
 	g.Go(func() error {
 		hostSvc.RunDDNS(gctx)
+		return nil
+	})
+	// Background Cloudflare tunnel exposure probe cache for /settings/tunnel and tiles.
+	g.Go(func() error {
+		hostSvc.RunTunnelProbe(gctx)
 		return nil
 	})
 	// Stacks with an approved api grant reach the daemon here; their
@@ -493,10 +514,25 @@ func (a stackBackups) BackupFolders(ctx context.Context) ([]backups.StackFolders
 	return out, nil
 }
 
-// logSources adapts the stacks and the backups to the log viewer.
+// logSources adapts the stacks, backups and optional host units to the log viewer.
 type logSources struct {
 	stackUnits
 	backups *backups.Service
+	hostcfg *hostcfg.Service
+}
+
+func (a logSources) CoreLogUnits(ctx context.Context) []string {
+	if a.hostcfg == nil {
+		return nil
+	}
+	hs, err := a.hostcfg.Get(ctx)
+	if err != nil {
+		return nil
+	}
+	if hs.Tunnel.Enabled || hs.Tunnel.CredentialsSet {
+		return []string{"homelab-cloudflared.service"}
+	}
+	return nil
 }
 
 func (a logSources) BackupLogUnits(ctx context.Context) []system.BackupUnit {

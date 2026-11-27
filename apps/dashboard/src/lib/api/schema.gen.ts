@@ -907,6 +907,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/host-settings/tunnel/login/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Abort a waiting Cloudflare login and return to idle. */
+        post: operations["cancelTunnelLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/host-settings/tunnel/restart": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restart cloudflared and report its new status. */
+        post: operations["restartTunnel"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/host-settings/tunnel/routes/{hostname}/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Probe one published tunnel route now and return the updated tunnel status. */
+        post: operations["checkTunnelRoute"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/host-settings/tunnel/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Live Cloudflare tunnel connector health and per-route DNS and Access exposure. */
+        get: operations["getTunnelStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/host-settings/wireguard": {
         parameters: {
             query?: never;
@@ -3897,6 +3965,11 @@ export interface components {
             /** @description Why the last login failed. */
             error?: string;
             /**
+             * Format: date-time
+             * @description When the login link expires, while waiting.
+             */
+            expires_at?: string;
+            /**
              * @description idle: none started since the daemon started. waiting: open url to approve the host. done or failed: how the last one ended.
              * @enum {string}
              */
@@ -4540,7 +4613,39 @@ export interface components {
             hostname: string;
             /** @description Only paths matching this regular expression, such as ^/opds; empty is every path. */
             path?: string;
+            /** @description Anonymously reachable on purpose, without Cloudflare Access. */
+            public?: boolean;
             /** @description What it serves: a name under the private domain (photos) or a full host name. */
+            target: string;
+        };
+        RouteStatus: {
+            /**
+             * Format: date-time
+             * @description When the hostname was last probed.
+             */
+            checked_at?: string;
+            /**
+             * @description added: CNAME written by the host. failed: route dns failed. manual: credentials pasted without a zone cert. pending: not written yet.
+             * @enum {string}
+             */
+            dns: "added" | "failed" | "manual" | "pending";
+            /** @description Why route dns failed, when dns is failed. */
+            dns_error?: string;
+            hostname: string;
+            /** @description The route's target matches no installed stack's approved route. */
+            no_target?: boolean;
+            path?: string;
+            /**
+             * @description What an anonymous HTTP request receives at this hostname.
+             * @enum {string}
+             */
+            protection: "checking" | "protected" | "public" | "open" | "not-served" | "unreachable";
+            public: boolean;
+            /**
+             * Format: int64
+             * @description HTTP status code from the last probe.
+             */
+            status_code?: number;
             target: string;
         };
         S3Input: {
@@ -5429,15 +5534,53 @@ export interface components {
             /** @description The tunnel was connected through Cloudflare's login, so the host adds each route's DNS record itself. Otherwise each record is added at Cloudflare by hand. */
             dns_managed: boolean;
             enabled: boolean;
+            /** @description The tunnel's name at Cloudflare, set at login. */
+            name?: string;
             routes: components["schemas"]["Route"][];
             /** @description From the stored credentials. */
             tunnel_id?: string;
+            /** @description The zone approved at Cloudflare's login, such as example.net. */
+            zone?: string;
         };
         TunnelSet: {
             /** @description The tunnel's credentials file (JSON with AccountTag, TunnelID and TunnelSecret), from cloudflared tunnel create. Absent keeps the stored one. */
             credentials?: string;
             enabled: boolean;
             routes?: components["schemas"]["Route"][];
+        };
+        TunnelStatus: {
+            /** @description Cloudflare edge locations the tunnel is connected to. */
+            colos: string[];
+            /**
+             * Format: int64
+             * @description Ready HA connections to Cloudflare.
+             */
+            connections: number;
+            connector_id?: string;
+            /** @description Why the tunnel is down or degraded. */
+            error?: string;
+            /** @description Up to five recent cloudflared error lines when degraded or down. */
+            recent_errors: string[];
+            routes: components["schemas"]["RouteStatus"][];
+            /**
+             * Format: date-time
+             * @description When the cloudflared unit started.
+             */
+            started_at?: string;
+            /**
+             * @description Live connector health: off, starting, connected, degraded or down.
+             * @enum {string}
+             */
+            state: "off" | "starting" | "connected" | "degraded" | "down";
+            /** @description cloudflared version from its metrics. */
+            version?: string;
+            /**
+             * Format: int64
+             * @description Expected HA connections (normally 4).
+             */
+            want: number;
+            /** @description The Cloudflare zone approved at login. */
+            zone?: string;
         };
         UnmountRequest: {
             mountpoint: string;
@@ -10051,6 +10194,279 @@ export interface operations {
             };
             /** @description Bad Gateway */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    cancelTunnelLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Login"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    restartTunnel: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TunnelStatus"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Bad Gateway */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    checkTunnelRoute: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The route's public hostname. */
+                hostname: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TunnelStatus"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Internal Server Error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getTunnelStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TunnelStatus"];
+                };
+            };
+            /** @description Error */
+            default: {
                 headers: {
                     [name: string]: unknown;
                 };

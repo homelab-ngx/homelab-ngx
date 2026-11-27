@@ -186,12 +186,12 @@ func TestLogViewerUnitsLabelOrder(t *testing.T) {
 	t.Parallel()
 	got := logViewerUnits(&config.Snapshot{
 		Nix: &config.Nix{CoreServices: []string{"pocket-id.service", "caddy.service", "homelab-daemon.service"}},
-	}, nil, nil)
+	}, []string{"homelab-cloudflared.service", "caddy.service"}, nil, nil)
 	var ids []string
 	for _, u := range got {
 		ids = append(ids, u.ID)
 	}
-	if want := []string{"caddy", "homelab-daemon", "pocket-id"}; !reflect.DeepEqual(ids, want) {
+	if want := []string{"caddy", "homelab-cloudflared", "homelab-daemon", "pocket-id"}; !reflect.DeepEqual(ids, want) {
 		t.Fatalf("ids = %v, want %v", ids, want)
 	}
 }

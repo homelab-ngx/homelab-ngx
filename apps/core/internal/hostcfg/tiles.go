@@ -22,14 +22,19 @@ func (s *Service) Tiles(ctx context.Context) (map[string]tilestatus.TileStatus, 
 	if h.Tailscale.Enabled {
 		ts = s.TailscaleStatus(ctx)
 	}
-	return tiles(h, ts, s.now()), nil
+	var tun *TunnelStatus
+	if h.Tunnel.Enabled && (h.Managed == ManagedNixOS || h.Tunnel.CredentialsSet) {
+		st := s.TunnelStatus(ctx)
+		tun = &st
+	}
+	return tiles(h, ts, tun, s.now()), nil
 }
 
 // applyTile is the tile each part of the apply belongs to (Apply's part
 // names); etc and anything else are the system tile's.
 var applyTile = map[string]string{"caddy": "domain", "firewall": "firewall", "tunnel": "tunnel", "tailscale": "tailscale", "ssh": "ssh", "smtp": "mail"}
 
-func tiles(h HostSettings, ts TailscaleStatus, now time.Time) map[string]tilestatus.TileStatus {
+func tiles(h HostSettings, ts TailscaleStatus, tun *TunnelStatus, now time.Time) map[string]tilestatus.TileStatus {
 	t := map[string]tilestatus.TileStatus{}
 	if !h.TimeSync.Synced {
 		t["clock"] = tilestatus.Of(tilestatus.Warn)
@@ -51,11 +56,7 @@ func tiles(h HostSettings, ts TailscaleStatus, now time.Time) map[string]tilesta
 	} else {
 		t["wireguard"] = tilestatus.Of(tilestatus.Off)
 	}
-	if h.Tunnel.Enabled && h.Tunnel.CredentialsSet {
-		t["tunnel"] = counted(tilestatus.OK, len(h.Tunnel.Routes))
-	} else {
-		t["tunnel"] = tilestatus.Of(tilestatus.Off)
-	}
+	t["tunnel"] = tunnelTile(h, tun)
 	t["firewall"] = counted(tilestatus.None, len(h.Firewall.Openings))
 	if n := len(h.Host.SSHKeys); n > 0 {
 		t["ssh"] = counted(tilestatus.None, n)
@@ -112,6 +113,34 @@ func tailscaleTile(enabled bool, ts TailscaleStatus, now time.Time) tilestatus.T
 		return tilestatus.Of(tilestatus.Info)
 	}
 	return tilestatus.Of(tilestatus.Off)
+}
+
+// tunnelTile maps live tunnel health and route states to the Settings tile.
+func tunnelTile(h HostSettings, st *TunnelStatus) tilestatus.TileStatus {
+	if !h.Tunnel.Enabled || (h.Managed == ManagedImage && !h.Tunnel.CredentialsSet) {
+		return tilestatus.Of(tilestatus.Off)
+	}
+	state := tilestatus.OK
+	if st != nil {
+		switch st.State {
+		case TunnelDown:
+			state = tilestatus.Bad
+		case TunnelDegraded:
+			state = tilestatus.Warn
+		case TunnelStarting:
+			state = tilestatus.Info
+		}
+		for _, r := range st.Routes {
+			if r.DNS == RouteDNSFailed {
+				state = tilestatus.Bad
+				break
+			}
+			if state != tilestatus.Bad && (r.Protection == RouteProtectionOpen || r.NoTarget) {
+				state = tilestatus.Warn
+			}
+		}
+	}
+	return counted(state, len(h.Tunnel.Routes))
 }
 
 // counted carries n only when there is something to count.

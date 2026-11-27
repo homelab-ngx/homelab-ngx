@@ -69,7 +69,7 @@ func features(d deps) []feature {
 		sysupdates.NewHTTP(d.sysupdates),
 		notifications.NewHTTP(d.notifications, d.channels),
 		hostcfg.NewHTTP(d.hostcfg),
-		system.NewHTTP(d.config, d.runner, logSources{stackUnits{d.stacks}, d.backups}),
+		system.NewHTTP(d.config, d.runner, logSources{stackUnits{d.stacks}, d.backups, d.hostcfg}),
 		metrics.NewHTTP(d.metrics),
 		drafts.NewHTTP(d.drafts),
 		llm.NewHTTP(d.assistant),

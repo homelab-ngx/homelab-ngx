@@ -55,6 +55,9 @@ type Deps struct {
 	// Tunnel reads the Cloudflare tunnel's state: cloudflared's metrics and an
 	// anonymous probe of each published hostname.
 	Tunnel func(ctx context.Context, cfg config.CloudflareTunnel) cloudflare.Report
+	// HostTunnel returns the image host's stored tunnel config (from SQLite)
+	// when the read-only nix config has no tunnel enabled.
+	HostTunnel func(ctx context.Context) (config.CloudflareTunnel, bool)
 
 	// DashboardURL is the address the caddy check asks; empty takes the
 	// host's declared dashboard address.
@@ -527,20 +530,26 @@ func (d Deps) cloudflareTunnel(ctx context.Context) Result {
 	if err != nil {
 		return unknown("cannot read the nix config: %v", err)
 	}
-	if !nix.CloudflareTunnel.Enabled {
+	cfg := nix.CloudflareTunnel
+	if !cfg.Enabled && d.HostTunnel != nil {
+		if ht, ok := d.HostTunnel(ctx); ok {
+			cfg = ht
+		}
+	}
+	if !cfg.Enabled {
 		return ok("cloudflare tunnel is not configured")
 	}
-	cf := d.Tunnel(ctx, nix.CloudflareTunnel)
-	status := "systemctl status " + nix.CloudflareTunnel.Unit
-	if nix.CloudflareTunnel.Unit == "" {
+	cf := d.Tunnel(ctx, cfg)
+	status := "systemctl status " + cfg.Unit
+	if cfg.Unit == "" {
 		status = "systemctl list-units 'cloudflared*'"
 	}
-	want := nix.CloudflareTunnel.Connectors
+	want := cfg.Connectors
 	if want <= 0 {
 		want = defaultConnectors
 	}
 	if cf.StatsErr != "" {
-		return fail(status+"; curl -s "+strings.TrimRight(nix.CloudflareTunnel.MetricsURL, "/")+"/ready",
+		return fail(status+"; curl -s "+strings.TrimRight(cfg.MetricsURL, "/")+"/ready",
 			"tunnel metrics unavailable: %s", cf.StatsErr)
 	}
 
@@ -553,7 +562,7 @@ func (d Deps) cloudflareTunnel(ctx context.Context) Result {
 		}
 	}
 	if len(open) > 0 {
-		return fail("add an Access policy, or list them under services.homelab-daemon.cloudflareTunnel.publicHostnames with a reason if they are anonymous on purpose",
+		return fail("add an Access policy, or mark the route Open to anyone in Settings > Cloudflare Tunnel (or list under publicHostnames on NixOS) if it is anonymous on purpose",
 			"published with no Access policy: %s", strings.Join(open, ", "))
 	}
 	if !cf.Stats.Ready || cf.Stats.ReadyConnections < want {
