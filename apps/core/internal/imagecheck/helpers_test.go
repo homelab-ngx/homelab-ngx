@@ -1301,6 +1301,46 @@ done
 	s.st.SMTPRelay = true
 }
 
+func (s *S) hasTunnelStatus() func() (bool, error) {
+	return s.answers(200, "GET", "host-settings/tunnel/status", "")
+}
+
+func (s *S) testTunnelStatus() {
+	s.t.Helper()
+	st := s.getJ("host-settings/tunnel/status")
+	if got := sAt(st, "state"); got != "starting" && got != "down" && got != "degraded" && got != "connected" {
+		s.die("tunnel status state = %q (%s)", got, compact(st))
+	}
+	routes := list(st, "routes")
+	if len(routes) != 1 || sAt(routes[0], "hostname") != "site.example.net" || sAt(routes[0], "dns") != "manual" {
+		s.die("tunnel status routes = %s", compact(st))
+	}
+	if bAt(routes[0], "no_target") {
+		s.die("tunnel route for installed stack site flagged no_target: %s", compact(st))
+	}
+	// Logs viewer includes homelab-cloudflared once the tunnel is configured.
+	lvc := s.getJ("log-viewer-config")
+	if find(lvc, "units", "id", "homelab-cloudflared") == nil {
+		s.die("homelab-cloudflared missing from log-viewer-config: %s", compact(lvc))
+	}
+	// Stopping homelab-cloudflared flips status to down and Settings tile to bad.
+	s.must("systemctl stop homelab-cloudflared.service")
+	down := s.getJ("host-settings/tunnel/status")
+	if got := sAt(down, "state"); got != "down" {
+		s.die("after stop: tunnel status state = %q, want down (%s)", got, compact(down))
+	}
+	tiles := s.getJ("settings/status")
+	if got := sAt(tiles, "tiles.tunnel.state"); got != "bad" {
+		s.die("after stop: tunnel tile = %q, want bad (%s)", got, compact(tiles))
+	}
+	// Restart brings the unit back and cancel login answers idle.
+	s.post("host-settings/tunnel/restart", `{}`, "tunnel restart refused")
+	cancel := s.post("host-settings/tunnel/login/cancel", `{}`, "tunnel login cancel refused")
+	if got := sAt(cancel, "state"); got != "idle" {
+		s.die("tunnel login cancel state = %q, want idle", got)
+	}
+}
+
 // hostCheck: everything the host settings asked for is in place. It is how
 // long the stack took to run.
 func (s *S) hostCheck() time.Duration {

@@ -333,6 +333,9 @@ func hostSteps(s *S) {
 		creds := `{"AccountTag":"acc","TunnelID":"0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0","TunnelSecret":"c2VjcmV0"}`
 		s.put("host-settings/tunnel", map[string]any{"enabled": true, "credentials": creds,
 			"routes": []any{map[string]any{"hostname": "site.example.net", "target": "site"}}}, "tunnel refused")
+		if s.has("live tunnel status and restart", s.hasTunnelStatus()) {
+			s.testTunnelStatus()
+		}
 		s.put("host-settings/firewall", `{"openings":[{"port":8443,"proto":"tcp","from":["10.0.2.0/24"]}]}`, "firewall refused")
 		s.put("host-settings/host", `{"hostname":"checkhost","timezone":"Europe/Stockholm"}`, "host refused")
 		s.testSMTPRelay()
