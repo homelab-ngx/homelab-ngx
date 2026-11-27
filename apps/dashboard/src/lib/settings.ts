@@ -65,7 +65,7 @@ export const SECTIONS: Section[] = [
         noun: ["device", "devices"],
       }),
       tile("wireguard", "WireGuard VPN", ShieldHalf, { words: { ok: "on" }, noun: ["device", "devices"] }),
-      tile("tunnel", "Cloudflare Tunnel", Cloud, { words: { ok: "on", ...notApplied }, noun: ["route", "routes"] }),
+      tile("tunnel", "Cloudflare Tunnel", Cloud, { words: { ok: "connected", warn: "needs attention", bad: "down", info: "starting" }, noun: ["route", "routes"] }),
       tile("firewall", "Firewall", BrickWall, { words: notApplied, noun: ["opening", "openings"] }),
       tile("ssh", "SSH", KeyRound, { words: { off: "no keys", ...notApplied }, noun: ["key", "keys"] }),
     ],

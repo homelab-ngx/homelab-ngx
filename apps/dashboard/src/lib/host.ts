@@ -1,5 +1,6 @@
 /** Host settings (#96): the pure logic behind System Settings › General and › Network. */
-import { api, call, type Schema } from "./api/client.ts";
+import { api, call, type Schema, type Stack } from "./api/client.ts";
+import type { Tone } from "./components/Pill.svelte";
 
 export type HostSettings = Schema<"HostSettings">;
 export type Opening = Schema<"Opening">;
@@ -11,6 +12,8 @@ export type TailscaleStatus = Schema<"TailscaleStatus">;
 export type TailscalePeer = Schema<"TailscalePeer">;
 export type TailscalePeers = Schema<"TailscalePeers">;
 export type TailscaleLoginInput = Schema<"TailscaleLoginInput">;
+export type TunnelStatus = Schema<"TunnelStatus">;
+export type RouteStatus = Schema<"RouteStatus">;
 export type Login = Schema<"Login">;
 export type AddedDevice = Schema<"AddedDevice">;
 
@@ -19,6 +22,7 @@ export const hostKeys = {
   tailscale: ["daemon", "host-settings", "tailscale"] as const,
   tailscalePeers: ["daemon", "host-settings", "tailscale", "peers"] as const,
   tunnelLogin: ["daemon", "host-settings", "tunnel-login"] as const,
+  tunnelStatus: ["daemon", "host-settings", "tunnel-status"] as const,
   keyboardLayouts: ["daemon", "host-settings", "keyboard-layouts"] as const,
 };
 
@@ -26,6 +30,7 @@ export const fetchHostSettings = () => call<HostSettings>(api.GET("/host-setting
 export const fetchTailscale = () => call<TailscaleStatus>(api.GET("/host-settings/tailscale/status"));
 export const fetchTailscalePeers = () => call<TailscalePeers>(api.GET("/host-settings/tailscale/peers"));
 export const fetchTunnelLogin = () => call<Login>(api.GET("/host-settings/tunnel/login"));
+export const fetchTunnelStatus = () => call<TunnelStatus>(api.GET("/host-settings/tunnel/status"));
 
 const TAILSCALE_EXPIRY_WARN_DAYS = 14;
 
@@ -227,3 +232,96 @@ export function peerConfig(wg: { public_key?: string; endpoint?: string; address
 
 /** Whether two values differ, for an Apply that stays off until something changed. */
 export const changed = (a: unknown, b: unknown) => JSON.stringify(a) !== JSON.stringify(b);
+
+/** The tunnel's live state as a status mark and word. */
+export function tunnelPill(
+  st: TunnelStatus | undefined,
+  login: Login | undefined,
+  enabled: boolean,
+  creds: boolean,
+  managed: HostSettings["managed"] = "image",
+): { tone: Tone; word: string } {
+  if (login?.state === "waiting") return { tone: "info", word: "connecting" };
+  if (!enabled || (managed === "image" && !creds)) return { tone: "idle", word: "off" };
+  switch (st?.state) {
+    case "connected":
+      return { tone: "ok", word: "connected" };
+    case "degraded":
+      return { tone: "warn", word: "degraded" };
+    case "down":
+      return { tone: "bad", word: "down" };
+    case "starting":
+      return { tone: "info", word: "starting" };
+  }
+  return { tone: "info", word: "starting" };
+}
+
+/** One tunnel route's state pill, prioritizing DNS errors and unintended exposure. */
+export function routePill(rs: RouteStatus | undefined, tunnelOn: boolean): { tone: Tone; word: string } {
+  if (rs?.dns === "failed") return { tone: "bad", word: "dns failed" };
+  if (!tunnelOn) return { tone: "idle", word: "off" };
+  if (!rs) return { tone: "info", word: "checking" };
+  if (rs.protection === "open") return { tone: "warn", word: "open" };
+  if (rs.no_target) return { tone: "warn", word: "no target" };
+  if (rs.protection === "unreachable") return { tone: "bad", word: "unreachable" };
+  if (rs.dns === "pending" || rs.protection === "checking") return { tone: "info", word: "checking" };
+  if (rs.protection === "protected") return { tone: "ok", word: "protected" };
+  if (rs.protection === "public") return { tone: "ok", word: "public" };
+  if (rs.protection === "not-served") return { tone: "idle", word: "not served" };
+  return { tone: "idle", word: "off" };
+}
+
+/** Shortens a tunnel UUID for display: 6f1c…e2a0. */
+export function shortTunnelId(id: string | undefined): string {
+  if (!id) return "";
+  return id.length > 12 ? `${id.slice(0, 4)}…${id.slice(-4)}` : id;
+}
+
+/** Minutes remaining before a waiting login link expires. */
+export function loginMinutesLeft(expiresAt: string | undefined, now = Date.now()): number {
+  if (!expiresAt) return 0;
+  const ms = Date.parse(expiresAt) - now;
+  return Number.isFinite(ms) && ms > 0 ? Math.max(1, Math.ceil(ms / 60_000)) : 0;
+}
+
+/** Whether hostname is inside zone (exact match or subdomain). */
+export function inZone(hostname: string, zone: string): boolean {
+  const h = hostname.trim().toLowerCase().replace(/\.$/, "");
+  const z = zone.trim().toLowerCase().replace(/\.$/, "");
+  return Boolean(z) && (h === z || h.endsWith(`.${z}`));
+}
+
+/** Whether a tunnel target names the dashboard itself. */
+export function isDashboardTarget(target: string, d: { domain: string; dashboard_label: string }): boolean {
+  const t = target.trim().toLowerCase().replace(/\.$/, "");
+  if (!t) return false;
+  const label = (d.dashboard_label || "homelab").trim().toLowerCase();
+  if (!t.includes(".")) return t === label;
+  const host = dashboardHost(d).toLowerCase();
+  return Boolean(host) && t === host;
+}
+
+export interface StackRouteOption {
+  stack: string;
+  stackTitle: string;
+  host: string;
+  target: string;
+}
+
+/** Approved stack routes offered in the Tunnel route editor's Serves picker. */
+export function approvedStackTargets(stacks: Stack[] | undefined, domain: { domain: string; dashboard_label: string }): StackRouteOption[] {
+  const suffix = domain.domain ? `.${domain.domain.toLowerCase()}` : "";
+  const out: StackRouteOption[] = [];
+  const seen = new Set<string>();
+  for (const s of stacks ?? []) {
+    const title = s.label || s.name;
+    for (const r of s.approved?.manifest?.routes ?? []) {
+      const host = r.host.toLowerCase();
+      if (!host || seen.has(host) || isDashboardTarget(host, domain)) continue;
+      seen.add(host);
+      const target = suffix && host.endsWith(suffix) ? host.slice(0, -suffix.length) : host;
+      out.push({ stack: s.name, stackTitle: title, host, target });
+    }
+  }
+  return out.sort((a, b) => a.stackTitle.localeCompare(b.stackTitle) || a.host.localeCompare(b.host));
+}

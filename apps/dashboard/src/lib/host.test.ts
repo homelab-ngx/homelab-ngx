@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import {
+  approvedStackTargets,
   changed,
   dashboardHost,
   ddnsName,
+  inZone,
+  isDashboardTarget,
   lanAddress,
+  loginMinutesLeft,
   loginServerProblem,
   peerConfig,
+  routePill,
+  shortTunnelId,
   splitList,
   subnetChoices,
   subnetProblem,
@@ -14,6 +20,7 @@ import {
   tailscalePending,
   tailscalePendingMessage,
   tailscaleState,
+  tunnelPill,
   type HostSettings,
   type TailscaleStatus,
 } from "./host.ts";
@@ -124,5 +131,34 @@ describe("host settings", () => {
   it("sees a change", () => {
     expect(changed({ a: [1] }, { a: [1] })).toBe(false);
     expect(changed({ a: [1] }, { a: [2] })).toBe(true);
+  });
+  it("maps tunnel and route states to pills", () => {
+    expect(tunnelPill(undefined, { state: "waiting" }, false, false)).toEqual({ tone: "info", word: "connecting" });
+    expect(tunnelPill({ state: "connected", connections: 4, want: 4, colos: [], recent_errors: [], routes: [] }, undefined, true, true)).toEqual({ tone: "ok", word: "connected" });
+    expect(tunnelPill({ state: "degraded", connections: 2, want: 4, colos: [], recent_errors: [], routes: [] }, undefined, true, true)).toEqual({ tone: "warn", word: "degraded" });
+    expect(tunnelPill({ state: "down", connections: 0, want: 4, colos: [], recent_errors: [], routes: [] }, undefined, true, true)).toEqual({ tone: "bad", word: "down" });
+    expect(tunnelPill(undefined, undefined, false, true)).toEqual({ tone: "idle", word: "off" });
+
+    expect(routePill({ hostname: "a", target: "t", public: false, dns: "failed", protection: "unreachable" }, true)).toEqual({ tone: "bad", word: "dns failed" });
+    expect(routePill({ hostname: "a", target: "t", public: false, dns: "added", protection: "open" }, true)).toEqual({ tone: "warn", word: "open" });
+    expect(routePill({ hostname: "a", target: "t", public: true, dns: "added", protection: "public" }, true)).toEqual({ tone: "ok", word: "public" });
+    expect(routePill({ hostname: "a", target: "t", public: false, dns: "added", protection: "protected", no_target: true }, true)).toEqual({ tone: "warn", word: "no target" });
+    expect(routePill({ hostname: "a", target: "t", public: false, dns: "added", protection: "protected" }, true)).toEqual({ tone: "ok", word: "protected" });
+    expect(routePill({ hostname: "a", target: "t", public: false, dns: "added", protection: "not-served" }, true)).toEqual({ tone: "idle", word: "not served" });
+  });
+  it("checks tunnel zones, dashboard targets, and approved stack routes", () => {
+    expect(shortTunnelId("6f1c1234-5678-90ab-cdef-12345678e2a0")).toBe("6f1c…e2a0");
+    expect(inZone("photos.example.net", "example.net")).toBe(true);
+    expect(inZone("example.net", "example.net")).toBe(true);
+    expect(inZone("photos.other.org", "example.net")).toBe(false);
+    expect(isDashboardTarget("homelab", { domain: "home.example", dashboard_label: "" })).toBe(true);
+    expect(isDashboardTarget("homelab.home.example", { domain: "home.example", dashboard_label: "" })).toBe(true);
+    expect(isDashboardTarget("photos", { domain: "home.example", dashboard_label: "" })).toBe(false);
+    expect(loginMinutesLeft("2026-11-27T08:10:00Z", Date.parse("2026-11-27T08:01:30Z"))).toBe(9);
+    const opts = approvedStackTargets(
+      [{ name: "immich", label: "Photos", approved: { manifest: { routes: [{ host: "photos.home.example", port: 2283 }] } } }] as never,
+      { domain: "home.example", dashboard_label: "homelab" },
+    );
+    expect(opts).toEqual([{ stack: "immich", stackTitle: "Photos", host: "photos.home.example", target: "photos" }]);
   });
 });
