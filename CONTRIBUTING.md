@@ -39,6 +39,9 @@ x86_64 Linux and on Apple silicon Macs; the image builds only on Linux.
   `make verify` runs all of them.
 - `make image-check` boots the image in VMs and checks it end to end. Run it
   for anything that changes the image or the daemon's start.
+- `image/build.sh` reads Arch snapshot packages from `https://dl.homelab-ngx.com/arch`
+  (`HOMELAB_ARCH_MIRROR`) with fallback to `archive.archlinux.org`; `scripts/sync-arch-mirror`
+  populates the mirror.
 - `scripts/run -- <cmd>` runs a long command and keeps its full output in a
   log under `~/.local/state/homelab/runs/`.
 - `make image` and `make image-check` are heavy. `scripts/builder <target>`

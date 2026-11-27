@@ -20,6 +20,7 @@
 #   /versions                                     published versions, oldest first
 #   /latest                                       the newest version
 #   /changelog.json                               short changelogs of recent releases, for the dashboard
+#   /arch/                                        mirrored Arch bootstrap, repo DBs and packages
 #   /installer                                    a 302 to the newest installer
 # /<version>/ never changes once published (the CDN keeps it a year);
 # /changelog.json, /versions and /latest change last, so a host never sees a

@@ -1,0 +1,544 @@
+#!/usr/bin/env python3
+"""Mirror the pinned Arch Linux snapshot bootstrap, DBs, and packages to B2.
+
+Modes:
+  scripts/sync-arch-mirror --resolve [--manifest URL_OR_PATH]
+      Resolve the transitive closure of image/build.sh + image/base/mkosi.conf
+      packages against archive.archlinux.org and upload anything missing from
+      RELEASE_URL/arch/ to RELEASE_B2_BUCKET.
+
+  scripts/sync-arch-mirror --from-cache CACHE_DIR
+      Inspect a populated /var/cache/homelab-image tree and upload any DBs,
+      bootstrap tarball, or packages missing from RELEASE_URL/arch/.
+"""
+
+from __future__ import annotations
+
+import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import hashlib
+import io
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.error
+import urllib.request
+
+ARCH = "x86_64"
+REPOS = ("core", "extra")
+UPSTREAM = "https://archive.archlinux.org"
+DEFAULT_BUCKET = "homelab-ngx-release"
+DEFAULT_RELEASE_URL = "https://dl.homelab-ngx.com"
+
+
+def repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
+def read_mkosi_config(path: Path) -> tuple[str, list[str]]:
+    snapshot = ""
+    seeds: list[str] = []
+    section_key = ""
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        if line.startswith("[") and line.strip().endswith("]"):
+            section_key = ""
+            continue
+        if "=" in line and not raw[0].isspace():
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip()
+            section_key = k
+            if k == "Snapshot":
+                snapshot = v
+            elif k in ("Packages", "BuildPackages") and v:
+                seeds.extend(v.split())
+        elif section_key in ("Packages", "BuildPackages"):
+            seeds.extend(line.strip().split())
+    if not snapshot:
+        raise RuntimeError(f"Snapshot= not found in {path}")
+    return snapshot, seeds
+
+
+def read_build_config(path: Path) -> tuple[str, str, list[str]]:
+    text = path.read_text(encoding="utf-8")
+    m_date = re.search(r"^bootstrap_date=([^\s#]+)", text, re.M)
+    m_sha = re.search(r"^bootstrap_sha256=([0-9a-f]{64})", text, re.M)
+    if not m_date or not m_sha:
+        raise RuntimeError(f"bootstrap_date/bootstrap_sha256 not found in {path}")
+    # Extract packages from the buildroot `pacman -Syu --noconfirm --needed ...` call.
+    tools: list[str] = []
+    m_pac = re.search(r"pacman\s+-Syu\s+--noconfirm\s+--needed\s+([^'\n]+)", text)
+    if m_pac:
+        for tok in m_pac.group(1).split():
+            if tok.startswith(">") or tok.startswith("<") or tok.startswith("="):
+                continue
+            tools.append(tok)
+    return m_date.group(1), m_sha.group(1), tools
+
+
+def read_manifest_packages(src: str) -> list[str]:
+    if src.startswith(("http://", "https://")):
+        data = download_bytes(src)
+        doc = json.loads(data.decode("utf-8"))
+    else:
+        doc = json.loads(Path(src).read_text(encoding="utf-8"))
+    return [p["name"] for p in doc.get("packages", []) if p.get("name")]
+
+
+def curl_fetch(url: str, dest: Path) -> None:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "curl",
+            "-fsSL",
+            "--connect-timeout",
+            "30",
+            "--max-time",
+            "300",
+            "--retry",
+            "8",
+            "--retry-all-errors",
+            "--retry-delay",
+            "5",
+            "-o",
+            str(dest),
+            url,
+        ],
+        check=True,
+    )
+
+
+def download_bytes(url: str) -> bytes:
+    with tempfile.TemporaryDirectory() as tmp:
+        p = Path(tmp) / "dl"
+        curl_fetch(url, p)
+        return p.read_bytes()
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        while chunk := f.read(1 << 20):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def open_tar_any(path: Path) -> tarfile.TarFile:
+    magic = path.read_bytes()[:4]
+    if magic == b"\x28\xb5\x2f\xfd":
+        res = subprocess.run(["zstd", "-dq", "-c", str(path)], check=True, capture_output=True)
+        return tarfile.open(fileobj=io.BytesIO(res.stdout), mode="r:")
+    return tarfile.open(path, mode="r:*")
+
+
+def parse_desc_text(text: str, out: dict[str, list[str]]) -> None:
+    key = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            key = ""
+        elif line.startswith("%") and line.endswith("%"):
+            key = line[1:-1]
+            out.setdefault(key, [])
+        elif key:
+            out.setdefault(key, []).append(line)
+
+
+def strip_ver(spec: str) -> str:
+    return re.split(r"[<>=]", spec, maxsplit=1)[0].strip()
+
+
+def parse_repo_db(repo: str, db_path: Path) -> dict[str, dict]:
+    entries: dict[str, dict[str, list[str]]] = {}
+    with open_tar_any(db_path) as tf:
+        for member in tf:
+            if not member.isfile():
+                continue
+            parts = member.name.split("/")
+            if len(parts) != 2 or parts[1] not in ("desc", "depends"):
+                continue
+            f = tf.extractfile(member)
+            if f is None:
+                continue
+            parse_desc_text(f.read().decode("utf-8", errors="replace"), entries.setdefault(parts[0], {}))
+    pkgs: dict[str, dict] = {}
+    for fields in entries.values():
+        names = fields.get("NAME") or []
+        fnames = fields.get("FILENAME") or []
+        if not names or not fnames:
+            continue
+        name = names[0]
+        pkgs[name] = {
+            "name": name,
+            "repo": repo,
+            "filename": fnames[0],
+            "sha256": (fields.get("SHA256SUM") or [""])[0],
+            "depends": [strip_ver(d) for d in fields.get("DEPENDS", []) if strip_ver(d)],
+            "provides": [strip_ver(p) for p in fields.get("PROVIDES", []) if strip_ver(p)],
+            "groups": [g for g in fields.get("GROUPS", []) if g],
+        }
+    return pkgs
+
+
+def bootstrap_installed(tarball: Path) -> list[str]:
+    names: list[str] = []
+    proc = subprocess.Popen(["zstd", "-dq", "-c", str(tarball)], stdout=subprocess.PIPE)
+    assert proc.stdout is not None
+    try:
+        with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
+            for member in tf:
+                if not member.isfile():
+                    continue
+                if member.name.endswith("/desc") and "/var/lib/pacman/local/" in member.name:
+                    f = tf.extractfile(member)
+                    if f is None:
+                        continue
+                    fields: dict[str, list[str]] = {}
+                    parse_desc_text(f.read().decode("utf-8", errors="replace"), fields)
+                    if fields.get("NAME"):
+                        names.append(fields["NAME"][0])
+    finally:
+        proc.stdout.close()
+        rc = proc.wait()
+        if rc != 0:
+            raise RuntimeError(f"zstd exited with {rc} reading {tarball}")
+    return names
+
+
+def resolve_closure(repo_pkgs: dict[str, dict], seeds: list[str]) -> list[dict]:
+    by_name: dict[str, dict] = {}
+    groups: dict[str, list[str]] = {}
+    provides: dict[str, list[str]] = {}
+    # REPOS order ensures core beats extra if names ever overlap.
+    for repo in REPOS:
+        for name, pkg in repo_pkgs[repo].items():
+            by_name.setdefault(name, pkg)
+            for g in pkg["groups"]:
+                groups.setdefault(g, []).append(name)
+            for p in pkg["provides"]:
+                provides.setdefault(p, []).append(name)
+
+    selected: dict[str, dict] = {}
+    queue: list[str] = list(seeds)
+    # Seed explicit names first so provides resolution prefers already-chosen providers.
+    explicit_first: list[str] = []
+    deferred: list[str] = []
+    for s in queue:
+        if s in by_name:
+            explicit_first.append(s)
+        else:
+            deferred.append(s)
+    queue = explicit_first + deferred
+
+    def pick_provider(dep: str) -> str | None:
+        if dep in by_name:
+            return dep
+        cands = provides.get(dep, [])
+        if not cands:
+            return None
+        for c in cands:
+            if c in selected:
+                return c
+        # Prefer core repo, then lexicographically first canonical name.
+        repo_rank = {r: i for i, r in enumerate(REPOS)}
+        ranked = sorted(set(cands), key=lambda c: (repo_rank.get(by_name[c]["repo"], 99), c))
+        return ranked[0]
+
+    while queue:
+        item = queue.pop(0).strip()
+        if not item:
+            continue
+        if item in by_name and item not in selected:
+            pkg = by_name[item]
+            selected[item] = pkg
+            queue.extend(pkg["depends"])
+            # If the seed matches a group too (such as base), enqueue group members.
+            if item in groups:
+                queue.extend(groups[item])
+            continue
+        if item in groups:
+            for member in groups[item]:
+                if member not in selected:
+                    queue.append(member)
+            continue
+        prov = pick_provider(item)
+        if prov:
+            if prov not in selected:
+                pkg = by_name[prov]
+                selected[prov] = pkg
+                queue.extend(pkg["depends"])
+            continue
+        print(f"sync-arch-mirror: warning: unresolved dependency '{item}'", file=sys.stderr)
+
+    return [selected[k] for k in sorted(selected)]
+
+
+def remote_exists(url: str) -> bool:
+    for attempt in range(3):
+        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "homelab-ngx-sync/1.0"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return resp.status == 200
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return False
+            if attempt < 2 and e.code in (408, 429, 500, 502, 503, 504):
+                continue
+            raise
+        except urllib.error.URLError:
+            if attempt < 2:
+                continue
+            raise
+    return False
+
+
+def filter_missing(items: list[tuple[str, object]], release_url: str) -> list[tuple[str, object]]:
+    base = release_url.rstrip("/")
+    missing: list[tuple[str, object]] = []
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        futs = {pool.submit(remote_exists, f"{base}/{remote}"): (remote, meta) for remote, meta in items}
+        for fut in as_completed(futs):
+            remote, meta = futs[fut]
+            if not fut.result():
+                missing.append((remote, meta))
+    missing.sort(key=lambda x: x[0])
+    return missing
+
+
+def run_b2(root: Path, b2_bin: str, args: list[str]) -> None:
+    retry = root / ".github" / "scripts" / "b2-retry"
+    cmd = ([str(retry), b2_bin] if retry.is_file() else [b2_bin]) + args
+    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
+
+
+def upload_files(root: Path, b2_bin: str, bucket: str, files: list[tuple[Path, str]]) -> None:
+    if not files:
+        print("arch mirror: up to date")
+        return
+    # Backblaze B2's Friendly URL server decodes unescaped '+' in URL paths as ' '.
+    # pacman requests literal '+', so upload a space-named alias alongside the exact key.
+    seen: set[str] = set()
+    targets: list[tuple[Path, str]] = []
+    for local, remote in files:
+        for key in (remote, remote.replace("+", " ")):
+            if key not in seen:
+                seen.add(key)
+                targets.append((local, key))
+    print(f"arch mirror: uploading {len(targets)} missing files to b2://{bucket}/")
+    run_b2(root, b2_bin, ["account", "authorize"])
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futs = [
+            pool.submit(
+                run_b2,
+                root,
+                b2_bin,
+                [
+                    "file",
+                    "upload",
+                    "--no-progress",
+                    "--content-type",
+                    "application/octet-stream",
+                    bucket,
+                    str(local),
+                    remote,
+                ],
+            )
+            for local, remote in targets
+        ]
+        for fut in as_completed(futs):
+            fut.result()
+    print(f"arch mirror: uploaded {len(targets)} files")
+
+
+def find_first(root_dir: Path, filename: str) -> Path | None:
+    for dirpath, dirnames, filenames in os.walk(root_dir, onerror=lambda _e: None):
+        # Prune inaccessible subdirs cleanly while scanning root-owned cache trees.
+        dirnames[:] = [d for d in dirnames if os.access(Path(dirpath) / d, os.R_OK | os.X_OK)]
+        if filename in filenames:
+            p = Path(dirpath) / filename
+            if os.access(p, os.R_OK):
+                return p
+    return None
+
+
+def sync_from_resolve(args: argparse.Namespace, root: Path, snapshot: str, bootstrap_date: str, bootstrap_sha: str, mkosi_seeds: list[str], build_tools: list[str]) -> int:
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        iso_rel = f"arch/iso/{bootstrap_date}/archlinux-bootstrap-{bootstrap_date}-{ARCH}.tar.zst"
+        tarball = tmp / f"archlinux-bootstrap-{bootstrap_date}-{ARCH}.tar.zst"
+        print(f"sync-arch-mirror: fetching bootstrap {bootstrap_date} and {snapshot} repo DBs...")
+        curl_fetch(f"{UPSTREAM}/iso/{bootstrap_date}/{tarball.name}", tarball)
+        if sha256_file(tarball) != bootstrap_sha:
+            raise RuntimeError(f"bootstrap tarball sha256 mismatch for {tarball.name}")
+
+        repo_pkgs: dict[str, dict] = {}
+        db_paths: dict[str, Path] = {}
+        for repo in REPOS:
+            db_path = tmp / f"{repo}.db"
+            curl_fetch(f"{UPSTREAM}/repos/{snapshot}/{repo}/os/{ARCH}/{repo}.db", db_path)
+            db_paths[repo] = db_path
+            repo_pkgs[repo] = parse_repo_db(repo, db_path)
+
+        seeds = [
+            *bootstrap_installed(tarball),
+            *build_tools,
+            *mkosi_seeds,
+            "archlinux-keyring",
+            "filesystem",
+            "systemd-ukify",
+            "base",
+        ]
+        for m in args.manifest:
+            seeds.extend(read_manifest_packages(m))
+
+        selected = resolve_closure(repo_pkgs, seeds)
+        print(f"sync-arch-mirror: resolved {len(selected)} packages for snapshot {snapshot}")
+
+        desired: list[tuple[str, dict]] = [(iso_rel, {"kind": "local", "path": tarball})]
+        for repo in REPOS:
+            desired.append((f"arch/repos/{snapshot}/{repo}/os/{ARCH}/{repo}.db", {"kind": "local", "path": db_paths[repo]}))
+        for pkg in selected:
+            base = f"arch/repos/{snapshot}/{pkg['repo']}/os/{ARCH}/{pkg['filename']}"
+            desired.append((base, {"kind": "pkg", "sha256": pkg["sha256"], "upstream": f"{UPSTREAM}/repos/{snapshot}/{pkg['repo']}/os/{ARCH}/{pkg['filename']}"}))
+            desired.append((base + ".sig", {"kind": "sig", "upstream": f"{UPSTREAM}/repos/{snapshot}/{pkg['repo']}/os/{ARCH}/{pkg['filename']}.sig"}))
+
+        missing = filter_missing(desired, args.release_url)
+        print(f"sync-arch-mirror: {len(missing)}/{len(desired)} files missing on {args.release_url}")
+        if args.dry_run or not missing:
+            return 0
+
+        to_upload: list[tuple[Path, str]] = []
+        dl_dir = tmp / "dl"
+        for remote, meta in missing:
+            m = meta  # type: ignore[assignment]
+            if m["kind"] == "local":
+                to_upload.append((m["path"], remote))
+        fetch_items = [(remote, meta) for remote, meta in missing if meta["kind"] != "local"]  # type: ignore[index]
+
+        def download_one(remote: str, meta: dict) -> tuple[Path, str]:
+            dest = dl_dir / remote
+            curl_fetch(meta["upstream"], dest)
+            if meta["kind"] == "pkg" and meta.get("sha256") and sha256_file(dest) != meta["sha256"]:
+                raise RuntimeError(f"sha256 mismatch for {remote}")
+            return dest, remote
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futs = [pool.submit(download_one, remote, meta) for remote, meta in fetch_items]  # type: ignore[arg-type]
+            for fut in as_completed(futs):
+                to_upload.append(fut.result())
+
+        upload_files(root, args.b2, args.bucket, to_upload)
+        return 0
+
+
+def sync_from_cache(args: argparse.Namespace, root: Path, snapshot: str, bootstrap_date: str, bootstrap_sha: str) -> int:
+    cache_dir = Path(args.from_cache)
+    if not cache_dir.is_dir():
+        print(f"arch mirror: cache dir {cache_dir} does not exist", file=sys.stderr)
+        return 1
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmp = Path(tmpdir)
+        repo_pkgs: dict[str, dict] = {}
+        local_dbs: dict[str, Path] = {}
+        for repo in REPOS:
+            db_path = find_first(cache_dir, f"{repo}.db")
+            if db_path is None:
+                db_path = tmp / f"{repo}.db"
+                curl_fetch(f"{UPSTREAM}/repos/{snapshot}/{repo}/os/{ARCH}/{repo}.db", db_path)
+            local_dbs[repo] = db_path
+            repo_pkgs[repo] = parse_repo_db(repo, db_path)
+
+        by_filename: dict[str, tuple[str, str]] = {}
+        for repo in REPOS:
+            for pkg in repo_pkgs[repo].values():
+                by_filename[pkg["filename"]] = (repo, pkg["sha256"])
+
+        desired: dict[str, tuple[Path, str]] = {}
+        iso_name = f"archlinux-bootstrap-{bootstrap_date}-{ARCH}.tar.zst"
+        iso_path = find_first(cache_dir, iso_name)
+        if iso_path is not None:
+            desired[f"arch/iso/{bootstrap_date}/{iso_name}"] = (iso_path, bootstrap_sha)
+
+        for repo in REPOS:
+            desired[f"arch/repos/{snapshot}/{repo}/os/{ARCH}/{repo}.db"] = (local_dbs[repo], "")
+
+        pkg_paths: dict[str, Path] = {}
+        sig_paths: dict[str, Path] = {}
+        for dirpath, dirnames, filenames in os.walk(cache_dir, onerror=lambda _e: None):
+            dirnames[:] = [d for d in dirnames if os.access(Path(dirpath) / d, os.R_OK | os.X_OK)]
+            for fn in filenames:
+                p = Path(dirpath) / fn
+                if not os.access(p, os.R_OK):
+                    continue
+                if fn.endswith(".pkg.tar.zst"):
+                    pkg_paths.setdefault(fn, p)
+                elif fn.endswith(".pkg.tar.zst.sig"):
+                    sig_paths.setdefault(fn, p)
+
+        for fn, p in pkg_paths.items():
+            info = by_filename.get(fn)
+            if info is None:
+                continue
+            repo, expected_sha = info
+            base = f"arch/repos/{snapshot}/{repo}/os/{ARCH}/{fn}"
+            desired[base] = (p, expected_sha)
+            sig_local = sig_paths.get(fn + ".sig")
+            desired[base + ".sig"] = (sig_local if sig_local is not None else Path(), "")
+
+        missing = filter_missing([(k, v) for k, v in desired.items()], args.release_url)
+        print(f"sync-arch-mirror: {len(missing)}/{len(desired)} cached files missing on {args.release_url}")
+        if args.dry_run or not missing:
+            return 0
+
+        to_upload: list[tuple[Path, str]] = []
+        dl_dir = tmp / "sigs"
+        for remote, meta in missing:
+            local, expected_sha = meta  # type: ignore[misc]
+            if str(local) != "." and local.is_file():
+                if expected_sha and sha256_file(local) != expected_sha:
+                    raise RuntimeError(f"cached sha256 mismatch for {local}")
+                to_upload.append((local, remote))
+            else:
+                # Fetch missing .sig from archive.archlinux.org if pacman did not save it separately.
+                rel_repo = remote[len("arch/") :]
+                dest = dl_dir / remote
+                curl_fetch(f"{UPSTREAM}/{rel_repo}", dest)
+                to_upload.append((dest, remote))
+
+        upload_files(root, args.b2, args.bucket, to_upload)
+        return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Mirror Arch snapshot packages to Backblaze B2 for image builds.")
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--resolve", action="store_true", help="Resolve full dependency closure from mkosi.conf and build.sh.")
+    g.add_argument("--from-cache", metavar="DIR", help="Upload packages and DBs found under an image cache directory.")
+    ap.add_argument("--manifest", action="append", default=[], help="Extra image manifest URL or path for --resolve.")
+    ap.add_argument("--bucket", default=os.environ.get("RELEASE_B2_BUCKET", DEFAULT_BUCKET))
+    ap.add_argument("--release-url", default=os.environ.get("RELEASE_URL", DEFAULT_RELEASE_URL))
+    ap.add_argument("--b2", default=os.environ.get("B2_BIN") or shutil.which("backblaze-b2") or "backblaze-b2")
+    ap.add_argument("--dry-run", action="store_true")
+    args = ap.parse_args()
+
+    root = repo_root()
+    snapshot, mkosi_seeds = read_mkosi_config(root / "image" / "base" / "mkosi.conf")
+    bootstrap_date, bootstrap_sha, build_tools = read_build_config(root / "image" / "build.sh")
+
+    if args.resolve:
+        return sync_from_resolve(args, root, snapshot, bootstrap_date, bootstrap_sha, mkosi_seeds, build_tools)
+    return sync_from_cache(args, root, snapshot, bootstrap_date, bootstrap_sha)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

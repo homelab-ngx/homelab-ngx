@@ -51,6 +51,10 @@ snapshot=$(sed -n 's/^Snapshot=//p' "$here/base/mkosi.conf")
 bootstrap_date=2026.11.01
 bootstrap_sha256=655bc99849b80859173fa39338a6c910185e952173f6a1a61526cfa34ab8339c
 
+arch_upstream=https://archive.archlinux.org
+arch_mirror=${HOMELAB_ARCH_MIRROR:-https://dl.homelab-ngx.com/arch}
+arch_mirror=${arch_mirror%/}
+
 buildroot=$cache/buildroot-${snapshot//\//-}
 # mkosi's package cache and, for updates, its incremental cache, both for
 # this snapshot only.
@@ -66,13 +70,22 @@ if ! $sudo test -e "$buildroot/.ready"; then
   $sudo mkdir -p "$cache"
   tarball=$cache/archlinux-bootstrap-$bootstrap_date-x86_64.tar.zst
   if ! $sudo test -e "$tarball"; then
-    $sudo curl -sSfL -o "$tarball" "https://archive.archlinux.org/iso/$bootstrap_date/archlinux-bootstrap-$bootstrap_date-x86_64.tar.zst"
+    iso_path=iso/$bootstrap_date/archlinux-bootstrap-$bootstrap_date-x86_64.tar.zst
+    if ! $sudo curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 --retry-delay 5 -o "$tarball" "$arch_mirror/$iso_path"; then
+      $sudo rm -f "$tarball"
+      [ "$arch_mirror" != "$arch_upstream" ] || exit 1
+      echo "bootstrap not on $arch_mirror; falling back to $arch_upstream" >&2
+      $sudo curl -fsSL --connect-timeout 30 --max-time 300 --retry 3 --retry-delay 5 -o "$tarball" "$arch_upstream/$iso_path"
+    fi
   fi
   echo "$bootstrap_sha256  $tarball" | sha256sum -c --quiet
   $sudo rm -rf "$buildroot.tmp"
   $sudo mkdir -p "$buildroot.tmp"
   $sudo tar --numeric-owner --zstd -xpf "$tarball" -C "$buildroot.tmp" --strip-components=1 2> >(grep -v 'unknown extended header' >&2)
-  echo "Server = https://archive.archlinux.org/repos/$snapshot/\$repo/os/\$arch" | $sudo tee "$buildroot.tmp/etc/pacman.d/mirrorlist" >/dev/null
+  {
+    [ "$arch_mirror" = "$arch_upstream" ] || echo "Server = $arch_mirror/repos/$snapshot/\$repo/os/\$arch"
+    echo "Server = $arch_upstream/repos/$snapshot/\$repo/os/\$arch"
+  } | $sudo tee "$buildroot.tmp/etc/pacman.d/mirrorlist" >/dev/null
   $sudo mv "$buildroot.tmp" "$buildroot"
   nspawn /usr/bin/bash -c 'pacman-key --init >/dev/null 2>&1 && pacman-key --populate archlinux >/dev/null 2>&1 &&
     pacman -Syu --noconfirm --needed mkosi systemd-ukify dosfstools mtools erofs-utils squashfs-tools cpio zstd xz openssl git >/dev/null'
@@ -111,21 +124,28 @@ work=$out/.mkosi-work
 # stalls now and then. The packages it did fetch stay in the package cache,
 # so another try fetches only the rest. Any other failure ends the build.
 log=$(mktemp)
-for try in 1 2 3; do
+mirror=$arch_mirror
+for try in 1 2 3 4; do
   $sudo rm -rf "$work"
   mkdir -p "$work"
   if nspawn --bind="$here:/work" --bind="$out:/out" --bind="$mkcache:/cache" --chdir=/work/base \
-    /usr/bin/mkosi --image-version "$version" --output-directory /out --workspace-directory /out/.mkosi-work \
+    /usr/bin/mkosi --mirror "$mirror" --image-version "$version" --output-directory /out --workspace-directory /out/.mkosi-work \
     --cache-directory /cache/images --package-cache-dir /cache/packages \
     ${update:+--incremental=yes} --extra-tree=/out/var-tree:/ --force build 2>&1 | tee "$log"; then
     break
   fi
-  if [ "$try" = 3 ] || ! grep -q 'failed retrieving file' "$log"; then
+  if [ "$try" = 4 ] || ! grep -q 'failed retrieving file' "$log"; then
     rm -f "$log"
     exit 1
   fi
-  wait=$((try * 15))
-  echo "a package download failed (try $try of 3); waiting ${wait}s before trying again"
+  if [ "$mirror" != "$arch_upstream" ]; then
+    echo "mirror $mirror failed to serve a file; falling back to $arch_upstream"
+    mirror=$arch_upstream
+    continue
+  fi
+  wait=$(((try - 1) * 15))
+  [ "$wait" -gt 0 ] || wait=15
+  echo "a package download failed (try $try of 4); waiting ${wait}s before trying again"
   sleep "$wait"
 done
 rm -f "$log"

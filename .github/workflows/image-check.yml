@@ -8,7 +8,8 @@
 # main.
 #
 # It signs SHA256SUMS with the release key and authorizes the B2 key, so a
-# release's credentials are proven too, and publishes nothing.
+# release's credentials are proven too, and publishes no release; runs on
+# main upload any missing Arch snapshot packages to /arch/ in the release bucket.
 #
 # Its runs on main fill the build caches every release reads
 # (.github/actions/image-env): a cache saved on a tag is seen by that tag
@@ -104,6 +105,15 @@ jobs:
       - name: make image
         id: image
         run: make image VERSION="$VERSION"
+
+      - name: Sync Arch mirror
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.image.outcome == 'success' }}
+        env:
+          B2_APPLICATION_KEY_ID: ${{ secrets.RELEASE_B2_KEY_ID }}
+          B2_APPLICATION_KEY: ${{ secrets.RELEASE_B2_KEY }}
+        run: |
+          b2=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#backblaze-b2)/bin/backblaze-b2
+          B2_BIN="$b2" scripts/sync-arch-mirror --from-cache /var/cache/homelab-image
 
       # The check only installs and breaks this one: a copy of the build
       # with a root hash of its own (image/variant.sh), not a second build.
