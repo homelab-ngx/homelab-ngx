@@ -14,7 +14,15 @@
   let { image, releases, loading = false }: Props = $props();
   const id = $props.id();
 
+  let earlierOpen = $state(false);
+  let earlierEl = $state<HTMLDivElement>();
+
   const split = $derived(splitChangelog(releases, image));
+
+  function collapseEarlier() {
+    earlierOpen = false;
+    earlierEl?.scrollIntoView?.({ block: "nearest" });
+  }
 </script>
 
 {#snippet releaseBlock(r: ReleaseNote)}
@@ -34,9 +42,14 @@
     <h2 id="{id}-h" class="font-semibold">
       <Help label="Changelog">Short list of user-facing changes for each release. Full notes and package diffs are on GitHub.</Help>
     </h2>
-    {#if releases.length > 0}
-      <span class="text-xs text-muted tabular-nums">{releases.length} {releases.length === 1 ? "release" : "releases"}</span>
-    {/if}
+    <div class="flex items-center gap-2">
+      {#if releases.length > 0}
+        <span class="text-xs text-muted tabular-nums">{releases.length} {releases.length === 1 ? "release" : "releases"}</span>
+      {/if}
+      {#if earlierOpen}
+        <button type="button" class="btn btn-sm" onclick={collapseEarlier}>Collapse</button>
+      {/if}
+    </div>
   </div>
 
   {#if loading && releases.length === 0}
@@ -50,17 +63,22 @@
       {/each}
     </div>
     {#if split.earlier.length > 0}
-      <div class="mt-3 border-t border-line pt-3">
+      <div bind:this={earlierEl} class="mt-3 border-t border-line pt-3">
         <Disclosure
           label="Earlier releases"
           summary="{split.earlier.length} {split.earlier.length === 1 ? 'version' : 'versions'}"
-          remember="updates-changelog-earlier"
+          bind:open={earlierOpen}
         >
           <div class="divide-y divide-line">
             {#each split.earlier as r (r.version)}
               {@render releaseBlock(r)}
             {/each}
           </div>
+          {#if earlierOpen}
+            <div class="mt-3 flex justify-end border-t border-line pt-3">
+              <button type="button" class="btn btn-sm" onclick={collapseEarlier}>Collapse</button>
+            </div>
+          {/if}
         </Disclosure>
       </div>
     {/if}

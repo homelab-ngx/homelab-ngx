@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from "@testing-library/svelte";
+import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
 import { afterEach, describe, expect, it } from "vitest";
 import ChangelogCard from "./ChangelogCard.svelte";
 import type { ReleaseNote } from "./changelog.ts";
@@ -37,7 +37,10 @@ const releases: ReleaseNote[] = [
   },
 ];
 
-afterEach(() => cleanup());
+afterEach(() => {
+  localStorage.clear();
+  cleanup();
+});
 
 describe("ChangelogCard", () => {
   it("shows empty copy when no changelog is loaded", () => {
@@ -68,5 +71,47 @@ describe("ChangelogCard", () => {
     expect(screen.getByText("preview backup changes before copying")).toBeTruthy();
     expect(screen.getByText("running")).toBeTruthy();
     expect(screen.getByText("1 version")).toBeTruthy();
+  });
+
+  it("starts collapsed even when a legacy fold key is stored in localStorage", () => {
+    localStorage.setItem("homelab-fold:updates-changelog-earlier", "1");
+    const { container } = render(ChangelogCard, {
+      props: {
+        image: img({ available: ["0.4.6"], release: { url: "", latest: "0.4.6", checked_at: null } }),
+        releases,
+      },
+    });
+    const details = container.querySelector("details");
+    expect(details?.open).toBe(false);
+    expect(screen.queryByRole("button", { name: "Collapse" })).toBeNull();
+  });
+
+  it("collapses earlier releases from both the header and bottom Collapse buttons", async () => {
+    const { container } = render(ChangelogCard, {
+      props: {
+        image: img({ available: ["0.4.6"], release: { url: "", latest: "0.4.6", checked_at: null } }),
+        releases,
+      },
+    });
+    const details = container.querySelector("details") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+
+    details.open = true;
+    await fireEvent(details, new Event("toggle"));
+    let buttons = screen.getAllByRole("button", { name: "Collapse" });
+    expect(buttons).toHaveLength(2);
+
+    await fireEvent.click(buttons[1]!);
+    expect(details.open).toBe(false);
+    expect(screen.queryByRole("button", { name: "Collapse" })).toBeNull();
+
+    details.open = true;
+    await fireEvent(details, new Event("toggle"));
+    buttons = screen.getAllByRole("button", { name: "Collapse" });
+    expect(buttons).toHaveLength(2);
+
+    await fireEvent.click(buttons[0]!);
+    expect(details.open).toBe(false);
+    expect(screen.queryByRole("button", { name: "Collapse" })).toBeNull();
   });
 });
