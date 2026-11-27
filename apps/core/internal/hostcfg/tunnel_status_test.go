@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -297,4 +298,397 @@ func TestTunnelStatusAndRecheckAndRestart(t *testing.T) {
 	if st, err := s.RecheckTunnelRoute(ctx, "photos.example.net"); err != nil || st.Routes[0].Protection != RouteProtectionPublic {
 		t.Fatalf("recheck photos = %+v, err=%v", st, err)
 	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestRunTunnelProbeWaitsForCloudflaredReady(t *testing.T) {
+	s, _, _ := newService(t)
+	s.tunnelProbe.every = time.Hour
+	s.tunnelProbe.settle = 0
+	s.tunnelProbe.readyWait = 2 * time.Second
+	s.tunnelProbe.readyPoll = 2 * time.Millisecond
+
+	ctx := context.Background()
+	if err := s.storeTunnel(ctx, creds, "cert-body", "homelab", "example.net"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetTunnel(ctx, TunnelSet{
+		Enabled: true,
+		Routes:  []Route{{Hostname: "photos.example.net", Target: "photos", Public: true}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Drain the kick queued by SetTunnel so only the explicit kick below runs a second cycle.
+	select {
+	case <-s.tunnelProbe.kick:
+	default:
+	}
+
+	var fetchCalls atomic.Int32
+	var ready atomic.Bool
+	s.tunnelProbe.fetchStats = func(context.Context, string) (cloudflare.TunnelStats, error) {
+		n := fetchCalls.Add(1)
+		if !ready.Load() {
+			if n <= 2 {
+				return cloudflare.TunnelStats{}, errors.New("connection refused")
+			}
+			if n == 3 {
+				return cloudflare.TunnelStats{Ready: false, ReadyConnections: 0}, nil
+			}
+			ready.Store(true)
+		}
+		return cloudflare.TunnelStats{Ready: true, ReadyConnections: 4}, nil
+	}
+
+	type probeEvent struct {
+		callsAtProbe int32
+	}
+	probed := make(chan probeEvent, 4)
+	s.tunnelProbe.probeHosts = func(_ context.Context, hosts []string, allow map[string]string) []cloudflare.HostnameStatus {
+		probed <- probeEvent{callsAtProbe: fetchCalls.Load()}
+		return []cloudflare.HostnameStatus{{Hostname: hosts[0], Protection: cloudflare.Public, StatusCode: 200}}
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.RunTunnelProbe(runCtx)
+	}()
+
+	select {
+	case ev := <-probed:
+		if ev.callsAtProbe < 4 {
+			cancel()
+			<-done
+			t.Fatalf("probe ran after only %d fetchStats calls, want >= 4", ev.callsAtProbe)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("timed out waiting for initial probe")
+	}
+
+	if st := s.TunnelStatus(ctx); st.Routes[0].Protection != RouteProtectionPublic {
+		cancel()
+		<-done
+		t.Fatalf("route protection = %q, want public", st.Routes[0].Protection)
+	}
+
+	var kickCalls atomic.Int32
+	ready.Store(false)
+	s.tunnelProbe.fetchStats = func(context.Context, string) (cloudflare.TunnelStats, error) {
+		n := kickCalls.Add(1)
+		if n < 3 {
+			return cloudflare.TunnelStats{Ready: false, ReadyConnections: 0}, nil
+		}
+		return cloudflare.TunnelStats{Ready: true, ReadyConnections: 4}, nil
+	}
+	s.kickTunnelProbe(true)
+
+	select {
+	case <-probed:
+		if got := kickCalls.Load(); got < 3 {
+			cancel()
+			<-done
+			t.Fatalf("kicked probe ran after only %d fetchStats calls, want >= 3", got)
+		}
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("timed out waiting for kicked probe")
+	}
+
+	cancel()
+	<-done
+}
+
+func TestRunTunnelProbeProceedsWhenReadyTimesOut(t *testing.T) {
+	s, _, _ := newService(t)
+	s.tunnelProbe.every = time.Hour
+	s.tunnelProbe.settle = 0
+	s.tunnelProbe.readyWait = 25 * time.Millisecond
+	s.tunnelProbe.readyPoll = 5 * time.Millisecond
+
+	ctx := context.Background()
+	if err := s.storeTunnel(ctx, creds, "cert-body", "homelab", "example.net"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SetTunnel(ctx, TunnelSet{
+		Enabled: true,
+		Routes:  []Route{{Hostname: "photos.example.net", Target: "photos"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-s.tunnelProbe.kick:
+	default:
+	}
+
+	var fetchCalls atomic.Int32
+	s.tunnelProbe.fetchStats = func(context.Context, string) (cloudflare.TunnelStats, error) {
+		fetchCalls.Add(1)
+		return cloudflare.TunnelStats{}, errors.New("connection refused")
+	}
+	probed := make(chan struct{}, 2)
+	s.tunnelProbe.probeHosts = func(_ context.Context, hosts []string, _ map[string]string) []cloudflare.HostnameStatus {
+		select {
+		case probed <- struct{}{}:
+		default:
+		}
+		return []cloudflare.HostnameStatus{{Hostname: hosts[0], Protection: cloudflare.Unknown, Err: "dial failed"}}
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.RunTunnelProbe(runCtx)
+	}()
+
+	select {
+	case <-probed:
+	case <-time.After(2 * time.Second):
+		cancel()
+		<-done
+		t.Fatal("timed out waiting for probe after ready timeout")
+	}
+
+	cancel()
+	<-done
+
+	if fetchCalls.Load() == 0 {
+		t.Fatal("expected fetchStats to be polled before timeout")
+	}
+	if st := s.TunnelStatus(ctx); st.Routes[0].Protection != RouteProtectionUnreachable {
+		t.Fatalf("route protection = %q, want unreachable", st.Routes[0].Protection)
+	}
+}
+
+func TestRunTunnelProbeSkipsWaitWhenTunnelOff(t *testing.T) {
+	s, _, _ := newService(t)
+	s.tunnelProbe.every = time.Hour
+	s.tunnelProbe.settle = 0
+	s.tunnelProbe.readyWait = 5 * time.Second
+	s.tunnelProbe.readyPoll = 5 * time.Millisecond
+
+	var fetchCalls atomic.Int32
+	s.tunnelProbe.fetchStats = func(context.Context, string) (cloudflare.TunnelStats, error) {
+		fetchCalls.Add(1)
+		return cloudflare.TunnelStats{}, nil
+	}
+	var probeCalls atomic.Int32
+	s.tunnelProbe.probeHosts = func(_ context.Context, hosts []string, _ map[string]string) []cloudflare.HostnameStatus {
+		probeCalls.Add(1)
+		return nil
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		s.RunTunnelProbe(runCtx)
+	}()
+
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("RunTunnelProbe blocked while tunnel was off")
+	}
+	if fetchCalls.Load() != 0 {
+		t.Fatalf("fetchCalls = %d, want 0", fetchCalls.Load())
+	}
+	if probeCalls.Load() != 0 {
+		t.Fatalf("probeCalls = %d, want 0", probeCalls.Load())
+	}
+}
+
+func TestBackfillTunnelZoneRetriesTransientAndStopsOnPermanent(t *testing.T) {
+	ctx := context.Background()
+	id := tunnelID(creds)
+
+	// 1. Transient HTTP 503 retries and persists zone on 200, then stops calling API.
+	t.Run("transient 503 then 200", func(t *testing.T) {
+		var hits atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if hits.Add(1) == 1 {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = w.Write([]byte(`{"success":true,"result":{"name":"Example.Net"}}`))
+		}))
+		defer srv.Close()
+
+		s, _, _ := newService(t)
+		s.cfAPIBase = srv.URL
+		s.cfHTTP = srv.Client()
+		if err := s.storeTunnel(ctx, creds, testCertPEM("z123", "tok"), "homelab", ""); err != nil {
+			t.Fatal(err)
+		}
+
+		s.backfillTunnelZone(ctx)
+		if got, _ := s.Get(ctx); got.Tunnel.Zone != "" {
+			t.Fatalf("after 503 zone = %q, want empty", got.Tunnel.Zone)
+		}
+		s.zoneMu.Lock()
+		checked := s.zoneCheckedFor
+		s.zoneMu.Unlock()
+		if checked != "" {
+			t.Fatalf("after 503 zoneCheckedFor = %q, want empty", checked)
+		}
+
+		s.backfillTunnelZone(ctx)
+		if got, _ := s.Get(ctx); got.Tunnel.Zone != "example.net" {
+			t.Fatalf("after 200 zone = %q, want example.net", got.Tunnel.Zone)
+		}
+		s.zoneMu.Lock()
+		checked = s.zoneCheckedFor
+		s.zoneMu.Unlock()
+		if checked != id {
+			t.Fatalf("after 200 zoneCheckedFor = %q, want %q", checked, id)
+		}
+
+		s.backfillTunnelZone(ctx)
+		if hits.Load() != 2 {
+			t.Fatalf("hits = %d, want 2 (no extra API call after caching)", hits.Load())
+		}
+	})
+
+	// 2. Transient network error retries and succeeds on next call.
+	t.Run("transient network error then 200", func(t *testing.T) {
+		var hits atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = w.Write([]byte(`{"success":true,"result":{"name":"example.net"}}`))
+		}))
+		defer srv.Close()
+
+		s, _, _ := newService(t)
+		s.cfAPIBase = srv.URL
+		s.cfHTTP = &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				if hits.Add(1) == 1 {
+					return nil, errors.New("dial tcp: i/o timeout")
+				}
+				return srv.Client().Transport.RoundTrip(req)
+			}),
+		}
+		if err := s.storeTunnel(ctx, creds, testCertPEM("z123", "tok"), "homelab", ""); err != nil {
+			t.Fatal(err)
+		}
+
+		s.backfillTunnelZone(ctx)
+		if got, _ := s.Get(ctx); got.Tunnel.Zone != "" {
+			t.Fatalf("after network error zone = %q, want empty", got.Tunnel.Zone)
+		}
+		s.zoneMu.Lock()
+		checked := s.zoneCheckedFor
+		s.zoneMu.Unlock()
+		if checked != "" {
+			t.Fatalf("after network error zoneCheckedFor = %q, want empty", checked)
+		}
+
+		s.backfillTunnelZone(ctx)
+		if got, _ := s.Get(ctx); got.Tunnel.Zone != "example.net" {
+			t.Fatalf("after retry zone = %q, want example.net", got.Tunnel.Zone)
+		}
+		if hits.Load() != 2 {
+			t.Fatalf("hits = %d, want 2", hits.Load())
+		}
+	})
+
+	// 3. Permanent HTTP 403 stops retrying; storeTunnel clears the cache for a new login.
+	t.Run("permanent 403 cached and reset by storeTunnel", func(t *testing.T) {
+		var hits atomic.Int32
+		var allow atomic.Bool
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+			if !allow.Load() {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			_, _ = w.Write([]byte(`{"success":true,"result":{"name":"example.net"}}`))
+		}))
+		defer srv.Close()
+
+		s, _, _ := newService(t)
+		s.cfAPIBase = srv.URL
+		s.cfHTTP = srv.Client()
+		if err := s.storeTunnel(ctx, creds, testCertPEM("z123", "tok"), "homelab", ""); err != nil {
+			t.Fatal(err)
+		}
+
+		s.backfillTunnelZone(ctx)
+		s.backfillTunnelZone(ctx)
+		if hits.Load() != 1 {
+			t.Fatalf("hits after 403 + second backfill = %d, want 1", hits.Load())
+		}
+		s.zoneMu.Lock()
+		checked := s.zoneCheckedFor
+		s.zoneMu.Unlock()
+		if checked != id {
+			t.Fatalf("after 403 zoneCheckedFor = %q, want %q", checked, id)
+		}
+
+		if err := s.storeTunnel(ctx, `{"TunnelID":"bad"}`, testCertPEM("z123", "tok"), "homelab", ""); err == nil {
+			t.Fatal("expected storeTunnel with bad credentials to fail")
+		}
+		s.zoneMu.Lock()
+		checked = s.zoneCheckedFor
+		s.zoneMu.Unlock()
+		if checked != id {
+			t.Fatalf("failed storeTunnel cleared zoneCheckedFor = %q, want %q", checked, id)
+		}
+
+		if err := s.storeTunnel(ctx, creds, testCertPEM("z123", "new-tok"), "homelab", ""); err != nil {
+			t.Fatal(err)
+		}
+		s.zoneMu.Lock()
+		checked = s.zoneCheckedFor
+		s.zoneMu.Unlock()
+		if checked != "" {
+			t.Fatalf("after storeTunnel zoneCheckedFor = %q, want empty", checked)
+		}
+
+		allow.Store(true)
+		s.backfillTunnelZone(ctx)
+		if got, _ := s.Get(ctx); got.Tunnel.Zone != "example.net" {
+			t.Fatalf("after fresh storeTunnel zone = %q, want example.net", got.Tunnel.Zone)
+		}
+		if hits.Load() != 2 {
+			t.Fatalf("hits = %d, want 2", hits.Load())
+		}
+	})
+
+	// 4. Invalid cert makes no HTTP request and caches permanent failure.
+	t.Run("invalid cert cached without HTTP", func(t *testing.T) {
+		var hits atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits.Add(1)
+		}))
+		defer srv.Close()
+
+		s, _, _ := newService(t)
+		s.cfAPIBase = srv.URL
+		s.cfHTTP = srv.Client()
+		if err := s.storeTunnel(ctx, creds, "not-a-pem", "homelab", ""); err != nil {
+			t.Fatal(err)
+		}
+
+		s.backfillTunnelZone(ctx)
+		if hits.Load() != 0 {
+			t.Fatalf("hits = %d, want 0", hits.Load())
+		}
+		s.zoneMu.Lock()
+		checked := s.zoneCheckedFor
+		s.zoneMu.Unlock()
+		if checked != id {
+			t.Fatalf("zoneCheckedFor = %q, want %q", checked, id)
+		}
+	})
 }

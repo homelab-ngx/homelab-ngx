@@ -815,6 +815,11 @@ func (s *Service) storeTunnel(ctx context.Context, creds, cert, name, zone strin
 		}
 		return s.save(ctx, "tunnel", Tunnel{Enabled: true, Name: name, Zone: zone, Routes: nonNil(t.Routes)}, tunnelSecret{Credentials: strings.TrimSpace(creds), Cert: cert})
 	})
+	if err == nil {
+		s.zoneMu.Lock()
+		s.zoneCheckedFor = ""
+		s.zoneMu.Unlock()
+	}
 	return err
 }
 

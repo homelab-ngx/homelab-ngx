@@ -24,12 +24,14 @@ import (
 )
 
 const (
-	tunnelProbeEvery  = 5 * time.Minute
-	tunnelProbeSettle = 2 * time.Second
-	tunnelMetricsWait = 1500 * time.Millisecond
-	tunnelStartGrace  = 15 * time.Second
-	defaultWantConns  = 4
-	maxRecentErrors   = 5
+	tunnelProbeEvery     = 5 * time.Minute
+	tunnelProbeSettle    = 2 * time.Second
+	tunnelProbeReadyWait = 30 * time.Second
+	tunnelProbeReadyPoll = 1 * time.Second
+	tunnelMetricsWait    = 1500 * time.Millisecond
+	tunnelStartGrace     = 15 * time.Second
+	defaultWantConns     = 4
+	maxRecentErrors      = 5
 )
 
 // TunnelState is the live state of cloudflared on the host.
@@ -123,11 +125,13 @@ type probeEntry struct {
 }
 
 type tunnelProbeLoop struct {
-	mu     sync.Mutex
-	probes map[string]probeEntry // lowercased hostname -> last probe
-	kick   chan bool             // true = wait settle delay before probing
-	settle time.Duration
-	every  time.Duration
+	mu        sync.Mutex
+	probes    map[string]probeEntry // lowercased hostname -> last probe
+	kick      chan bool             // true = wait settle delay before probing
+	settle    time.Duration
+	every     time.Duration
+	readyWait time.Duration
+	readyPoll time.Duration
 
 	// Seams for tests.
 	fetchStats func(ctx context.Context, baseURL string) (cloudflare.TunnelStats, error)
@@ -136,10 +140,12 @@ type tunnelProbeLoop struct {
 
 func newTunnelProbeLoop() *tunnelProbeLoop {
 	return &tunnelProbeLoop{
-		probes: map[string]probeEntry{},
-		kick:   make(chan bool, 1),
-		settle: tunnelProbeSettle,
-		every:  tunnelProbeEvery,
+		probes:    map[string]probeEntry{},
+		kick:      make(chan bool, 1),
+		settle:    tunnelProbeSettle,
+		every:     tunnelProbeEvery,
+		readyWait: tunnelProbeReadyWait,
+		readyPoll: tunnelProbeReadyPoll,
 		fetchStats: func(ctx context.Context, baseURL string) (cloudflare.TunnelStats, error) {
 			c := &http.Client{Timeout: tunnelMetricsWait}
 			return cloudflare.FetchTunnelStats(ctx, c, baseURL)
@@ -175,23 +181,100 @@ func (s *Service) RunTunnelProbe(ctx context.Context) {
 	}
 	t := time.NewTicker(every)
 	defer t.Stop()
+	waitReady := true
 	for {
+		if waitReady {
+			s.waitTunnelReady(ctx)
+			if ctx.Err() != nil {
+				return
+			}
+		}
 		s.backfillTunnelZone(ctx)
 		s.probeAllTunnelRoutes(ctx)
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
+			waitReady = false
 		case settle := <-s.tunnelProbe.kick:
 			if settle && s.tunnelProbe.settle > 0 {
-				timer := time.NewTimer(s.tunnelProbe.settle)
-				select {
-				case <-ctx.Done():
-					timer.Stop()
+				if !sleepCtx(ctx, s.tunnelProbe.settle) {
 					return
-				case <-timer.C:
 				}
 			}
+			waitReady = settle
+		}
+	}
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return ctx.Err() == nil
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func (s *Service) tunnelMetricsTarget(ctx context.Context) (string, bool) {
+	if s.managed == ManagedNixOS {
+		if s.nix == nil || !s.nix.CloudflareTunnel.Enabled {
+			return "", false
+		}
+		if s.nix.CloudflareTunnel.MetricsURL != "" {
+			return s.nix.CloudflareTunnel.MetricsURL, true
+		}
+		return "http://" + tunnelMetrics, true
+	}
+	snap, err := s.snapshot(ctx)
+	if err != nil || !snap.Tunnel.Enabled || snap.TunnelCredentials == "" {
+		return "", false
+	}
+	return "http://" + tunnelMetrics, true
+}
+
+// waitTunnelReady waits up to tunnelProbe.readyWait for cloudflared to report
+// at least one ready connection on boot or after a tunnel restart/config change.
+func (s *Service) waitTunnelReady(ctx context.Context) {
+	if s.tunnelProbe.readyWait <= 0 {
+		return
+	}
+	poll := s.tunnelProbe.readyPoll
+	if poll <= 0 {
+		poll = tunnelProbeReadyPoll
+	}
+	deadline := time.NewTimer(s.tunnelProbe.readyWait)
+	defer deadline.Stop()
+	ticker := time.NewTicker(poll)
+	defer ticker.Stop()
+
+	waited := false
+	for {
+		metricsURL, active := s.tunnelMetricsTarget(ctx)
+		if !active {
+			return
+		}
+		mctx, cancel := context.WithTimeout(ctx, tunnelMetricsWait)
+		stats, err := s.tunnelProbe.fetchStats(mctx, metricsURL)
+		cancel()
+		if err == nil && (stats.Ready || stats.ReadyConnections > 0) {
+			if waited && s.tunnelProbe.settle > 0 {
+				sleepCtx(ctx, s.tunnelProbe.settle)
+			}
+			return
+		}
+		waited = true
+		select {
+		case <-ctx.Done():
+			return
+		case <-deadline.C:
+			return
+		case <-ticker.C:
 		}
 	}
 }
@@ -236,8 +319,9 @@ func uniqueHosts(in []string) []string {
 	return out
 }
 
-// backfillTunnelZone tries once per tunnel ID to resolve Tunnel.Zone from a
-// stored cert.pem on hosts that connected before zone capture existed.
+// backfillTunnelZone resolves Tunnel.Zone from a stored cert.pem on hosts that
+// connected before zone capture existed, retrying transient lookup failures on
+// later ticks until it succeeds or fails permanently.
 func (s *Service) backfillTunnelZone(ctx context.Context) {
 	if s.managed != ManagedImage {
 		return
@@ -252,20 +336,33 @@ func (s *Service) backfillTunnelZone(ctx context.Context) {
 	}
 	s.zoneMu.Lock()
 	already := s.zoneCheckedFor == key
-	s.zoneCheckedFor = key
 	s.zoneMu.Unlock()
 	if already {
 		return
 	}
-	zone := s.resolveZone(ctx, snap.TunnelCert)
+	zone, permanent := s.lookupZone(ctx, snap.TunnelCert)
 	if zone == "" {
+		if permanent {
+			s.zoneMu.Lock()
+			s.zoneCheckedFor = key
+			s.zoneMu.Unlock()
+		}
 		return
 	}
+	if !s.saveTunnelZone(ctx, key, zone) {
+		return
+	}
+	s.zoneMu.Lock()
+	s.zoneCheckedFor = key
+	s.zoneMu.Unlock()
+}
+
+func (s *Service) saveTunnelZone(ctx context.Context, key, zone string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rs, err := s.rows(ctx)
 	if err != nil {
-		return
+		return false
 	}
 	var t Tunnel
 	if r, ok := rs["tunnel"]; ok {
@@ -273,13 +370,16 @@ func (s *Service) backfillTunnelZone(ctx context.Context) {
 	}
 	var sec tunnelSecret
 	if err := s.open(rs["tunnel"], &sec); err != nil || sec.Cert == "" || tunnelID(sec.Credentials) != key {
-		return
+		return false
 	}
 	if t.Zone == "" {
 		t.Zone = zone
 		t.Routes = nonNil(t.Routes)
-		_ = s.save(ctx, "tunnel", t, sec)
+		if err := s.save(ctx, "tunnel", t, sec); err != nil {
+			return false
+		}
 	}
+	return true
 }
 
 // parseCertPEM extracts zoneID and apiToken from cloudflared's cert.pem.
@@ -316,9 +416,16 @@ func parseCertPEM(cert string) (zoneID, apiToken string, ok bool) {
 // Best-effort: returns "" if the cert lacks zoneID/apiToken or the token cannot
 // read the zone, so login is never blocked.
 func (s *Service) resolveZone(ctx context.Context, cert string) string {
+	zone, _ := s.lookupZone(ctx, cert)
+	return zone
+}
+
+// lookupZone resolves the zone name from cert.pem and reports whether an empty
+// result is permanent rather than transient.
+func (s *Service) lookupZone(ctx context.Context, cert string) (zone string, permanent bool) {
 	zoneID, apiToken, ok := parseCertPEM(cert)
 	if !ok {
-		return ""
+		return "", true
 	}
 	base := s.cfAPIBase
 	if base == "" {
@@ -333,16 +440,19 @@ func (s *Service) resolveZone(ctx context.Context, cert string) string {
 	u := strings.TrimRight(base, "/") + "/client/v4/zones/" + url.PathEscape(zoneID)
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, u, nil)
 	if err != nil {
-		return ""
+		return "", true
 	}
 	req.Header.Set("Authorization", "Bearer "+apiToken)
 	resp, err := client.Do(req)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return ""
+		perm := resp.StatusCode == http.StatusUnauthorized ||
+			resp.StatusCode == http.StatusForbidden ||
+			resp.StatusCode == http.StatusNotFound
+		return "", perm
 	}
 	var body struct {
 		Success bool `json:"success"`
@@ -351,13 +461,13 @@ func (s *Service) resolveZone(ctx context.Context, cert string) string {
 		} `json:"result"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&body) != nil || !body.Success {
-		return ""
+		return "", false
 	}
 	name := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(body.Result.Name)), ".")
 	if !domainRE.MatchString(name) {
-		return ""
+		return "", true
 	}
-	return name
+	return name, false
 }
 
 func inZone(hostname, zone string) bool {

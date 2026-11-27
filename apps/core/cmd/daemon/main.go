@@ -281,17 +281,19 @@ func run(configPath string) error {
 		if !hostSvc.AdoptInstall(gctx, installer.SetupFile) {
 			hostSvc.Apply(gctx)
 		}
+		// Background Cloudflare tunnel exposure probe cache for /settings/tunnel
+		// and tiles; starts after Apply so network-online and homelab-cloudflared
+		// are up instead of racing at boot.
+		g.Go(func() error {
+			hostSvc.RunTunnelProbe(gctx)
+			return nil
+		})
 		hostSvc.InferLAN(gctx)
 		return nil
 	})
 	// Dynamic DNS, while it is on: the record follows the public address.
 	g.Go(func() error {
 		hostSvc.RunDDNS(gctx)
-		return nil
-	})
-	// Background Cloudflare tunnel exposure probe cache for /settings/tunnel and tiles.
-	g.Go(func() error {
-		hostSvc.RunTunnelProbe(gctx)
 		return nil
 	})
 	// Stacks with an approved api grant reach the daemon here; their
