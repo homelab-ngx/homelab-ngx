@@ -2,9 +2,8 @@
 # systemd-nspawn, Nix, and two caches.
 #   - The Nix store: the core extension's builds, bcdu's above all (a static
 #     Rust build of a pinned input, ~10 minutes on a hosted runner).
-#   - /var/cache/homelab-image: image/build.sh's Arch build root and mkosi's
-#     packages, per snapshot (the bootstrap and ~290 downloads from the Arch
-#     archive).
+#   - /var/cache/homelab-image: image/build.sh's Arch build root for the
+#     snapshot (mkosi's packages come from dl.homelab-ngx.com/arch).
 # A run restores the newest cache whose key shares the prefix. Only a run on
 # main saves (save: true): a cache saved on a tag is seen by that tag alone,
 # one saved on main by every ref. image-check.yml saves; release.yml reads.
@@ -75,7 +74,7 @@ runs:
       shell: bash
       run: |
         snapshot=$(sed -n 's/^Snapshot=//p' image/base/mkosi.conf)
-        echo "prefix=image-$RUNNER_OS-${snapshot//\//-}-" >> "$GITHUB_OUTPUT"
+        echo "prefix=buildroot-$RUNNER_OS-${snapshot//\//-}-" >> "$GITHUB_OUTPUT"
 
     # A tarball, not the folder: the build root is root's, which the cache
     # action (the runner's user) can neither read nor restore.
@@ -84,7 +83,7 @@ runs:
       uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
       with:
         path: ${{ runner.temp }}/homelab-image.tar.zst
-        key: ${{ steps.image-key.outputs.prefix }}${{ hashFiles('image/build.sh', 'image/base/mkosi.conf') }}
+        key: ${{ steps.image-key.outputs.prefix }}${{ hashFiles('image/build.sh') }}
         restore-keys: ${{ steps.image-key.outputs.prefix }}
 
     - name: Unpack the image cache

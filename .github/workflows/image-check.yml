@@ -40,7 +40,7 @@ jobs:
     timeout-minutes: 180
     permissions:
       contents: read
-      actions: write # purge the Nix caches the new one replaces
+      actions: write # purge older Nix and build root caches
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -168,17 +168,19 @@ jobs:
           echo "image check: $VERSION built, checked and signed; nothing published" | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The Nix store saves itself at the end of a green job (image-env).
-      # The image cache saves once make image has passed, even when the
-      # check fails: it holds only the build root and packages, not the
-      # build. A failed build's would hold some of the packages under the
-      # key every later run then matches exactly, and none of them would
-      # save the rest.
+      # Only the Arch build root is cached (without pacman's downloaded
+      # packages); mkosi fetches the snapshot's packages from the Arch mirror
+      # on dl.homelab-ngx.com. Saved once make image has passed, even when
+      # the check fails.
       - name: Pack the image cache
         id: pack
         if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.image.outcome == 'success' && steps.env.outputs.image-cache-hit != 'true' }}
         run: |
-          sudo test -e /var/cache/homelab-image/mkosi || { echo "no image cache to save"; exit 0; }
-          sudo tar --zstd --numeric-owner -cpf "$RUNNER_TEMP/homelab-image.tar.zst" -C /var/cache homelab-image
+          snap=$(sed -n 's/^Snapshot=//p' image/base/mkosi.conf)
+          dir=homelab-image/buildroot-${snap//\//-}
+          sudo test -e "/var/cache/$dir/.ready" || { echo "no build root to save"; exit 0; }
+          sudo tar --zstd --numeric-owner --exclude="$dir/var/cache/pacman/pkg/*" \
+            -cpf "$RUNNER_TEMP/homelab-image.tar.zst" -C /var/cache "$dir"
           sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/homelab-image.tar.zst"
           ls -lh "$RUNNER_TEMP/homelab-image.tar.zst"
           echo "packed=1" >> "$GITHUB_OUTPUT"
@@ -189,3 +191,20 @@ jobs:
         with:
           path: ${{ runner.temp }}/homelab-image.tar.zst
           key: ${{ steps.env.outputs.image-cache-key }}
+
+      - name: Purge old image caches
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.pack.outputs.packed == '1' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP_KEY: ${{ steps.env.outputs.image-cache-key }}
+        run: |
+          for prefix in "buildroot-$RUNNER_OS-" "image-$RUNNER_OS-"; do
+            gh api --paginate "repos/$GITHUB_REPOSITORY/actions/caches?key=$prefix" \
+              --jq '.actions_caches[] | "\(.id)\t\(.key)"' |
+            while IFS=$'\t' read -r id key; do
+              [ -n "$id" ] || continue
+              [ "$key" = "$KEEP_KEY" ] && continue
+              echo "deleting old cache $id ($key)"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id" || true
+            done
+          done
