@@ -495,7 +495,7 @@ export function newHost(now: () => number = Date.now): Host {
     ],
     deploys: [
       { id: 12, kind: "install", version: "0.2.5", rev: "", phase: "Health check", reason: "", result: "healthy", log: "", failed_units: [], started_at: iso(t - 6 * DAY), finished_at: iso(t - 6 * DAY + 2 * MIN) },
-      { id: 11, kind: "download", version: "0.2.5", rev: "", phase: "Stage", reason: "", result: "healthy", log: "", failed_units: [], started_at: iso(t - 6 * DAY - HOUR), finished_at: iso(t - 6 * DAY - HOUR + 4 * MIN) },
+      { id: 11, kind: "download", version: "0.2.5", rev: "", phase: "Prepare", reason: "", result: "healthy", log: "", failed_units: [], started_at: iso(t - 6 * DAY - HOUR), finished_at: iso(t - 6 * DAY - HOUR + 4 * MIN) },
     ],
     storage: {
       pools: [
@@ -883,13 +883,32 @@ function deploy(h: Host, kind: Schema<"CoreDeploy">["kind"], version: string, ph
   return d;
 }
 
-/** Flow 4, first half: the newest release is downloaded and staged. */
+/** Flow 4, first half: the newest release is downloaded and prepared. */
 export function downloadImage(h: Host): Schema<"CoreDeploy"> {
   const v = h.image.release.latest;
   const have = h.image.installed.some((x) => x.version === v) || h.image.available.includes(v);
-  return deploy(h, "download", have ? "" : v, have ? ["Check"] : ["Check", "Verify", "Download", "Stage"], () => {
+  h.image.release.checked_at = iso(h.now());
+  if (have) {
+    if (h.deploys[0]?.result === "running") throw new DemoProblem(409, "deploy_running", "An update is already running.");
+    const now = iso(h.now());
+    const d: Schema<"CoreDeploy"> = {
+      id: (h.deploys[0]?.id ?? 0) + 1,
+      kind: "download",
+      version: v,
+      rev: "",
+      phase: `Up to date: the newest release is ${v}`,
+      reason: "",
+      result: "healthy",
+      log: "",
+      failed_units: [],
+      started_at: now,
+      finished_at: now,
+    };
+    h.deploys.unshift(d);
+    return d;
+  }
+  return deploy(h, "download", v, ["Verify signature", "Download", "Prepare"], () => {
     h.image.release.checked_at = iso(h.now());
-    if (have) return;
     h.image.available = [v];
     h.image.core.available = [v];
   });
@@ -903,7 +922,7 @@ export function installImage(h: Host, reboot = ""): Schema<"CoreDeploy"> {
   const v = h.image.available[0];
   if (!v) throw new DemoProblem(409, "nothing_staged", "No downloaded version is waiting.");
   // With a reboot now, the core waits for the new image's boot: no restart first.
-  const d = deploy(h, "install", v, reboot === "now" ? ["Update"] : ["Update", "Restart", "Health check"], () => {
+  const d = deploy(h, "install", v, reboot === "now" ? ["Install for next reboot"] : ["Install for next reboot", "Apply core", "Restart", "Health check"], () => {
     h.image.available = [];
     h.image.core = { ...h.image.core, active: v, available: [], installed: [v, ...h.image.core.installed] };
     h.image.installed = [{ version: v, state: "pending", tries_left: 3 }, ...h.image.installed.filter((x) => x.state === "booted")];

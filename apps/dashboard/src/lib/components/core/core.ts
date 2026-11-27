@@ -7,11 +7,11 @@ export type CoreDeploy = Schema<"CoreDeploy">;
 
 /** The steps each kind of update reports as its phase. */
 export const imageSteps: Record<string, readonly string[]> = {
-  build: ["Fetch", "Build", "Stage"],
-  download: ["Check", "Verify", "Download", "Stage"],
-  "core-update": ["Update", "Restart", "Health check"],
-  "image-update": ["Update"],
-  install: ["Update", "Restart", "Health check"],
+  build: ["Fetch", "Build", "Prepare"],
+  download: ["Verify signature", "Download", "Prepare"],
+  "core-update": ["Apply core", "Restart", "Health check"],
+  "image-update": ["Install for next reboot"],
+  install: ["Install for next reboot", "Apply core", "Restart", "Health check"],
 };
 
 export const stepsOf = (d: CoreDeploy): readonly string[] => imageSteps[d.kind] ?? [];
@@ -134,6 +134,14 @@ export function updateOf(image: ImageStatus): { version: string; reboot: boolean
 export const pendingVersion = (image: ImageStatus): string =>
   image.pending_reboot ? (image.installed.find((v) => v.state === "pending")?.version ?? "") : "";
 
+/** A newer release exists on the server that has not been downloaded yet. */
+export function availableRelease(image: ImageStatus): string {
+  const latest = image.release.latest;
+  const running = runningVersion(image);
+  if (!latest || !running || updateOf(image) || image.pending_reboot) return "";
+  return compareVersions(latest, running) > 0 ? latest : "";
+}
+
 export interface Headline {
   tone: "ok" | "info";
   /** The state, in the status mark's words. */
@@ -148,13 +156,51 @@ export function headline(image: ImageStatus): Headline {
   if (image.pending_reboot) return { tone: "info", state: "reboot to finish", detail: pending };
   const update = updateOf(image);
   if (update) return { tone: "info", state: "update ready", detail: `${update.version} · ${update.reboot ? "needs a reboot" : "no reboot"}` };
+  const release = availableRelease(image);
+  if (release) return { tone: "info", state: "update available", detail: release };
   return { tone: "ok", state: "up to date", detail: "" };
 }
 
-/** An installed version's state, in the page's words. */
-export const VERSION_STATE: Record<string, { tone: "ok" | "idle" | "info" | "bad"; label: string }> = {
-  booted: { tone: "ok", label: "running" },
-  good: { tone: "idle", label: "fallback" },
-  pending: { tone: "info", label: "next boot" },
-  bad: { tone: "bad", label: "failed" },
+/** One terse line for a completed healthy operation triggered in the current session. */
+export function deployNotice(d: CoreDeploy, short: (rev: string) => string, image?: ImageStatus): string {
+  switch (d.kind) {
+    case "download":
+      if (d.phase.startsWith("Up to date")) {
+        if (image?.pending_reboot) return "No newer release. Reboot to finish.";
+        const ready = image ? updateOf(image) : null;
+        if (ready) return `${ready.version} is already ready to update.`;
+        return "Image is up to date.";
+      }
+      return d.version ? `Downloaded ${d.version}. Ready to update.` : "Update downloaded.";
+    case "build":
+      if (d.phase.startsWith("Already up to date")) {
+        return d.rev ? `Already on main (${short(d.rev)}).` : "Already up to date with main.";
+      }
+      return d.version ? `Built ${d.version}. Ready to update.` : "Build finished.";
+    case "core-update":
+      if (d.phase.startsWith("Already")) return "Dashboard is up to date.";
+      return d.version ? `Updated to ${d.version}.` : "Update finished.";
+    case "image-update":
+    case "install":
+      if (d.phase.startsWith("Already")) return "Image is up to date.";
+      return d.version ? `Installed ${d.version}. Boots on next reboot.` : "Update installed.";
+  }
+  return "Done.";
+}
+
+/** An installed version's role label and mark tone. */
+export const VERSION_ROLE: Record<string, { tone: "ok" | "idle" | "info" | "bad"; label: string }> = {
+  booted: { tone: "ok", label: "Running image" },
+  good: { tone: "idle", label: "Fallback image" },
+  pending: { tone: "info", label: "Next boot" },
+  bad: { tone: "bad", label: "Failed image" },
 };
+
+/** Optional summary beside "Installed images"; blank in the normal running + fallback state. */
+export function installedSummary(image: ImageStatus): string {
+  const pending = pendingVersion(image);
+  if (pending) return `Next boot: ${pending}`;
+  const failed = image.installed.filter((v) => v.state === "bad" && v.version !== image.fell_back_from).length;
+  if (failed > 0) return `${failed} failed`;
+  return "";
+}

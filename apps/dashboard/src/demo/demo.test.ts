@@ -155,7 +155,7 @@ describe("the demo's API", () => {
     d.wait(7000);
     expect((await d.get<Schema<"ImageStatus">>("/system-updates/image")).available).toEqual(["0.2.6"]);
     await d.post("/system-updates/image/release", { reboot: "" });
-    d.wait(6000);
+    d.wait(7000);
     const staged = await d.get<Schema<"ImageStatus">>("/system-updates/image");
     expect([staged.pending_reboot, staged.installed[0]]).toEqual([true, { version: "0.2.6", state: "pending", tries_left: 3 }]);
     const first = (await d.get<Schema<"PowerStatus">>("/system/power")).boot_id;

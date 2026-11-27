@@ -205,7 +205,7 @@ const install = (p: Partial<CoreDeploy> = {}): CoreDeploy => ({
   kind: "install",
   version: "0.5.0",
   rev: "",
-  phase: "Update",
+  phase: "Install for next reboot",
   reason: "",
   result: "running",
   log: "",
@@ -239,10 +239,30 @@ describe("the request and the install", () => {
 
   it("names the install's steps, the restart included", () => {
     const words = (d: CoreDeploy | undefined, away: boolean) => deployRows(d, away).map((r) => `${r.name}:${r.word}`);
-    expect(words(install({ phase: "Restart" }), true)).toEqual(["Update:done", "Restart:restarting", "Health check:waiting"]);
-    expect(words(install({ phase: "Update" }), true)).toEqual(["Update:done", "Restart:restarting", "Health check:waiting"]);
-    expect(words(install({ result: "healthy", phase: "Installed 0.5.0; rebooting" }), false)).toEqual(["Update:done", "Restart:done", "Health check:done"]);
-    expect(words(install({ result: "rolled_back", phase: "Roll back" }), false)).toEqual(["Update:done", "Restart:done", "Health check:failed"]);
+    expect(words(install({ phase: "Restart" }), true)).toEqual([
+      "Install for next reboot:done",
+      "Apply core:done",
+      "Restart:restarting",
+      "Health check:waiting",
+    ]);
+    expect(words(install({ phase: "Install for next reboot" }), true)).toEqual([
+      "Install for next reboot:done",
+      "Apply core:done",
+      "Restart:restarting",
+      "Health check:waiting",
+    ]);
+    expect(words(install({ result: "healthy", phase: "Installed 0.5.0; rebooting" }), false)).toEqual([
+      "Install for next reboot:done",
+      "Apply core:done",
+      "Restart:done",
+      "Health check:done",
+    ]);
+    expect(words(install({ result: "rolled_back", phase: "Roll back" }), false)).toEqual([
+      "Install for next reboot:done",
+      "Apply core:done",
+      "Restart:done",
+      "Health check:failed",
+    ]);
   });
 });
 

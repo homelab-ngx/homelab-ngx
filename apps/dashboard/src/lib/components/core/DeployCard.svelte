@@ -15,8 +15,10 @@
     away?: boolean;
     /** How long the last one of its kind took, in seconds: the bar's guide to the time left. */
     typical?: number;
+    /** Called to dismiss a finished deploy card. */
+    onDismiss?: () => void;
   }
-  let { deploy, away = false, typical }: Props = $props();
+  let { deploy, away = false, typical, onDismiss }: Props = $props();
 
   const running = $derived(deploy.result === "running");
   const ok = $derived(deploy.result === "healthy");
@@ -38,8 +40,7 @@
   <div class="flex flex-wrap items-center justify-between gap-2">
     <h3 class="font-semibold">
       <Help label={title}>
-        If the host does not come back healthy, it returns to the version before by itself. The update keeps running when this
-        page is closed.
+        Returns to the previous version if the health check fails. Keeps running if this page closes.
       </Help>
     </h3>
     <div class="flex items-center gap-2">
@@ -55,6 +56,9 @@
       {#if !running && (!ok || deploy.failed_units.length > 0)}
         <AskButton small title="Core {deploy.kind}" subject={{ kind: "core_deploy", ref: String(deploy.id) }} />
       {/if}
+      {#if !running && onDismiss}
+        <button type="button" class="btn btn-sm" onclick={onDismiss}>Dismiss</button>
+      {/if}
     </div>
   </div>
   <div class="mt-3">
@@ -64,7 +68,7 @@
   <p class="mt-2 text-xs text-muted tabular-nums">
     {duration(deploy.started_at, deploy.finished_at, now)}{#if left >= 1}
       · about {clock(left)} left{/if}{#if running && away}
-      · the host is restarting, this page keeps checking{:else if !running}
+      · restarting, still checking{:else if !running}
       · {deployOutcome(deploy)}{/if}
   </p>
   {#if deploy.reason}
@@ -72,7 +76,7 @@
   {/if}
   {#if deploy.failed_units.length > 0}
     <p class="mt-2 text-warn">
-      Not started after the update: {deploy.failed_units.join(", ")}. The update stays in place.
+      Did not start: {deploy.failed_units.join(", ")}. Update kept.
     </p>
   {/if}
   {#if deploy.log}
