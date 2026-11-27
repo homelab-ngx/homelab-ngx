@@ -165,6 +165,7 @@ func updateSteps(s *S) {
 			s.hostCheck()
 			s.ok("%s booted once more from the API, then %s again", v, next)
 			s.poolLifecycle()
+			s.subvolumeProfiles()
 			s.backupLifecycle()
 			if !s.st.SMTPRelay {
 				s.testSMTPRelay()

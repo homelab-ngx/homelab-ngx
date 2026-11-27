@@ -85,18 +85,19 @@ func producer(snap string) *scenario {
 // State is what a scenario's steps learn and later steps, or the scenarios
 // that start from its snapshot, need. It is saved with the snapshot.
 type State struct {
-	Medium     string `json:"medium"`      // the installer medium's disk UUID
-	Installed  string `json:"installed"`   // the installed disk's machine ID
-	Pool       string `json:"pool"`        // where the pool is mounted
-	Part       string `json:"part"`        // where the partition is mounted, or ""
-	OnVar      bool   `json:"onvar"`       // the Nix store is on /var
-	VPNDevices int    `json:"vpn_devices"` // the VPN devices hostcheck expects
-	Made       string `json:"made"`        // the note on the device the host made keys for
-	Lifecycle  bool   `json:"lifecycle"`   // the second pool's lifecycle was checked
-	Backups    bool   `json:"backups"`     // a backup's preview, stop and run were checked
-	SMTPRelay  bool   `json:"smtp_relay"`  // the host SMTP relay was checked
-	Rev        string `json:"rev"`         // the stack's first commit
-	Region     uint64 `json:"region"`      // where step 2 installed
+	Medium         string `json:"medium"`          // the installer medium's disk UUID
+	Installed      string `json:"installed"`       // the installed disk's machine ID
+	Pool           string `json:"pool"`            // where the pool is mounted
+	Part           string `json:"part"`            // where the partition is mounted, or ""
+	OnVar          bool   `json:"onvar"`           // the Nix store is on /var
+	VPNDevices     int    `json:"vpn_devices"`     // the VPN devices hostcheck expects
+	Made           string `json:"made"`            // the note on the device the host made keys for
+	Lifecycle      bool   `json:"lifecycle"`       // the second pool's lifecycle was checked
+	SubvolProfiles bool   `json:"subvol_profiles"` // subvolume placement/copy profiles and disk usage stats were checked
+	Backups        bool   `json:"backups"`         // a backup's preview, stop and run were checked
+	SMTPRelay      bool   `json:"smtp_relay"`      // the host SMTP relay was checked
+	Rev            string `json:"rev"`             // the stack's first commit
+	Region         uint64 `json:"region"`          // where step 2 installed
 }
 
 // S is one scenario's run: its machine, disks and state.

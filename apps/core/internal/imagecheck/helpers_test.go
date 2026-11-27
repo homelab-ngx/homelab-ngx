@@ -499,6 +499,141 @@ func (s *S) poolLifecycle() {
 	s.ok("a pool made on vde and vdf, grown with vdg (erased by name), shrunk by vde with its file kept, and deleted; the stack's pool refused")
 }
 
+// subvolumeProfiles checks per-disk fs usage, cache/reconcile stats, and
+// per-subvolume placement/copy profiles on a mixed SSD+HDD pool. It runs
+// once, on the first version whose storage status includes per-disk usage.
+func (s *S) subvolumeProfiles() {
+	s.t.Helper()
+	if s.st.SubvolProfiles {
+		return
+	}
+	if !s.has("subvolume profiles and disk usage stats", s.apiHas("storage", func(v any) bool {
+		p := find(v, "pools", "mountdir", s.st.Pool)
+		ds := list(p, "disks")
+		return len(ds) > 0 && hasKey(ds[0], "usage")
+	})) {
+		return
+	}
+
+	// A. Main pool reports per-disk usage from `bcachefs fs usage`, and CLI status shows it.
+	mainPool := find(s.getJ("storage"), "pools", "mountdir", s.st.Pool)
+	for _, d := range list(mainPool, "disks") {
+		if nAt(d, "usage.size_bytes") <= 0 || nAt(d, "usage.used_bytes") <= 0 {
+			s.die("main pool disk %s missing usage breakdown: %s", sAt(d, "path"), compact(d))
+		}
+	}
+	cliStatus := s.must("homelab storage status")
+	if !strings.Contains(cliStatus, "USED") || !strings.Contains(cliStatus, "USE%") {
+		s.die("homelab storage status lacks per-disk USED/USE%% columns:\n%s", cliStatus)
+	}
+
+	// B. Make a tiered pool (vde as SSD cache, vdf and vdg as HDD storage).
+	s.must("echo 0 > /sys/block/vde/queue/rotational && echo 1 > /sys/block/vdf/queue/rotational && echo 1 > /sys/block/vdg/queue/rotational")
+	defer func() {
+		_, _ = s.g.Run(bg(), "echo 0 > /sys/block/vdf/queue/rotational && echo 0 > /sys/block/vdg/queue/rotational", nil)
+	}()
+	if ls := strings.TrimSpace(s.must("lsblk -dno NAME,ROTA /dev/vde /dev/vdf /dev/vdg | awk '{print $1\":\"$2}' | tr '\\n' ' '")); ls != "vde:0 vdf:1 vdg:1" {
+		s.die("unexpected rotational flags on test disks: %q", ls)
+	}
+	tiered := s.post("storage/pools", `{"name":"tiered","disks":["/dev/vde","/dev/vdf","/dev/vdg"],"copies":2}`, "tiered pool was not made")
+	uuid := sAt(tiered, "uuid")
+	if got := fmt.Sprintf("%s %s %s %s %s %d %d",
+		sAt(tiered, "foreground_target"), sAt(tiered, "promote_target"), sAt(tiered, "background_target"),
+		sAt(tiered, "metadata_target"), sAt(tiered, "state"), int(nAt(tiered, "data_replicas")), int(nAt(tiered, "metadata_replicas"))); got != "ssd ssd hdd ssd mounted 2 2" {
+		s.die("tiered pool targets/replicas unexpected: %q (%s)", got, compact(tiered))
+	}
+	s.must("dd if=/dev/urandom of=/var/mnt/tiered/warmup bs=1M count=32 status=none && sync")
+	tieredAfterWrite := s.pool(uuid)
+	for _, d := range list(tieredAfterWrite, "disks") {
+		if nAt(d, "usage.used_bytes") <= 0 {
+			s.die("tiered disk %s has 0 used_bytes after write: %s", sAt(d, "path"), compact(d))
+		}
+	}
+	cachedBytes := int64(nAt(at(tieredAfterWrite, "usage"), "cached_bytes"))
+	reconcileMeta := int64(nAt(at(tieredAfterWrite, "usage"), "reconcile_metadata_bytes"))
+
+	// C. Create subvolumes and verify hot / cold / cached profiles and copies on real bcachefs.
+	s.ask(http.MethodPost, "storage/subvolume", `{"path":"/var/mnt/tiered/hotvol"}`, "hotvol was not created")
+	s.ask(http.MethodPost, "storage/subvolume", `{"path":"/var/mnt/tiered/coldvol"}`, "coldvol was not created")
+
+	sub := func(path string) any { return find(s.getJ("storage"), "subvolumes", "path", path) }
+	if p := sAt(sub("/var/mnt/tiered/hotvol"), "profile"); p != "cached" {
+		s.die("initial hotvol profile = %q, want cached", p)
+	}
+
+	// Hot + 1 copy via API.
+	if r := s.call(http.MethodPatch, "storage/subvolume", `{"path":"/var/mnt/tiered/hotvol","profile":"hot","copies":1}`); r.Status != http.StatusNoContent {
+		s.die("PATCH hot+1x: %s", r)
+	}
+	hot := sub("/var/mnt/tiered/hotvol")
+	if got := fmt.Sprintf("%s %d %s %s %s", sAt(hot, "profile"), int(nAt(hot, "data_replicas")), sAt(hot, "foreground_target"), sAt(hot, "background_target"), sAt(hot, "promote_target")); got != "hot 1 ssd ssd ssd" {
+		s.die("hotvol after PATCH = %q (%s)", got, compact(hot))
+	}
+	s.must("dd if=/dev/urandom of=/var/mnt/tiered/hotvol/test bs=1M count=4 status=none && sync")
+	hotSum := s.must("sha256sum < /var/mnt/tiered/hotvol/test")
+	if got := s.must("sha256sum < /var/mnt/tiered/hotvol/test"); got != hotSum {
+		s.die("hotvol file checksum mismatch")
+	}
+
+	// Cold via API (verifies real bcachefs `set-file-option --promote_target=none`).
+	if r := s.call(http.MethodPatch, "storage/subvolume", `{"path":"/var/mnt/tiered/coldvol","profile":"cold"}`); r.Status != http.StatusNoContent {
+		s.die("PATCH cold: %s", r)
+	}
+	cold := sub("/var/mnt/tiered/coldvol")
+	if got := fmt.Sprintf("%s %s %s %s", sAt(cold, "profile"), sAt(cold, "foreground_target"), sAt(cold, "background_target"), sAt(cold, "promote_target")); got != "cold hdd hdd none" {
+		s.die("coldvol after PATCH = %q (%s)", got, compact(cold))
+	}
+	rawColdOpt := s.must("bcachefs get-file-option /var/mnt/tiered/coldvol")
+	if !strings.Contains(rawColdOpt, "promote_target") || !strings.Contains(rawColdOpt, "none") {
+		s.die("unexpected bcachefs get-file-option output for coldvol:\n%s", rawColdOpt)
+	}
+	s.must("dd if=/dev/urandom of=/var/mnt/tiered/coldvol/test bs=1M count=4 status=none && sync")
+	coldSum := s.must("sha256sum < /var/mnt/tiered/coldvol/test")
+	if got := s.must("sha256sum < /var/mnt/tiered/coldvol/test"); got != coldSum {
+		s.die("coldvol file checksum mismatch")
+	}
+
+	// Reset hotvol to Cached + pool default copies via CLI, confirming `-` clears overrides cleanly.
+	s.must("homelab storage subvolume-profile --profile cached --copies 0 /var/mnt/tiered/hotvol")
+	hotReset := sub("/var/mnt/tiered/hotvol")
+	if sAt(hotReset, "profile") != "cached" || hasKey(hotReset, "data_replicas") {
+		s.die("hotvol after CLI reset still has overrides: %s", compact(hotReset))
+	}
+	if rawHotOpt := strings.TrimSpace(s.out("bcachefs get-file-option /var/mnt/tiered/hotvol")); rawHotOpt != "" {
+		s.die("bcachefs get-file-option not empty after CLI reset: %q", rawHotOpt)
+	}
+
+	// Error guards on untiered main pool and missing subvolume.
+	if r := s.call(http.MethodPatch, "storage/subvolume", `{"path":"`+s.st.Pool+`/site","profile":"hot"}`); r.Status != http.StatusConflict || r.Problem() != "pool_not_tiered" {
+		s.die("untiered profile expected 409 pool_not_tiered, got %s", r)
+	}
+	if r := s.call(http.MethodPatch, "storage/subvolume", `{"path":"`+s.st.Pool+`/site","copies":3}`); r.Status != http.StatusConflict || r.Problem() != "too_few_disks" {
+		s.die("copies > disks expected 409 too_few_disks, got %s", r)
+	}
+	if r := s.call(http.MethodPatch, "storage/subvolume", `{"path":"/var/mnt/tiered/missing","profile":"hot"}`); r.Status != http.StatusNotFound || r.Problem() != "unknown_subvolume" {
+		s.die("missing subvolume expected 404 unknown_subvolume, got %s", r)
+	}
+
+	// D. Clean up test subvolumes and pool so spare disks return blank.
+	s.must("rm -f /var/mnt/tiered/warmup /var/mnt/tiered/hotvol/test /var/mnt/tiered/coldvol/test")
+	if r := s.call(http.MethodDelete, "storage/subvolume?path=/var/mnt/tiered/hotvol", nil); r.Status != http.StatusNoContent {
+		s.die("delete hotvol: %s", r)
+	}
+	if r := s.call(http.MethodDelete, "storage/subvolume?path=/var/mnt/tiered/coldvol", nil); r.Status != http.StatusNoContent {
+		s.die("delete coldvol: %s", r)
+	}
+	if r := s.call(http.MethodDelete, "storage/pools/"+uuid+"?confirm=tiered", nil); r.Status != http.StatusNoContent {
+		s.die("delete tiered pool: %s", r)
+	}
+	s.must("echo 0 > /sys/block/vdf/queue/rotational && echo 0 > /sys/block/vdg/queue/rotational")
+	if sp := s.spare(); sp != "/dev/vde: /dev/vdf: /dev/vdg:" {
+		s.die("spare disks after tiered cleanup = %q", sp)
+	}
+
+	s.st.SubvolProfiles = true
+	s.ok("tiered subvolume profiles (hot/cold/cached, 1x/reset via API and CLI) and disk usage stats (cached=%d, reconcile_meta=%d)", cachedBytes, reconcileMeta)
+}
+
 // deploy is an operation's record, read loosely.
 type deploy = sysupdates.CoreDeploy
 
