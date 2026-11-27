@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ExternalLink } from "@lucide/svelte";
   import { api, call, describe, type Stack } from "#lib/api/client.ts";
+  import Help from "#lib/components/Help.svelte";
   import Modal from "#lib/components/Modal.svelte";
   import Pill from "#lib/components/Pill.svelte";
   import RowMenu, { type MenuItem } from "#lib/components/RowMenu.svelte";
@@ -22,6 +23,7 @@
   let editIndex = $state<number | null>(null);
   let removeIndex = $state<number | null>(null);
   let removing = $state(false);
+  let markingIndex = $state<number | null>(null);
   let checkingHost = $state("");
   let error = $state("");
 
@@ -30,9 +32,21 @@
     new Map<string, RouteStatus>((status?.routes ?? []).map((r) => [`${r.hostname.toLowerCase()}\0${r.path ?? ""}`, r])),
   );
   const removeTarget = $derived(removeIndex !== null ? tunnel.routes[removeIndex] : undefined);
+  const openCount = $derived(
+    tunnelOn ? tunnel.routes.filter((r) => routePill(statusFor(r), tunnelOn).word === "open").length : 0,
+  );
 
   function statusFor(r: Route): RouteStatus | undefined {
     return statusMap.get(`${r.hostname.toLowerCase()}\0${r.path ?? ""}`);
+  }
+
+  function routePayload(routes: readonly Route[]) {
+    return routes.map((r) => ({
+      hostname: r.hostname,
+      target: r.target,
+      ...(r.path ? { path: r.path } : {}),
+      ...(r.public ? { public: true } : {}),
+    }));
   }
 
   function openAdd() {
@@ -57,18 +71,26 @@
     }
   }
 
+  async function setPublic(i: number, isPublic: boolean) {
+    if (markingIndex !== null) return;
+    markingIndex = i;
+    error = "";
+    const routes = routePayload(tunnel.routes.map((r, idx) => (idx === i ? { ...r, public: isPublic } : r)));
+    try {
+      const saved = await call<HostSettings>(api.PUT("/host-settings/tunnel", { body: { enabled: tunnel.enabled, routes } }));
+      onSaved(saved);
+    } catch (e) {
+      error = describe(e);
+    } finally {
+      markingIndex = null;
+    }
+  }
+
   async function confirmRemove() {
     if (removeIndex === null || removing) return;
     removing = true;
     error = "";
-    const routes = tunnel.routes
-      .filter((_, idx) => idx !== removeIndex)
-      .map((r) => ({
-        hostname: r.hostname,
-        target: r.target,
-        ...(r.path ? { path: r.path } : {}),
-        ...(r.public ? { public: true } : {}),
-      }));
+    const routes = routePayload(tunnel.routes.filter((_, idx) => idx !== removeIndex));
     try {
       const saved = await call<HostSettings>(api.PUT("/host-settings/tunnel", { body: { enabled: tunnel.enabled, routes } }));
       onSaved(saved);
@@ -83,6 +105,13 @@
   function rowItems(r: Route, i: number): MenuItem[] {
     const items: MenuItem[] = [];
     if (!readOnly) items.push({ label: "Edit…", onSelect: () => openEdit(i) });
+    if (!readOnly && r.public) {
+      items.push({
+        label: "Unmark public",
+        disabled: markingIndex !== null,
+        onSelect: () => void setPublic(i, false),
+      });
+    }
     items.push({
       label: checkingHost === r.hostname ? "Checking…" : "Recheck",
       disabled: !tunnelOn || checkingHost === r.hostname,
@@ -105,6 +134,11 @@
   {#if error}
     <p role="alert" class="mt-2 rounded-md bg-bad-soft px-3 py-2 text-bad">{error}</p>
   {/if}
+  {#if openCount > 0}
+    <p role="status" class="mt-2 rounded-md bg-warn-soft px-3 py-2 text-warn">
+      {openCount} {openCount === 1 ? "route answers" : "routes answer"} without Cloudflare Access. Add Access at Cloudflare, or mark {openCount === 1 ? "it" : "them"} public.
+    </p>
+  {/if}
 
   {#if tunnel.routes.length === 0}
     <p class="mt-2 rounded-lg border border-line bg-surface px-4 py-3 text-muted">No routes yet.</p>
@@ -115,7 +149,11 @@
           <tr class="border-b border-line bg-sunken">
             <th class="label px-3 py-2">Public name</th>
             <th class="label px-3 py-2 max-sm:hidden">Serves</th>
-            <th class="label px-3 py-2">State</th>
+            <th class="label px-3 py-2">
+              <Help label="State">
+                Protected: behind Cloudflare Access. Public: marked open to anyone. Open: reachable without Cloudflare Access.
+              </Help>
+            </th>
             <th class="w-10 px-3 py-2"><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
@@ -137,7 +175,24 @@
                 {r.target}{#if r.path}<span class="text-muted"> · {r.path}</span>{/if}
               </td>
               <td class="px-3 py-2.5">
-                <Pill tone={pill.tone}>{pill.word}</Pill>
+                <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <Pill tone={pill.tone}>{pill.word}</Pill>
+                  {#if pill.word === "open" && !readOnly}
+                    <button
+                      type="button"
+                      class="btn btn-sm"
+                      disabled={markingIndex !== null}
+                      onclick={() => void setPublic(i, true)}
+                    >
+                      {markingIndex === i ? "Saving…" : "Mark public"}
+                    </button>
+                  {/if}
+                </div>
+                {#if pill.word === "open"}
+                  <div class="mt-0.5 text-xs text-muted">No Cloudflare Access</div>
+                {:else if pill.word === "no target"}
+                  <div class="mt-0.5 text-xs text-muted">Target matches no stack route</div>
+                {/if}
               </td>
               <td class="px-3 py-2.5 text-right">
                 <RowMenu name={r.hostname} items={rowItems(r, i)} />

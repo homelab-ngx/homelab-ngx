@@ -63,6 +63,8 @@ describe("TunnelRoutes", () => {
     expect(screen.getByRole("link", { name: "photos.example.net" }).getAttribute("href")).toBe("https://photos.example.net");
     expect(screen.getByText("protected")).toBeTruthy();
     expect(screen.getByText("open")).toBeTruthy();
+    expect(screen.getByText(/1 route answers without Cloudflare Access/)).toBeTruthy();
+    expect(screen.getByText("No Cloudflare Access")).toBeTruthy();
 
     await fireEvent.click(screen.getByRole("button", { name: "Add a route" }));
 
@@ -105,5 +107,52 @@ describe("TunnelRoutes", () => {
     const body = put.mock.calls[0]![1] as { body: { routes: Array<{ hostname: string }> } };
     expect(body.body.routes.map((r) => r.hostname)).toEqual(["books.example.net"]);
     expect(onSaved).toHaveBeenCalled();
+  });
+
+  it("marks an open route public in one click and allows unmarking from the menu", async () => {
+    const put = vi.spyOn(api, "PUT").mockResolvedValue({
+      data: { tunnel, domain } as HostSettings,
+      response: new Response(null, { status: 200 }),
+    } as never);
+    const onSaved = vi.fn();
+
+    render(TunnelRoutes, { props: { tunnel, domain, status, stacks, readOnly: false, onSaved, onRecheck: vi.fn() } });
+
+    await fireEvent.click(screen.getByRole("button", { name: "Mark public" }));
+    await vi.waitFor(() => expect(put).toHaveBeenCalledTimes(1));
+    const markBody = put.mock.calls[0]![1] as { body: { enabled: boolean; routes: Array<{ hostname: string; public?: boolean }> } };
+    expect(markBody.body.routes).toEqual([
+      { hostname: "photos.example.net", target: "photos" },
+      { hostname: "books.example.net", target: "calibre", path: "^/opds", public: true },
+    ]);
+    expect(onSaved).toHaveBeenCalledTimes(1);
+
+    cleanup();
+    const publicTunnel: HostSettings["tunnel"] = {
+      ...tunnel,
+      routes: [
+        { hostname: "photos.example.net", target: "photos" },
+        { hostname: "books.example.net", target: "calibre", path: "^/opds", public: true },
+      ],
+    };
+    const publicStatus: TunnelStatus = {
+      ...status,
+      routes: [
+        { hostname: "photos.example.net", target: "photos", public: false, dns: "added", protection: "protected" },
+        { hostname: "books.example.net", target: "calibre", path: "^/opds", public: true, dns: "added", protection: "public" },
+      ],
+    };
+    render(TunnelRoutes, {
+      props: { tunnel: publicTunnel, domain, status: publicStatus, stacks, readOnly: false, onSaved, onRecheck: vi.fn() },
+    });
+
+    expect(screen.queryByText(/without Cloudflare Access/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Mark public" })).toBeNull();
+
+    await fireEvent.click(screen.getByRole("button", { name: "More actions for books.example.net" }));
+    await fireEvent.click(await screen.findByRole("menuitem", { name: "Unmark public" }));
+    await vi.waitFor(() => expect(put).toHaveBeenCalledTimes(2));
+    const unmarkBody = put.mock.calls[1]![1] as { body: { routes: Array<{ hostname: string; public?: boolean }> } };
+    expect(unmarkBody.body.routes[1]).toEqual({ hostname: "books.example.net", target: "calibre", path: "^/opds" });
   });
 });
