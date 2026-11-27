@@ -247,7 +247,9 @@ jobs:
           esac
           { cat published; echo "$VERSION"; } | sed '/^$/d' | sort -uV > versions
           tail -n 1 versions > latest
-          git fetch --tags --quiet origin
+          # actions/checkout on an annotated tag replaces refs/tags/<tag> with
+          # its commit SHA, so fetching tags needs --force to avoid rejecting it.
+          git fetch --tags --force origin
           scripts/release-notes --changelog-json versions > changelog.json
           jq -e '.releases | type == "array"' changelog.json >/dev/null
           upjson changelog.json changelog.json
