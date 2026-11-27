@@ -60,9 +60,9 @@ func TestParseSuper139(t *testing.T) {
 func TestParseDeviceUsage(t *testing.T) {
 	rows := parseDeviceUsage(fixture(t, "fs-usage.txt"))
 	want := []DeviceUsage{
-		{Index: 2, Label: "hdd.hdd2", Name: "vdb1", State: "rw", Size: 17042501632, Used: 4308860928},
-		{Index: 3, Label: "hdd.hdd3", Name: "vdb2", State: "rw", Size: 17042501632, Used: 4303093760},
-		{Index: 0, Label: "ssd.ssd1", Name: "vdc", State: "rw", Size: 17042501632, Used: 4316987392},
+		{Index: 2, Label: "hdd.hdd2", Name: "vdb1", State: "rw", Size: 17042501632, Used: 4308860928, UsedPercent: 25},
+		{Index: 3, Label: "hdd.hdd3", Name: "vdb2", State: "rw", Size: 17042501632, Used: 4303093760, UsedPercent: 25},
+		{Index: 0, Label: "ssd.ssd1", Name: "vdc", State: "rw", Size: 17042501632, Used: 4316987392, UsedPercent: 25},
 	}
 	if !reflect.DeepEqual(rows, want) {
 		t.Fatalf("rows = %+v", rows)
@@ -72,7 +72,7 @@ func TestParseDeviceUsage(t *testing.T) {
 	if len(rows) != 4 {
 		t.Fatalf("rows = %+v", rows)
 	}
-	if r := rows[0]; r.Name != "vdd" || r.State != "evacuating" || r.Used != 4084465664 || r.Leaving != 4082630656 {
+	if r := rows[0]; r.Name != "vdd" || r.State != "evacuating" || r.Used != 4084465664 || r.UsedPercent != 23 || r.Leaving != 4082630656 {
 		t.Fatalf("the leaving disk = %+v", r)
 	}
 	if rows[3].Leaving != 0 {
@@ -80,8 +80,34 @@ func TestParseDeviceUsage(t *testing.T) {
 	}
 
 	rows = parseDeviceUsage("(no label) (device 1):  vdb5    evacuating  17042501632   4523556864   26%  \n")
-	if len(rows) != 1 || rows[0].Label != "" || rows[0].Index != 1 {
+	if len(rows) != 1 || rows[0].Label != "" || rows[0].Index != 1 || rows[0].UsedPercent != 26 {
 		t.Fatalf("an unlabelled disk = %+v", rows)
+	}
+}
+
+func TestParseFSUsage(t *testing.T) {
+	u := parseFSUsage(fixture(t, "fs-usage.txt"))
+	if u.CachedBytes != 4294967296 || u.ReconcileData != 0 || u.ReconcileMeta != 22020096 || len(u.Devices) != 3 {
+		t.Fatalf("fs-usage.txt = %+v", u)
+	}
+
+	multi := `Filesystem: f6f35d64-0b1c-4a6e-9a47-7a1d3c2e9b10
+cached:  908380504064
+
+Pending reconcile:  data    metadata
+target:                0     1835008
+pending:               0  5253103616
+
+Device label          Device  State           Size           Used  Use%  Leaving
+hdd.hdd1 (device 0):  sda     rw     3992193069056  1145140977664   29%  1835008
+ssd.ssd1 (device 1):  sdb     rw     1016205406208   913506467840   92%
+`
+	got := parseFSUsage(multi)
+	if got.CachedBytes != 908380504064 || got.ReconcileData != 0 || got.ReconcileMeta != 1835008+5253103616 {
+		t.Fatalf("multi = %+v", got)
+	}
+	if len(got.Devices) != 2 || got.Devices[1].UsedPercent != 92 || got.Devices[0].Leaving != 1835008 {
+		t.Fatalf("devices = %+v", got.Devices)
 	}
 }
 

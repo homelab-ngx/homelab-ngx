@@ -90,6 +90,27 @@ describe("the demo's API", () => {
     expect((await tank()).operation).toBeUndefined();
   });
 
+  it("changes a subvolume's storage profile and copy count", async () => {
+    const d = demo();
+    type Status = Schema<"StorageStatus">;
+    const sub = async (path: string) => (await d.get<Status>("/storage")).subvolumes.find((s) => s.path === path);
+
+    expect((await sub("/var/mnt/tank/photos"))?.profile).toBe("cached");
+    expect((await d.send("PATCH", "/storage/subvolume", { path: "/var/mnt/tank/photos", profile: "hot", copies: 1 })).status).toBe(204);
+    expect(await sub("/var/mnt/tank/photos")).toMatchObject({ profile: "hot", data_replicas: 1 });
+
+    // Setting copies back to 0 (or the pool's default) clears data_replicas.
+    expect((await d.send("PATCH", "/storage/subvolume", { path: "/var/mnt/tank/photos", profile: "cold", copies: 0 })).status).toBe(204);
+    const after = await sub("/var/mnt/tank/photos");
+    expect(after?.profile).toBe("cold");
+    expect(after?.data_replicas).toBeUndefined();
+
+    // Untiered pool rejects placement profile but allows copies.
+    expect((await d.send<{ code: string }>("PATCH", "/storage/subvolume", { path: "/var/mnt/apps/databases", profile: "hot" })).body.code).toBe("pool_not_tiered");
+    expect((await d.send("PATCH", "/storage/subvolume", { path: "/var/mnt/apps/databases", copies: 1 })).status).toBe(204);
+    expect((await sub("/var/mnt/apps/databases"))?.data_replicas).toBe(1);
+  });
+
   it("approves a stack's new grant, then updates it", async () => {
     const d = demo();
     const before = await d.get<Schema<"Stack">>("/stacks/home");

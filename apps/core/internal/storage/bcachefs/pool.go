@@ -352,50 +352,97 @@ func (c *Client) SetDeviceState(ctx context.Context, device, state string) error
 
 // DeviceUsage is one member's row of `bcachefs fs usage`, in bytes.
 type DeviceUsage struct {
-	Index   int
-	Label   string
-	Name    string // vdb, sda1
-	State   string // rw, ro, evacuating, ...
-	Size    uint64
-	Used    uint64
-	Leaving uint64 // data still to move off it
+	Index       int
+	Label       string
+	Name        string // vdb, sda1
+	State       string // rw, ro, evacuating, ...
+	Size        uint64
+	Used        uint64
+	UsedPercent int
+	Leaving     uint64 // data still to move off it
 }
 
-var deviceRowRE = regexp.MustCompile(`^(.*) \(device (\d+)\):\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)\s+\d+%(?:\s+(\d+))?\s*$`)
+// FSUsage is the cache, reconcile and per-device breakdown from `bcachefs fs
+// usage`, in bytes.
+type FSUsage struct {
+	CachedBytes   uint64
+	ReconcileData uint64
+	ReconcileMeta uint64
+	Devices       []DeviceUsage
+}
+
+var (
+	deviceRowRE    = regexp.MustCompile(`^(.*) \(device (\d+)\):\s+(\S+)\s+(\S+)\s+(\d+)\s+(\d+)\s+(\d+)%(?:\s+(\d+))?\s*$`)
+	cachedRE       = regexp.MustCompile(`^\s*cached:\s+(\d+)\s*$`)
+	reconcileRowRE = regexp.MustCompile(`^\s*[a-zA-Z0-9_ -]+:\s+(\d+)\s+(\d+)\s*$`)
+)
+
+// FSUsage reads cache, pending reconcile and per-device usage for mountpoint.
+func (c *Client) FSUsage(ctx context.Context, mountpoint string) (FSUsage, error) {
+	out, err := c.run(ctx, "bcachefs", "fs", "usage", mountpoint)
+	if err != nil {
+		return FSUsage{}, err
+	}
+	u := parseFSUsage(out)
+	if len(u.Devices) == 0 {
+		return FSUsage{}, fmt.Errorf("bcachefs fs usage %s: no device rows", mountpoint)
+	}
+	return u, nil
+}
 
 // DeviceUsage reads how full each member of the mounted pool is.
 func (c *Client) DeviceUsage(ctx context.Context, mountpoint string) ([]DeviceUsage, error) {
-	out, err := c.run(ctx, "bcachefs", "fs", "usage", mountpoint)
+	u, err := c.FSUsage(ctx, mountpoint)
 	if err != nil {
 		return nil, err
 	}
-	rows := parseDeviceUsage(out)
-	if len(rows) == 0 {
-		return nil, fmt.Errorf("bcachefs fs usage %s: no device rows", mountpoint)
-	}
-	return rows, nil
+	return u.Devices, nil
 }
 
 func parseDeviceUsage(out string) []DeviceUsage {
-	var rows []DeviceUsage
+	return parseFSUsage(out).Devices
+}
+
+func parseFSUsage(out string) FSUsage {
+	var u FSUsage
+	inReconcile := false
 	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if m := cachedRE.FindStringSubmatch(line); m != nil {
+			u.CachedBytes, _ = strconv.ParseUint(m[1], 10, 64)
+		}
+		if strings.HasPrefix(trimmed, "Pending reconcile:") {
+			inReconcile = true
+			continue
+		}
+		if inReconcile {
+			if trimmed == "" || strings.HasPrefix(trimmed, "Device label") {
+				inReconcile = false
+			} else if m := reconcileRowRE.FindStringSubmatch(line); m != nil {
+				d, _ := strconv.ParseUint(m[1], 10, 64)
+				md, _ := strconv.ParseUint(m[2], 10, 64)
+				u.ReconcileData += d
+				u.ReconcileMeta += md
+			}
+		}
 		m := deviceRowRE.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}
-		u := DeviceUsage{Label: m[1], Name: m[3], State: m[4]}
-		if u.Label == "(no label)" {
-			u.Label = ""
+		row := DeviceUsage{Label: m[1], Name: m[3], State: m[4]}
+		if row.Label == "(no label)" {
+			row.Label = ""
 		}
-		u.Index, _ = strconv.Atoi(m[2])
-		u.Size, _ = strconv.ParseUint(m[5], 10, 64)
-		u.Used, _ = strconv.ParseUint(m[6], 10, 64)
-		if m[7] != "" {
-			u.Leaving, _ = strconv.ParseUint(m[7], 10, 64)
+		row.Index, _ = strconv.Atoi(m[2])
+		row.Size, _ = strconv.ParseUint(m[5], 10, 64)
+		row.Used, _ = strconv.ParseUint(m[6], 10, 64)
+		row.UsedPercent, _ = strconv.Atoi(m[7])
+		if m[8] != "" {
+			row.Leaving, _ = strconv.ParseUint(m[8], 10, 64)
 		}
-		rows = append(rows, u)
+		u.Devices = append(u.Devices, row)
 	}
-	return rows
+	return u
 }
 
 // wipeHead is how much of a device Wipe zeroes. A member's second superblock

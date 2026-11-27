@@ -4,7 +4,7 @@
   import Help from "#lib/components/Help.svelte";
   import RowMenu from "#lib/components/RowMenu.svelte";
   import { ago, bytes } from "#lib/format.ts";
-  import { browseHref, capacity, folderName, measuredAt, segments, swatchOf, usedBy } from "#lib/storage.ts";
+  import { browseHref, canEditSubvolumeProfile, capacity, effectiveCopies, folderName, isTiered, measuredAt, profileLabel, segments, swatchOf, usedBy } from "#lib/storage.ts";
   import StackChips from "./StackChips.svelte";
 
   type Pool = Schema<"Pool">;
@@ -18,9 +18,10 @@
     measuring: boolean;
     onMeasure: () => void;
     onNew: (p: Pool) => void;
+    onProfile?: (p: Pool, f: Subvolume) => void;
     onDelete: (path: string) => void;
   }
-  let { groups, stacks, busy, measuring, onMeasure, onNew, onDelete }: Props = $props();
+  let { groups, stacks, busy, measuring, onMeasure, onNew, onProfile, onDelete }: Props = $props();
 
   const all = $derived(groups.flatMap((g) => g.folders));
   /** One pool: its band is the box's own; several: a band per pool. */
@@ -57,6 +58,9 @@
   {#each groups as g (g.pool.uuid)}
     {@const cap = capacity(g.pool)}
     {@const segs = cap ? segments(g.folders, cap.total, g.pool.mountdir, cap.used) : []}
+    {@const tiered = isTiered(g.pool)}
+    {@const editable = canEditSubvolumeProfile(g.pool)}
+    {@const poolCopies = Math.max(1, g.pool.data_replicas || 1)}
     {#if !single}
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-y border-line px-3 py-1.5">
         <h3 class="font-semibold">{g.pool.name}</h3>
@@ -70,6 +74,13 @@
           <tr class="border-b border-line">
             <th scope="col" class="label px-3 py-2">Subvolume</th>
             <th scope="col" class="label px-3 py-2 text-right">Size</th>
+            {#if editable}
+              <th scope="col" class="label px-3 py-2 whitespace-nowrap max-sm:hidden">
+                <Help label="Profile">
+                  Where files are kept and how many copies the pool holds. Hot stays on SSD; Cached writes to SSD and moves to HDD; Cold stays on HDD.
+                </Help>
+              </th>
+            {/if}
             <th scope="col" class="label px-3 py-2 whitespace-nowrap max-sm:hidden">Used by</th>
             <th scope="col" class="px-3 py-2"><span class="sr-only">Actions</span></th>
           </tr>
@@ -79,6 +90,12 @@
             {@const name = folderName(f.path, g.pool.mountdir)}
             {@const users = usedBy(f.path, stacks)}
             {@const swatch = swatchOf(segs, name, f.used_bytes > 0)}
+            {@const copies = effectiveCopies(g.pool, f)}
+            {@const copiesCustom = !!f.data_replicas && f.data_replicas !== poolCopies}
+            {@const menuItems = [
+              ...(editable && onProfile ? [{ label: "Storage profile…", disabled: busy, onSelect: () => onProfile(g.pool, f) }] : []),
+              { label: users.length > 0 ? "Delete… (in use)" : "Delete…", danger: true, disabled: busy || users.length > 0, onSelect: () => onDelete(f.path) },
+            ]}
             <tr class="border-b border-line last:border-0">
               <td class="px-3 py-2">
                 <span class="inline-flex items-center gap-2">
@@ -90,6 +107,20 @@
                 {/if}
               </td>
               <td class="px-3 py-2 text-right whitespace-nowrap">{f.used_bytes < 0 ? "–" : bytes(f.used_bytes)}</td>
+              {#if editable}
+                <td class="px-3 py-2 whitespace-nowrap max-sm:hidden">
+                  {#if tiered && f.profile}
+                    <span class={f.profile === "cached" ? "text-muted" : ""}>{profileLabel[f.profile]}</span>
+                    {#if copiesCustom}
+                      <span class={copies === 1 && poolCopies > 1 ? "text-warn" : "text-muted"}>· {copies}×</span>
+                    {/if}
+                  {:else if tiered}
+                    <span class="text-muted">{copiesCustom ? `${copies}×` : "–"}</span>
+                  {:else}
+                    <span class={copiesCustom && copies === 1 && poolCopies > 1 ? "text-warn" : copiesCustom ? "" : "text-muted"}>{copies}×</span>
+                  {/if}
+                </td>
+              {/if}
               <td class="px-3 py-2 max-sm:hidden">
                 {#if users.length > 0}
                   <span class="flex flex-wrap gap-1"><StackChips names={users} {stacks} /></span>
@@ -98,14 +129,11 @@
                 {/if}
               </td>
               <td class="px-3 py-2 text-right">
-                <RowMenu
-                  name={f.path}
-                  items={[{ label: users.length > 0 ? "Delete… (in use)" : "Delete…", danger: true, disabled: busy || users.length > 0, onSelect: () => onDelete(f.path) }]}
-                />
+                <RowMenu name={f.path} items={menuItems} />
               </td>
             </tr>
           {:else}
-            <tr><td colspan="4" class="px-3 py-3 text-muted">No subvolumes yet.</td></tr>
+            <tr><td colspan={editable ? 5 : 4} class="px-3 py-3 text-muted">No subvolumes yet.</td></tr>
           {/each}
         </tbody>
       </table>

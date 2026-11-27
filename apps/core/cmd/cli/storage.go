@@ -1,10 +1,12 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/urfave/cli/v2"
@@ -62,6 +64,35 @@ func storageBaseCmd() *cli.Command {
 				}
 				return emit(c, nil, "Created subvolume "+p)
 			}},
+			{
+				Name:      "subvolume-profile",
+				Usage:     "Change placement profile or copy count on a bcachefs subvolume",
+				ArgsUsage: "<path>",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "profile", Usage: "placement on a tiered pool: hot, cached or cold"},
+					&cli.IntFlag{Name: "copies", Value: -1, Usage: "copies kept for this subvolume; 0 resets to pool default"},
+				},
+				Action: func(c *cli.Context) error {
+					if err := requireArgs(c, 1, "homelab storage subvolume-profile <path>"); err != nil {
+						return err
+					}
+					profile := c.String("profile")
+					hasCopies := c.IsSet("copies")
+					if profile == "" && !hasCopies {
+						return errors.New("set --profile or --copies")
+					}
+					p := c.Args().First()
+					req := storage.SubvolumeProfileRequest{Path: p, Profile: profile}
+					if hasCopies {
+						copies := c.Int("copies")
+						req.Copies = &copies
+					}
+					if err := send(c.Context, http.MethodPatch, "/storage/subvolume", req); err != nil {
+						return err
+					}
+					return emit(c, nil, "Updated subvolume "+p)
+				},
+			},
 			{Name: "subvolume-delete", Usage: "Delete an empty bcachefs subvolume", ArgsUsage: "<path>", Action: func(c *cli.Context) error {
 				if err := requireArgs(c, 1, "homelab storage subvolume-delete <path>"); err != nil {
 					return err
@@ -191,12 +222,42 @@ func printStorageStatus(c *cli.Context, st *storage.StorageStatus) error {
 	for _, p := range st.Pools {
 		fmt.Printf("\n%s: %d copies\n", p.Name, max(p.DataReplicas, 1))
 		d := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-		fmt.Fprintln(d, "  DISK\tKIND\tSIZE\tSTATE\tMODEL")
+		fmt.Fprintln(d, "  DISK\tKIND\tUSED\tSIZE\tUSE%\tSTATE\tMODEL")
 		for _, disk := range p.Disks {
-			fmt.Fprintf(d, "  %s\t%s\t%s\t%s\t%s\n", disk.Path, disk.Kind, fmtStorageBytes(uint64(disk.Size)), disk.State, disk.FriendlyName)
+			dUsed, dPct := "-", "-"
+			if disk.Usage != nil {
+				dUsed = fmtStorageBytes(uint64(max(disk.Usage.UsedBytes, 0)))
+				dPct = fmt.Sprintf("%d%%", disk.Usage.UsedPercent)
+			}
+			fmt.Fprintf(d, "  %s\t%s\t%s\t%s\t%s\t%s\t%s\n", disk.Path, disk.Kind, dUsed, fmtStorageBytes(uint64(disk.Size)), dPct, disk.State, disk.FriendlyName)
 		}
 		if err := d.Flush(); err != nil {
 			return err
+		}
+		if p.Usage != nil {
+			if p.Usage.CachedBytes > 0 {
+				fmt.Printf("  cache: %s cached on SSD\n", fmtStorageBytes(uint64(p.Usage.CachedBytes)))
+			}
+			if p.Usage.ReconcileDataBytes > 0 || p.Usage.ReconcileMetadataBytes > 0 {
+				var parts []string
+				if p.Usage.ReconcileDataBytes > 0 {
+					parts = append(parts, fmtStorageBytes(uint64(p.Usage.ReconcileDataBytes))+" data")
+				}
+				if p.Usage.ReconcileMetadataBytes > 0 {
+					meta := fmtStorageBytes(uint64(p.Usage.ReconcileMetadataBytes)) + " metadata"
+					ssdCount := 0
+					for _, disk := range p.Disks {
+						if disk.Kind == "ssd" {
+							ssdCount++
+						}
+					}
+					if p.MetadataTarget == "ssd" && p.MetadataReplicas > ssdCount {
+						meta += fmt.Sprintf(" (%d copies on %d SSD)", p.MetadataReplicas, ssdCount)
+					}
+					parts = append(parts, meta)
+				}
+				fmt.Printf("  pending reconcile: %s\n", strings.Join(parts, ", "))
+			}
 		}
 		if op := p.Operation; op != nil {
 			line := fmt.Sprintf("  removing %s: %s", op.Disk, op.Phase)

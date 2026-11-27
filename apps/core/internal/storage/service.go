@@ -258,6 +258,28 @@ func (s *Service) compute(ctx context.Context) (StorageStatus, error) {
 			} else {
 				s.log.Error("failed to get pool usage", "mountdir", p.Mountdir, "error", err)
 			}
+			if fsu, err := s.bc.FSUsage(ctx, p.Mountdir); err == nil {
+				byName := make(map[string]bcachefs.DeviceUsage, len(fsu.Devices))
+				for _, du := range fsu.Devices {
+					byName[du.Name] = du
+				}
+				for j := range p.Disks {
+					if du, ok := byName[p.Disks[j].Name]; ok {
+						p.Disks[j].Usage = &bcachefs.DiskUsage{
+							SizeBytes:   du.Size,
+							UsedBytes:   du.Used,
+							UsedPercent: du.UsedPercent,
+						}
+					}
+				}
+				if p.Usage != nil {
+					p.Usage.CachedBytes = fsu.CachedBytes
+					p.Usage.ReconcileDataBytes = fsu.ReconcileData
+					p.Usage.ReconcileMetadataBytes = fsu.ReconcileMeta
+				}
+			} else {
+				s.log.Debug("failed to read bcachefs fs usage", "mountdir", p.Mountdir, "error", err)
+			}
 		}
 		for _, d := range p.Disks {
 			if d.Name != "" {
@@ -290,8 +312,30 @@ func (s *Service) compute(ctx context.Context) (StorageStatus, error) {
 	for _, p := range pools {
 		if p.State == "mounted" && p.Mountdir != "" {
 			if subs, err := s.bc.ListSubvolumes(ctx, p.Mountdir); err == nil {
+				paths := make([]string, len(subs))
+				for i, sv := range subs {
+					paths[i] = sv.Path
+				}
+				var opts map[string]bcachefs.FileOptions
+				if len(paths) > 0 {
+					var oerr error
+					opts, oerr = s.bc.GetFileOptions(ctx, paths)
+					if oerr != nil {
+						s.log.Debug("failed to read subvolume options", "mountdir", p.Mountdir, "error", oerr)
+						opts = nil
+					}
+				}
 				for _, sv := range subs {
-					subvolumes = append(subvolumes, Subvolume{Id: sv.ID, Path: sv.Path, UsedBytes: sv.UsedBytes})
+					out := Subvolume{Id: sv.ID, Path: sv.Path, UsedBytes: sv.UsedBytes}
+					if opts != nil {
+						o := opts[filepath.Clean(sv.Path)]
+						out.Profile = classifyProfile(p, o)
+						out.DataReplicas = o.DataReplicas
+						out.ForegroundTarget = o.ForegroundTarget
+						out.BackgroundTarget = o.BackgroundTarget
+						out.PromoteTarget = o.PromoteTarget
+					}
+					subvolumes = append(subvolumes, out)
 				}
 			}
 		}
@@ -480,6 +524,13 @@ func toDisk(d bcachefs.Disk) Disk {
 			IoInProgress: int64(d.IO.IOInProgress),
 		}
 	}
+	if d.Usage != nil {
+		out.Usage = &DiskUsage{
+			SizeBytes:   int64(d.Usage.SizeBytes),
+			UsedBytes:   int64(d.Usage.UsedBytes),
+			UsedPercent: d.Usage.UsedPercent,
+		}
+	}
 	return out
 }
 
@@ -496,8 +547,13 @@ func toPool(p bcachefs.Pool, autoMount bool) Pool {
 	}
 	if p.Usage != nil {
 		out.Usage = &PoolUsage{
-			TotalBytes: int64(p.Usage.TotalBytes), UsedBytes: int64(p.Usage.UsedBytes),
-			AvailableBytes: int64(p.Usage.AvailableBytes), UsedPercent: p.Usage.UsedPercent,
+			TotalBytes:             int64(p.Usage.TotalBytes),
+			UsedBytes:              int64(p.Usage.UsedBytes),
+			AvailableBytes:         int64(p.Usage.AvailableBytes),
+			UsedPercent:            p.Usage.UsedPercent,
+			CachedBytes:            int64(p.Usage.CachedBytes),
+			ReconcileDataBytes:     int64(p.Usage.ReconcileDataBytes),
+			ReconcileMetadataBytes: int64(p.Usage.ReconcileMetadataBytes),
 		}
 	}
 	return out

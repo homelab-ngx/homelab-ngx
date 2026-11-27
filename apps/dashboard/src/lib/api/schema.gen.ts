@@ -2381,7 +2381,11 @@ export interface paths {
         delete: operations["deleteSubvolume"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Change placement profile or copy count on a subvolume.
+         * @description `404 unknown_subvolume` when the path is not a subvolume on a mounted pool, `409 pool_not_tiered` when setting a placement profile on an untiered pool, `409 too_few_disks` when copies exceeds the pool's disk count, `409 image_too_old` on older tools.
+         */
+        patch: operations["updateSubvolume"];
         trace?: never;
     };
     "/storage/subvolume-usage": {
@@ -3372,6 +3376,8 @@ export interface components {
             /** @description A pool member's state: rw, ro, evacuating. Empty for a spare disk. */
             state: string;
             type: string;
+            /** @description Space used on this disk in a mounted pool. */
+            usage?: components["schemas"]["DiskUsage"];
         };
         DiskHealth: {
             /**
@@ -3400,6 +3406,14 @@ export interface components {
             write_ios: number;
             /** Format: int64 */
             write_sectors: number;
+        };
+        DiskUsage: {
+            /** Format: int64 */
+            size_bytes: number;
+            /** Format: int64 */
+            used_bytes: number;
+            /** Format: int64 */
+            used_percent: number;
         };
         Domain: {
             /** @description Contact for the certificate authority; optional. */
@@ -4389,6 +4403,21 @@ export interface components {
         PoolUsage: {
             /** Format: int64 */
             available_bytes: number;
+            /**
+             * Format: int64
+             * @description Bytes held in the pool's SSD cache.
+             */
+            cached_bytes?: number;
+            /**
+             * Format: int64
+             * @description Data bytes waiting for background reconcile.
+             */
+            reconcile_data_bytes?: number;
+            /**
+             * Format: int64
+             * @description Metadata bytes waiting for background reconcile.
+             */
+            reconcile_metadata_bytes?: number;
             /** Format: int64 */
             total_bytes: number;
             /** Format: int64 */
@@ -5460,6 +5489,15 @@ export interface components {
             unassigned: components["schemas"]["Disk"][];
         };
         Subvolume: {
+            /** @description Explicit background_target override, when set. */
+            background_target?: string;
+            /**
+             * Format: int64
+             * @description Per-subvolume copy override; omitted when inheriting the pool's data_replicas.
+             */
+            data_replicas?: number;
+            /** @description Explicit foreground_target override, when set. */
+            foreground_target?: string;
             id: string;
             /**
              * Format: date-time
@@ -5468,10 +5506,31 @@ export interface components {
             measured_at?: string;
             path: string;
             /**
+             * @description Placement profile on a tiered pool.
+             * @enum {string}
+             */
+            profile?: "hot" | "cached" | "cold" | "custom";
+            /** @description Explicit promote_target override, when set. */
+            promote_target?: string;
+            /**
              * Format: int64
              * @description -1 if not yet measured.
              */
             used_bytes: number;
+        };
+        SubvolumeProfileRequest: {
+            /**
+             * Format: int64
+             * @description Copies kept for this subvolume; 0 resets to the pool default.
+             */
+            copies?: number;
+            /** @description Absolute path of the subvolume. */
+            path: string;
+            /**
+             * @description Placement profile on a tiered pool.
+             * @enum {string}
+             */
+            profile?: "hot" | "cached" | "cold";
         };
         SubvolumeRequest: {
             path: string;
@@ -15649,6 +15708,47 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description No Content */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    updateSubvolume: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SubvolumeProfileRequest"];
+            };
+        };
         responses: {
             /** @description No Content */
             204: {

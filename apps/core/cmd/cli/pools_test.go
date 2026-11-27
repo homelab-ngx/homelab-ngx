@@ -134,3 +134,66 @@ func TestStorageStatusListsSpareDisks(t *testing.T) {
 		}
 	}
 }
+
+func TestSubvolumeProfileCommand(t *testing.T) {
+	var seen []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("PATCH /api/storage/subvolume", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var compact map[string]any
+		if err := json.Unmarshal(body, &compact); err != nil {
+			t.Fatalf("body %q: %v", body, err)
+		}
+		b, _ := json.Marshal(compact)
+		seen = append(seen, string(b))
+		w.WriteHeader(http.StatusNoContent)
+	})
+	serve(t, mux)
+
+	if err := runApp(t, "storage", "subvolume-profile", "/var/mnt/tank/media"); err == nil {
+		t.Fatal("expected error when neither --profile nor --copies is passed")
+	}
+	for _, args := range [][]string{
+		{"storage", "subvolume-profile", "--profile", "cold", "/var/mnt/tank/media"},
+		{"storage", "subvolume-profile", "--profile", "hot", "--copies", "1", "/var/mnt/tank/scratch"},
+		{"storage", "subvolume-profile", "--copies", "0", "/var/mnt/tank/scratch"},
+	} {
+		if err := runApp(t, args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	want := []string{
+		`{"path":"/var/mnt/tank/media","profile":"cold"}`,
+		`{"copies":1,"path":"/var/mnt/tank/scratch","profile":"hot"}`,
+		`{"copies":0,"path":"/var/mnt/tank/scratch"}`,
+	}
+	if strings.Join(seen, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("requests:\n%s\nwant:\n%s", strings.Join(seen, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestStorageStatusShowsDiskUsageCacheAndReconcile(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/storage", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"pools":[{
+			"uuid":"u-1","name":"tank","state":"mounted","mountdir":"/var/mnt/tank",
+			"data_replicas":2,"metadata_replicas":2,"metadata_target":"ssd",
+			"usage":{"total_bytes":1000,"used_bytes":500,"available_bytes":500,"used_percent":50,"cached_bytes":4294967296,"reconcile_metadata_bytes":2097152},
+			"disks":[
+				{"path":"/dev/sdb","kind":"ssd","size":1073741824,"state":"rw","friendly_name":"SSD","usage":{"size_bytes":1073741824,"used_bytes":536870912,"used_percent":50}},
+				{"path":"/dev/sdc","kind":"hdd","size":4294967296,"state":"rw","friendly_name":"HDD"}
+			]
+		}],"subvolumes":[],"partitions":[],"unassigned":[]}`)
+	})
+	serve(t, mux)
+	out, err := captureStdout(t, func() error { return runApp(t, "storage", "status") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"USED", "512.0 MB", "50%", "cache: 4.0 GB cached on SSD", "pending reconcile: 2.0 MB metadata (2 copies on 1 SSD)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status lacks %q:\n%s", want, out)
+		}
+	}
+}

@@ -11,6 +11,7 @@
   import PoolBox from "#lib/components/storage/PoolBox.svelte";
   import RemoveDiskDialog from "#lib/components/storage/RemoveDiskDialog.svelte";
   import SpareBox from "#lib/components/storage/SpareBox.svelte";
+  import SubvolumeProfileDialog from "#lib/components/storage/SubvolumeProfileDialog.svelte";
   import SubvolumesBox from "#lib/components/storage/SubvolumesBox.svelte";
   import Switch from "#lib/components/Switch.svelte";
   import SystemDisk from "#lib/components/SystemDisk.svelte";
@@ -21,6 +22,7 @@
   type Pool = Schema<"Pool">;
   type Disk = Schema<"Disk">;
   type Partition = Schema<"Partition">;
+  type Subvolume = Schema<"Subvolume">;
   type StorageStatus = Schema<"StorageStatus">;
 
   const key = ["daemon", "storage"] as const;
@@ -63,6 +65,7 @@
     | { kind: "add"; pool: Pool }
     | { kind: "remove"; pool: Pool; disk: Disk }
     | { kind: "delete"; pool: Pool }
+    | { kind: "profile"; pool: Pool; subvolume: Subvolume }
     | null
   >(null);
   /** The names taken under /var/mnt. */
@@ -203,6 +206,7 @@
       measuring={measure.isPending}
       onMeasure={() => measure.mutate(groups.flatMap((g) => g.folders.map((f) => f.path)))}
       onNew={(p) => (newSubvolume = p)}
+      onProfile={(pool, subvolume) => (dialog = { kind: "profile", pool, subvolume })}
       onDelete={askDelete}
     />
   {/if}
@@ -259,6 +263,8 @@
   <RemoveDiskDialog pool={dialog.pool} disk={dialog.disk} onClose={() => (dialog = null)} />
 {:else if dialog?.kind === "delete"}
   <DeletePoolDialog pool={dialog.pool} users={usedBy(dialog.pool.mountdir, stacks.data ?? []).map(title)} onClose={() => (dialog = null)} />
+{:else if dialog?.kind === "profile"}
+  <SubvolumeProfileDialog pool={dialog.pool} subvolume={dialog.subvolume} onClose={() => (dialog = null)} />
 {/if}
 
 {#if confirm}

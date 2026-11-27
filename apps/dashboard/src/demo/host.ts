@@ -243,7 +243,7 @@ function seedStack(s: StackSeed, i: number, now: number): Stack {
   };
 }
 
-function disk(name: string, model: string, size: number, label: string, health: Partial<Schema<"DiskHealth">>, now: number): Disk {
+function disk(name: string, model: string, size: number, label: string, health: Partial<Schema<"DiskHealth">>, now: number, used?: number): Disk {
   return {
     name,
     path: `/dev/${name}`,
@@ -261,6 +261,7 @@ function disk(name: string, model: string, size: number, label: string, health: 
     kind: label.startsWith("ssd") ? "ssd" : "hdd",
     contents: "",
     state: "rw",
+    ...(used !== undefined ? { usage: { size_bytes: size, used_bytes: used, used_percent: Math.round((used / size) * 100) } } : {}),
     health: { bad_sectors: 0, checked_at: iso(now - 20 * MIN), passed: true, power_on_hours: 11200, temperature_c: 34, ...health },
   };
 }
@@ -424,17 +425,17 @@ export function newHost(now: () => number = Date.now): Host {
   const { backups, destinations } = seedBackups(t);
 
   const disks = [
-    disk("sda", "WDC WD120EFBX", 12 * TB, "hdd.a", { power_on_hours: 18400, temperature_c: 36 }, t),
-    disk("sdb", "ST8000VN004", 8 * TB, "hdd.b", { power_on_hours: 31700, temperature_c: 39, bad_sectors: 8 }, t),
-    disk("nvme1n1", "Samsung SSD 990 PRO 1TB", 1 * TB, "ssd.a", { power_on_hours: 6100, temperature_c: 44 }, t),
+    disk("sda", "WDC WD120EFBX", 12 * TB, "hdd.a", { power_on_hours: 18400, temperature_c: 36 }, t, 3.8 * TB),
+    disk("sdb", "ST8000VN004", 8 * TB, "hdd.b", { power_on_hours: 31700, temperature_c: 39, bad_sectors: 8 }, t, 2.5 * TB),
+    disk("nvme1n1", "Samsung SSD 990 PRO 1TB", 1 * TB, "ssd.a", { power_on_hours: 6100, temperature_c: 44 }, t, 920 * GB),
   ];
   // Raw figures: with two copies of each file, half of this is usable.
   const used = 9.6 * TB;
   const total = 21 * TB;
   // A second pool of two fast disks, mirrored, for databases and app data.
   const fast = [
-    disk("nvme2n1", "WD Black SN850X 2TB", 2 * TB, "nvme.a", { power_on_hours: 4200, temperature_c: 47 }, t),
-    disk("nvme3n1", "WD Black SN850X 2TB", 2 * TB, "nvme.b", { power_on_hours: 4200, temperature_c: 46 }, t),
+    disk("nvme2n1", "WD Black SN850X 2TB", 2 * TB, "nvme.a", { power_on_hours: 4200, temperature_c: 47 }, t, 550 * GB),
+    disk("nvme3n1", "WD Black SN850X 2TB", 2 * TB, "nvme.b", { power_on_hours: 4200, temperature_c: 46 }, t, 550 * GB),
   ];
   const fastUsed = 1.1 * TB;
 
@@ -514,7 +515,14 @@ export function newHost(now: () => number = Date.now): Host {
           background_target: "hdd",
           metadata_target: "ssd",
           disks,
-          usage: { total_bytes: total, used_bytes: used, available_bytes: total - used, used_percent: (used / total) * 100 },
+          usage: {
+            total_bytes: total,
+            used_bytes: used,
+            available_bytes: total - used,
+            used_percent: (used / total) * 100,
+            cached_bytes: 840 * GB,
+            reconcile_metadata_bytes: 4.8 * GB,
+          },
         },
         {
           name: "apps",
@@ -535,10 +543,10 @@ export function newHost(now: () => number = Date.now): Host {
         },
       ],
       subvolumes: [
-        { id: "256", path: "/var/mnt/tank/photos", used_bytes: 1.1 * TB, measured_at: iso(t - HOUR) },
-        { id: "257", path: "/var/mnt/tank/media", used_bytes: 3.4 * TB, measured_at: iso(t - HOUR) },
-        { id: "258", path: "/var/mnt/tank/documents", used_bytes: 41 * GB, measured_at: iso(t - HOUR) },
-        { id: "259", path: "/var/mnt/tank/scratch", used_bytes: 220 * GB, measured_at: iso(t - HOUR) },
+        { id: "256", path: "/var/mnt/tank/photos", used_bytes: 1.1 * TB, measured_at: iso(t - HOUR), profile: "cached" },
+        { id: "257", path: "/var/mnt/tank/media", used_bytes: 3.4 * TB, measured_at: iso(t - HOUR), profile: "cold" },
+        { id: "258", path: "/var/mnt/tank/documents", used_bytes: 41 * GB, measured_at: iso(t - HOUR), profile: "hot" },
+        { id: "259", path: "/var/mnt/tank/scratch", used_bytes: 220 * GB, measured_at: iso(t - HOUR), profile: "cached", data_replicas: 1 },
         { id: "256", path: "/var/mnt/apps/databases", used_bytes: 310 * GB, measured_at: iso(t - HOUR) },
         { id: "257", path: "/var/mnt/apps/appdata", used_bytes: 180 * GB, measured_at: iso(t - HOUR) },
       ],
@@ -1069,6 +1077,35 @@ export function deletePool(h: Host, uuid: string, confirm: string | null) {
   h.storage.pools = h.storage.pools.filter((x) => x !== p);
   h.storage.subvolumes = h.storage.subvolumes.filter((s) => !s.path.startsWith(`${p.mountdir}/`));
   h.storage.unassigned.push(...p.disks.map((d) => ({ ...d, fstype: "", label: "", bcachefs_label: "", state: "", contents: "", data_target: "", metadata_target: "" })));
+}
+
+export function updateSubvolumeProfile(h: Host, body: Record<string, unknown>) {
+  const path = String(body.path ?? "");
+  const profile = body.profile === undefined ? undefined : String(body.profile);
+  const copies = body.copies === undefined ? undefined : Number(body.copies);
+  if (profile === undefined && copies === undefined) throw new DemoProblem(400, "invalid_profile", "choose a placement profile or copy count");
+  if (profile !== undefined && profile !== "hot" && profile !== "cached" && profile !== "cold") {
+    throw new DemoProblem(400, "invalid_profile", `invalid profile ${profile}`);
+  }
+  if (copies !== undefined && (!Number.isInteger(copies) || copies < 0 || copies > 3)) {
+    throw new DemoProblem(400, "invalid_profile", "copies must be 0..3");
+  }
+  const pool = h.storage.pools.find((p) => p.state === "mounted" && p.mountdir && path.startsWith(`${p.mountdir}/`));
+  const sv = pool && h.storage.subvolumes.find((s) => s.path === path);
+  if (!pool || !sv) throw new DemoProblem(404, "unknown_subvolume", `no such subvolume: ${path}`);
+  if (profile !== undefined) {
+    const fast = pool.foreground_target || pool.promote_target;
+    if (!fast || !pool.background_target || fast === pool.background_target) {
+      throw new DemoProblem(409, "pool_not_tiered", "this pool does not have separate SSD and HDD tiers");
+    }
+    sv.profile = profile;
+  }
+  if (copies !== undefined) {
+    if (copies > pool.disks.length) throw new DemoProblem(409, "too_few_disks", `the pool has ${pool.disks.length} disks`);
+    const poolCopies = Math.max(1, pool.data_replicas || 1);
+    if (copies === 0 || copies === poolCopies) delete sv.data_replicas;
+    else sv.data_replicas = copies;
+  }
 }
 
 /** The power profile on the demo's Ryzen: amd-pstate-epp, no package states, a Realtek NIC and a UPS on USB. */

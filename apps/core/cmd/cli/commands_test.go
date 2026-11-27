@@ -23,7 +23,7 @@ func TestOperationalCommandsAreExposed(t *testing.T) {
 		{servicesCmd(), []string{"status", "start", "stop", "restart", "logs"}},
 		{backupCmd(), []string{"status", "show", "run", "cancel", "preview", "preview-show", "enable", "disable", "logs", "runs", "run-show", "coverage", "dest"}},
 		{destCmd(), []string{"list", "add", "set", "rm", "test", "confirm", "reveal"}},
-		{storageCmd(), []string{"mount", "unmount", "usage", "subvolume-create", "subvolume-delete",
+		{storageCmd(), []string{"mount", "unmount", "usage", "subvolume-create", "subvolume-profile", "subvolume-delete",
 			"pool-create", "pool-add-disk", "pool-remove-disk", "pool-cancel", "pool-delete"}},
 		{hostCmd(), []string{"core-services", "version"}},
 		{systemCmd(), []string{"reboot", "poweroff", "status", "cancel", "profile"}},

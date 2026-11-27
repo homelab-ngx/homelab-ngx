@@ -1920,6 +1920,10 @@
           },
           "type": {
             "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/DiskUsage",
+            "description": "Space used on this disk in a mounted pool."
           }
         },
         "required": [
@@ -2010,6 +2014,29 @@
           "read_sectors",
           "write_ios",
           "write_sectors"
+        ],
+        "type": "object"
+      },
+      "DiskUsage": {
+        "additionalProperties": false,
+        "properties": {
+          "size_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "used_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "used_percent": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "size_bytes",
+          "used_bytes",
+          "used_percent"
         ],
         "type": "object"
       },
@@ -4922,6 +4949,21 @@
         "additionalProperties": false,
         "properties": {
           "available_bytes": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "cached_bytes": {
+            "description": "Bytes held in the pool's SSD cache.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "reconcile_data_bytes": {
+            "description": "Data bytes waiting for background reconcile.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "reconcile_metadata_bytes": {
+            "description": "Metadata bytes waiting for background reconcile.",
             "format": "int64",
             "type": "integer"
           },
@@ -7977,6 +8019,19 @@
       "Subvolume": {
         "additionalProperties": false,
         "properties": {
+          "background_target": {
+            "description": "Explicit background_target override, when set.",
+            "type": "string"
+          },
+          "data_replicas": {
+            "description": "Per-subvolume copy override; omitted when inheriting the pool's data_replicas.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "foreground_target": {
+            "description": "Explicit foreground_target override, when set.",
+            "type": "string"
+          },
           "id": {
             "type": "string"
           },
@@ -7986,6 +8041,20 @@
             "type": "string"
           },
           "path": {
+            "type": "string"
+          },
+          "profile": {
+            "description": "Placement profile on a tiered pool.",
+            "enum": [
+              "hot",
+              "cached",
+              "cold",
+              "custom"
+            ],
+            "type": "string"
+          },
+          "promote_target": {
+            "description": "Explicit promote_target override, when set.",
             "type": "string"
           },
           "used_bytes": {
@@ -7998,6 +8067,36 @@
           "id",
           "path",
           "used_bytes"
+        ],
+        "type": "object"
+      },
+      "SubvolumeProfileRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "copies": {
+            "description": "Copies kept for this subvolume; 0 resets to the pool default.",
+            "format": "int64",
+            "maximum": 3,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "path": {
+            "description": "Absolute path of the subvolume.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "profile": {
+            "description": "Placement profile on a tiered pool.",
+            "enum": [
+              "hot",
+              "cached",
+              "cold"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
         ],
         "type": "object"
       },
@@ -26443,6 +26542,67 @@
           }
         },
         "summary": "Delete an empty subvolume.",
+        "tags": [
+          "storage"
+        ]
+      },
+      "patch": {
+        "description": "`404 unknown_subvolume` when the path is not a subvolume on a mounted pool, `409 pool_not_tiered` when setting a placement profile on an untiered pool, `409 too_few_disks` when copies exceeds the pool's disk count, `409 image_too_old` on older tools.",
+        "operationId": "updateSubvolume",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SubvolumeProfileRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Change placement profile or copy count on a subvolume.",
         "tags": [
           "storage"
         ]

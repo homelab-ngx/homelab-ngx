@@ -27,10 +27,20 @@ type DiskHealth struct {
 
 // PoolUsage is reported by `bcachefs fs usage`.
 type PoolUsage struct {
-	AvailableBytes int64   `json:"available_bytes"`
-	TotalBytes     int64   `json:"total_bytes"`
-	UsedBytes      int64   `json:"used_bytes"`
-	UsedPercent    float64 `json:"used_percent"`
+	AvailableBytes         int64   `json:"available_bytes"`
+	CachedBytes            int64   `json:"cached_bytes,omitempty" doc:"Bytes held in the pool's SSD cache."`
+	ReconcileDataBytes     int64   `json:"reconcile_data_bytes,omitempty" doc:"Data bytes waiting for background reconcile."`
+	ReconcileMetadataBytes int64   `json:"reconcile_metadata_bytes,omitempty" doc:"Metadata bytes waiting for background reconcile."`
+	TotalBytes             int64   `json:"total_bytes"`
+	UsedBytes              int64   `json:"used_bytes"`
+	UsedPercent            float64 `json:"used_percent"`
+}
+
+// DiskUsage is one pool member's space breakdown from `bcachefs fs usage`.
+type DiskUsage struct {
+	SizeBytes   int64 `json:"size_bytes"`
+	UsedBytes   int64 `json:"used_bytes"`
+	UsedPercent int   `json:"used_percent"`
 }
 
 // Disk is one physical device inside a pool, or one a pool can be made from.
@@ -54,6 +64,7 @@ type Disk struct {
 	Size           int64        `json:"size"`
 	State          string       `json:"state" doc:"A pool member's state: rw, ro, evacuating. Empty for a spare disk."`
 	Type           string       `json:"type"`
+	Usage          *DiskUsage   `json:"usage,omitempty" doc:"Space used on this disk in a mounted pool."`
 }
 
 // PoolState is whether a pool is mounted.
@@ -114,10 +125,15 @@ type PoolDiskRequest struct {
 
 // Subvolume is one bcachefs subvolume on a mounted pool.
 type Subvolume struct {
-	Id         string     `json:"id"`
-	Path       string     `json:"path"`
-	UsedBytes  int64      `json:"used_bytes" doc:"-1 if not yet measured."`
-	MeasuredAt *time.Time `json:"measured_at,omitempty" doc:"When used_bytes was measured."`
+	BackgroundTarget string     `json:"background_target,omitempty" doc:"Explicit background_target override, when set."`
+	DataReplicas     int        `json:"data_replicas,omitempty" doc:"Per-subvolume copy override; omitted when inheriting the pool's data_replicas."`
+	ForegroundTarget string     `json:"foreground_target,omitempty" doc:"Explicit foreground_target override, when set."`
+	Id               string     `json:"id"`
+	MeasuredAt       *time.Time `json:"measured_at,omitempty" doc:"When used_bytes was measured."`
+	Path             string     `json:"path"`
+	Profile          string     `json:"profile,omitempty" enum:"hot,cached,cold,custom" doc:"Placement profile on a tiered pool."`
+	PromoteTarget    string     `json:"promote_target,omitempty" doc:"Explicit promote_target override, when set."`
+	UsedBytes        int64      `json:"used_bytes" doc:"-1 if not yet measured."`
 }
 
 // StorageStatus is the storage page: pools, unassigned disks, subvolumes.
@@ -188,6 +204,13 @@ type SubvolumeUsage struct {
 // SubvolumeRequest names a subvolume to create.
 type SubvolumeRequest struct {
 	Path string `json:"path" minLength:"1"`
+}
+
+// SubvolumeProfileRequest changes placement and/or copy count on a subvolume.
+type SubvolumeProfileRequest struct {
+	Path    string `json:"path" minLength:"1" doc:"Absolute path of the subvolume."`
+	Profile string `json:"profile,omitempty" enum:"hot,cached,cold" doc:"Placement profile on a tiered pool."`
+	Copies  *int   `json:"copies,omitempty" minimum:"0" maximum:"3" doc:"Copies kept for this subvolume; 0 resets to the pool default."`
 }
 
 // Entry is one file or folder in a browsed folder, read with lstat: a

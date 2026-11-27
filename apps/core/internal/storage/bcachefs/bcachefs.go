@@ -59,6 +59,9 @@ func (c *Client) StubHost(dir string) {
 	c.statfs = func(string, *syscall.Statfs_t) error { return syscall.ENOENT }
 }
 
+// StubStatfs replaces syscall.Statfs, for tests outside this package.
+func (c *Client) StubStatfs(fn func(path string, st *syscall.Statfs_t) error) { c.statfs = fn }
+
 type DiskIOStats struct {
 	DeviceName   string `json:"device_name"`
 	ReadIOs      uint64 `json:"read_ios"`       // completed reads
@@ -69,10 +72,19 @@ type DiskIOStats struct {
 }
 
 type PoolUsage struct {
-	TotalBytes     uint64  `json:"total_bytes"`
-	UsedBytes      uint64  `json:"used_bytes"`
-	AvailableBytes uint64  `json:"available_bytes"`
-	UsedPercent    float64 `json:"used_percent"`
+	TotalBytes             uint64  `json:"total_bytes"`
+	UsedBytes              uint64  `json:"used_bytes"`
+	AvailableBytes         uint64  `json:"available_bytes"`
+	UsedPercent            float64 `json:"used_percent"`
+	CachedBytes            uint64  `json:"cached_bytes,omitempty"`
+	ReconcileDataBytes     uint64  `json:"reconcile_data_bytes,omitempty"`
+	ReconcileMetadataBytes uint64  `json:"reconcile_metadata_bytes,omitempty"`
+}
+
+type DiskUsage struct {
+	SizeBytes   uint64 `json:"size_bytes"`
+	UsedBytes   uint64 `json:"used_bytes"`
+	UsedPercent int    `json:"used_percent"`
 }
 
 type Disk struct {
@@ -90,6 +102,7 @@ type Disk struct {
 	DataTarget     string       `json:"data_target"`     // NEW — "foreground", "background", or ""
 	MetadataTarget string       `json:"metadata_target"` // NEW — "foreground", "background", or ""
 	IO             *DiskIOStats `json:"io,omitempty"`
+	Usage          *DiskUsage   `json:"usage,omitempty"`
 	FriendlyName   string       `json:"friendly_name"` // NEW — friendly display name via smartctl
 	Rotational     bool         `json:"rotational"`    // lsblk's ROTA: a disk that spins
 	State          string       `json:"state"`         // a pool member's state: rw, ro, evacuating, ...

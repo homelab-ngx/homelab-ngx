@@ -6,7 +6,7 @@
  */
 import type { paths } from "#lib/api/schema.gen.ts";
 import type { Schema } from "#lib/api/client.ts";
-import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerMeter, powerProfile, powerProfiles, powerStatus, previewBackup, cancelBackup, freezeThaw, restart, rollback, runBackup, stackOf, startStop, tick, update, type Host } from "./host.ts";
+import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerMeter, powerProfile, powerProfiles, powerStatus, previewBackup, cancelBackup, freezeThaw, restart, rollback, runBackup, stackOf, startStop, tick, update, updateSubvolumeProfile, type Host } from "./host.ts";
 import { history } from "./metrics.ts";
 
 /** A stack's files as the demo shows them: its manifest and a short flake. */
@@ -444,6 +444,11 @@ const puts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknown
   },
 };
 
+/** The patches it acts out: updating a subvolume's storage profile or copy count. */
+const patches: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknown }> = {
+  "/storage/subvolume": (h, c) => (updateSubvolumeProfile(h, c.body), { status: 204 }),
+};
+
 /** The deletes it acts out: a pool, a pool's disk, a removal that is stopped, and enabling a disabled service. */
 const deletes: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknown }> = {
   "/services/{unit}/mask": (h, c) => (maskService(h, c.path.unit!, false), { status: 204 }),
@@ -471,6 +476,7 @@ function compile(table: Record<string, (h: Host, c: Ctx) => unknown>, wrap: (v: 
 const getRoutes = compile(gets, (body) => ({ status: 200, body }));
 const postRoutes = compile(posts, (v) => v as { status: number; body?: unknown });
 const putRoutes = compile(puts, (v) => v as { status: number; body?: unknown });
+const patchRoutes = compile(patches, (v) => v as { status: number; body?: unknown });
 const deleteRoutes = compile(deletes, (v) => v as { status: number; body?: unknown });
 
 const json = (status: number, body: unknown, type = "application/json") => new Response(JSON.stringify(body), { status, headers: { "Content-Type": type } });
@@ -485,7 +491,19 @@ export function demoFetchFor(h: Host) {
     tick(h);
     // A host that reboots answers nothing, as a browser sees it.
     if (h.now() < h.downUntil) throw new TypeError("Failed to fetch");
-    for (const r of get ? getRoutes : input.method === "POST" ? postRoutes : input.method === "PUT" ? putRoutes : input.method === "DELETE" ? deleteRoutes : []) {
+    const routes =
+      get
+        ? getRoutes
+        : input.method === "POST"
+          ? postRoutes
+          : input.method === "PUT"
+            ? putRoutes
+            : input.method === "PATCH"
+              ? patchRoutes
+              : input.method === "DELETE"
+                ? deleteRoutes
+                : [];
+    for (const r of routes) {
       const m = r.re.exec(path);
       if (!m) continue;
       const ctx: Ctx = { path: Object.fromEntries(r.names.map((n, i) => [n, decodeURIComponent(m[i + 1]!)])), query: url.searchParams, body: {} };

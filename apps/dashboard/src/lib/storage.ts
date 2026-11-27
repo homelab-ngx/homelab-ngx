@@ -444,6 +444,47 @@ export function folderGroups(pools: Pool[], subvolumes: Subvolume[]): { pool: Po
   return pools.filter((p) => p.state === "mounted" && p.mountdir).map((pool) => ({ pool, folders: foldersOf(pool, subvolumes) }));
 }
 
+export type StorageProfile = NonNullable<Subvolume["profile"]>;
+
+export const profileLabel: Record<StorageProfile, string> = {
+  hot: "Hot",
+  cached: "Cached",
+  cold: "Cold",
+  custom: "Custom",
+};
+
+/** Whether the pool has separate fast and slow tiers for placement profiles. */
+export function isTiered(p: Pool): boolean {
+  const fast = p.foreground_target || p.promote_target;
+  return !!fast && !!p.background_target && fast !== p.background_target;
+}
+
+/** Whether any subvolume placement profile or copy override can be edited on this pool. */
+export function canEditSubvolumeProfile(p: Pool): boolean {
+  return isTiered(p) || maxCopies(p.disks.length) > 1;
+}
+
+/** Count of SSD and HDD members in a pool. */
+export function diskCounts(p: Pool): { ssd: number; hdd: number } {
+  let ssd = 0;
+  let hdd = 0;
+  for (const d of p.disks) {
+    if (d.kind === "ssd") ssd++;
+    else hdd++;
+  }
+  return { ssd, hdd };
+}
+
+/** Copies kept for a subvolume, falling back to the pool default. */
+export function effectiveCopies(p: Pool, f: Subvolume): number {
+  return f.data_replicas || Math.max(1, p.data_replicas || 1);
+}
+
+/** Whether metadata reconcile stays pending because metadata_replicas on SSD exceeds SSD count. */
+export function metadataReconcileBlocked(p: Pool): boolean {
+  return (p.usage?.reconcile_metadata_bytes ?? 0) > 0 && p.metadata_target === "ssd" && p.metadata_replicas > diskCounts(p).ssd;
+}
+
 /** Why a pool's disk and mount changes wait, or "": a disk is still leaving it. */
 export function poolBlocked(p: Pool): string {
   if (!running(p.operation)) return "";

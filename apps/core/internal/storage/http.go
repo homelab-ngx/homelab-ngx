@@ -79,6 +79,12 @@ func problem(err error) error {
 		return httpx.Forbidden("holds_root", "%s", err)
 	case errors.Is(err, ErrMountPoint):
 		return httpx.Conflict("mount_point", "%s", err)
+	case errors.Is(err, ErrUnknownSubvolume):
+		return httpx.NotFound("unknown_subvolume", "%s", err)
+	case errors.Is(err, ErrNotTiered):
+		return httpx.Conflict("pool_not_tiered", "%s", err)
+	case errors.Is(err, ErrInvalidProfile):
+		return httpx.BadRequest("invalid_profile", "%s", err)
 	}
 	return httpx.Internal("storage_failed", "%s", err)
 }
@@ -112,10 +118,11 @@ type (
 		Uuid string `path:"uuid"`
 		Body PartitionMountRequest
 	}
-	usageIn        struct{ Body SubvolumeUsageRequest }
-	usageOut       struct{ Body SubvolumeUsage }
-	subvolumeIn    struct{ Body SubvolumeRequest }
-	delSubvolumeIn struct {
+	usageIn           struct{ Body SubvolumeUsageRequest }
+	usageOut          struct{ Body SubvolumeUsage }
+	subvolumeIn       struct{ Body SubvolumeRequest }
+	updateSubvolumeIn struct{ Body SubvolumeProfileRequest }
+	delSubvolumeIn    struct {
 		Path string `query:"path" required:"true" minLength:"1"`
 	}
 	browseIn struct {
@@ -212,6 +219,14 @@ func (h *HTTP) Register(a httpx.APIs) {
 		OperationID: "createSubvolume", Method: http.MethodPost, Path: "/storage/subvolume", Tags: tags,
 		Summary: "Create a subvolume.", DefaultStatus: http.StatusCreated,
 	}, h.createSubvolume)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "updateSubvolume", Method: http.MethodPatch, Path: "/storage/subvolume", Tags: tags,
+		Summary: "Change placement profile or copy count on a subvolume.",
+		Description: "`404 unknown_subvolume` when the path is not a subvolume on a mounted pool, " +
+			"`409 pool_not_tiered` when setting a placement profile on an untiered pool, " +
+			"`409 too_few_disks` when copies exceeds the pool's disk count, `409 image_too_old` on older tools.",
+		DefaultStatus: http.StatusNoContent,
+	}, h.updateSubvolume)
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "deleteSubvolume", Method: http.MethodDelete, Path: "/storage/subvolume", Tags: tags,
 		Summary:       "Delete an empty subvolume.",
@@ -327,6 +342,13 @@ func (h *HTTP) getSubvolumeUsage(ctx context.Context, in *usageIn) (*usageOut, e
 
 func (h *HTTP) createSubvolume(ctx context.Context, in *subvolumeIn) (*struct{}, error) {
 	if err := h.svc.CreateSubvolume(ctx, in.Body.Path); err != nil {
+		return nil, problem(err)
+	}
+	return nil, nil
+}
+
+func (h *HTTP) updateSubvolume(ctx context.Context, in *updateSubvolumeIn) (*struct{}, error) {
+	if err := h.svc.UpdateSubvolume(ctx, in.Body); err != nil {
 		return nil, problem(err)
 	}
 	return nil, nil

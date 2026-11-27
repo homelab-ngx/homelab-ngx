@@ -6,7 +6,7 @@
   import RowMenu from "#lib/components/RowMenu.svelte";
   import Switch from "#lib/components/Switch.svelte";
   import { bytes } from "#lib/format.ts";
-  import { capacity, flaggedDisks, fullness, poolBlocked, poolDiskState, removal, role, running, segmentColor, segments } from "#lib/storage.ts";
+  import { capacity, diskCounts, flaggedDisks, fullness, metadataReconcileBlocked, poolBlocked, poolDiskState, removal, role, running, segmentColor, segments } from "#lib/storage.ts";
 
   type Pool = Schema<"Pool">;
   type Disk = Schema<"Disk">;
@@ -37,6 +37,12 @@
   const segs = $derived(cap ? segments(folders, cap.total, p.mountdir, cap.used) : []);
   const blocked = $derived(poolBlocked(p));
   const leaving = $derived(running(p.operation) ? p.operation?.disk : undefined);
+  const hasDiskUsage = $derived(mounted && p.disks.some((d) => !!d.usage));
+  const cachedBytes = $derived(p.usage?.cached_bytes ?? 0);
+  const reconcileData = $derived(p.usage?.reconcile_data_bytes ?? 0);
+  const reconcileMeta = $derived(p.usage?.reconcile_metadata_bytes ?? 0);
+  const ssdCount = $derived(diskCounts(p).ssd);
+  const metaBlocked = $derived(metadataReconcileBlocked(p));
   /** The name typed for the mount; none typed is the pool's own. */
   let name = $state("");
 
@@ -165,6 +171,7 @@
             <th scope="col" class="label px-3 py-2 text-right max-md:hidden">
               <Help label="Bad sectors">Spots that stopped reading reliably. A few can be harmless; a growing number means the disk is wearing out.</Help>
             </th>
+            {#if hasDiskUsage}<th scope="col" class="label px-3 py-2 text-right">Used</th>{/if}
             <th scope="col" class="label px-3 py-2 text-right">Size</th>
             {#if mounted}<th scope="col" class="px-3 py-2"><span class="sr-only">Actions</span></th>{/if}
           </tr>
@@ -176,6 +183,7 @@
             <tr class="border-b border-line last:border-0">
               <td class="px-3 py-2">
                 <span>{d.name}</span>
+                {#if d.bcachefs_label}<span class="ml-1.5 text-xs text-muted">{d.bcachefs_label}</span>{/if}
                 <span class="ml-1.5 text-muted max-sm:ml-0 max-sm:block max-sm:text-xs">{d.friendly_name || d.model || ""}</span>
               </td>
               <td class="px-3 py-2 whitespace-nowrap max-md:hidden">{roleWord[role(p, d)]}</td>
@@ -185,6 +193,11 @@
               <td class="px-3 py-2 text-right whitespace-nowrap max-md:hidden {h && h.temperature_c >= 55 ? 'text-warn' : ''}">{h ? `${h.temperature_c} °C` : "–"}</td>
               <td class="px-3 py-2 text-right whitespace-nowrap max-md:hidden">{h ? h.power_on_hours.toLocaleString() : "–"}</td>
               <td class="px-3 py-2 text-right max-md:hidden {h && h.bad_sectors > 0 ? 'text-warn' : ''}">{h ? h.bad_sectors : "–"}</td>
+              {#if hasDiskUsage}
+                <td class="px-3 py-2 text-right whitespace-nowrap">
+                  {#if d.usage}{bytes(d.usage.used_bytes)} <span class="text-xs text-muted">({d.usage.used_percent}%)</span>{:else}–{/if}
+                </td>
+              {/if}
               <td class="px-3 py-2 text-right whitespace-nowrap">{bytes(d.size)}</td>
               {#if mounted}
                 <td class="px-3 py-2 text-right">
@@ -194,13 +207,44 @@
             </tr>
             {#if p.operation && p.operation.disk === d.path}
               <tr class="border-b border-line bg-sunken last:border-0">
-                <td colspan="8" class="px-3 py-2 sm:pl-8">{@render removalLine(p.operation, "bg-surface")}</td>
+                <td colspan={hasDiskUsage ? 9 : 8} class="px-3 py-2 sm:pl-8">{@render removalLine(p.operation, "bg-surface")}</td>
               </tr>
             {/if}
           {/each}
         </tbody>
       </table>
     </div>
+
+    {#if mounted && (cachedBytes > 0 || reconcileData > 0 || reconcileMeta > 0)}
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-1.5 border-t border-line px-3 py-2 text-xs tabular-nums">
+        {#if cachedBytes > 0}
+          <span class="flex items-center gap-2">
+            <span class="text-muted">
+              <Help label="SSD cache">
+                bcachefs keeps recently written or read data cached on the SSD tier and evicts it as space is needed.
+              </Help>
+            </span>
+            <span>{bytes(cachedBytes)} cached</span>
+          </span>
+        {/if}
+        {#if reconcileData > 0 || reconcileMeta > 0}
+          {@const parts = [reconcileData > 0 ? `${bytes(reconcileData)} data` : "", reconcileMeta > 0 ? `${bytes(reconcileMeta)} metadata` : ""].filter(Boolean).join(", ")}
+          <span class="flex items-center gap-2">
+            <span class="text-muted">
+              <Help label="Pending reconcile">
+                {#if metaBlocked}
+                  bcachefs keeps {p.metadata_replicas} metadata copies on the SSD tier, while the pool has {ssdCount} SSD. Pending metadata waits until a second SSD is added.
+                {:else}
+                  Data or metadata waiting to move to its target tier or copy count in the background.
+                {/if}
+              </Help>
+            </span>
+            <span>{parts}</span>
+            {#if metaBlocked}<span class="text-muted">({p.metadata_replicas}× on {ssdCount} SSD)</span>{/if}
+          </span>
+        {/if}
+      </div>
+    {/if}
 
     <div class="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-line px-3 py-2.5">
       <span class="flex items-center gap-2">

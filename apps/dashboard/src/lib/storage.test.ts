@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Schema, Stack } from "./api/client.ts";
-import { ancestors, browseDefault, browseHref, editHref, hostPathProblem, hostTree, joinPath, parentOf, relativeTo, browseRows, browseSort, capacity, crumbs, diskState, disksSummary, flaggedDisks, folderName, folderSuggestions, foldersOf, pathParts, trimSlash, maxCopies, measuredAt, folderGroups, poolBlocked, poolDiskState, poolsSummary, removal, removeBlocked, role, running, segmentColor, segments, swatchOf, systemDisk, tiering, usedBy, withContents } from "./storage.ts";
+import { ancestors, browseDefault, browseHref, editHref, hostPathProblem, hostTree, joinPath, parentOf, relativeTo, browseRows, browseSort, canEditSubvolumeProfile, capacity, crumbs, diskCounts, diskState, disksSummary, effectiveCopies, flaggedDisks, folderName, folderSuggestions, foldersOf, isTiered, pathParts, trimSlash, maxCopies, measuredAt, metadataReconcileBlocked, folderGroups, poolBlocked, poolDiskState, poolsSummary, profileLabel, removal, removeBlocked, role, running, segmentColor, segments, swatchOf, systemDisk, tiering, usedBy, withContents } from "./storage.ts";
 
 type Pool = Schema<"Pool">;
 type Disk = Schema<"Disk">;
@@ -377,5 +377,47 @@ describe("poolDiskState, flaggedDisks, and poolsSummary", () => {
     expect(multi.free).toBe(5 * TB);
     expect(multi.percent).toBe(45);
     expect(multi.maxPercent).toBe(75);
+  });
+});
+
+describe("subvolume profiles and reconcile helpers", () => {
+  const mkDisk = (kind: "ssd" | "hdd") => ({ name: kind, path: `/dev/${kind}`, kind }) as Schema<"Disk">;
+  const tiered = {
+    data_replicas: 2,
+    metadata_replicas: 2,
+    foreground_target: "ssd",
+    promote_target: "ssd",
+    background_target: "hdd",
+    metadata_target: "ssd",
+    disks: [mkDisk("ssd"), mkDisk("hdd"), mkDisk("hdd")],
+    usage: { total_bytes: 100, used_bytes: 50, available_bytes: 50, used_percent: 50, reconcile_metadata_bytes: 1024 },
+  } as Schema<"Pool">;
+  const single = {
+    data_replicas: 1,
+    metadata_replicas: 1,
+    foreground_target: "",
+    promote_target: "",
+    background_target: "",
+    metadata_target: "",
+    disks: [mkDisk("hdd")],
+  } as Schema<"Pool">;
+
+  it("detects tiered pools, editable profiles, and disk counts", () => {
+    expect(profileLabel.hot).toBe("Hot");
+    expect(isTiered(tiered)).toBe(true);
+    expect(canEditSubvolumeProfile(tiered)).toBe(true);
+    expect(diskCounts(tiered)).toEqual({ ssd: 1, hdd: 2 });
+
+    expect(isTiered(single)).toBe(false);
+    expect(canEditSubvolumeProfile(single)).toBe(false);
+    expect(canEditSubvolumeProfile({ ...single, disks: [mkDisk("hdd"), mkDisk("hdd")] })).toBe(true);
+  });
+
+  it("computes effective copies and blocked metadata reconcile", () => {
+    expect(effectiveCopies(tiered, { id: "1", path: "/p/a", used_bytes: -1 })).toBe(2);
+    expect(effectiveCopies(tiered, { id: "1", path: "/p/a", used_bytes: -1, data_replicas: 1 })).toBe(1);
+    expect(metadataReconcileBlocked(tiered)).toBe(true);
+    expect(metadataReconcileBlocked({ ...tiered, disks: [mkDisk("ssd"), mkDisk("ssd"), mkDisk("hdd")] })).toBe(false);
+    expect(metadataReconcileBlocked({ ...tiered, usage: { ...tiered.usage!, reconcile_metadata_bytes: 0 } })).toBe(false);
   });
 });
