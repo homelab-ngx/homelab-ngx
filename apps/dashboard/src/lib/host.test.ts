@@ -1,5 +1,34 @@
 import { describe, expect, it } from "vitest";
-import { changed, dashboardHost, ddnsName, lanAddress, peerConfig, splitList, tailscaleState } from "./host.ts";
+import {
+  changed,
+  dashboardHost,
+  ddnsName,
+  lanAddress,
+  loginServerProblem,
+  peerConfig,
+  splitList,
+  subnetChoices,
+  subnetProblem,
+  tailscaleExpiryDays,
+  tailscaleNeedsPoll,
+  tailscalePending,
+  tailscalePendingMessage,
+  tailscaleState,
+  type HostSettings,
+  type TailscaleStatus,
+} from "./host.ts";
+
+const tsBase = (more: Partial<TailscaleStatus> = {}): TailscaleStatus => ({
+  state: "running",
+  ips: [],
+  tags: [],
+  health: [],
+  routes: [],
+  exit_node: "off",
+  online_peers: 0,
+  total_peers: 0,
+  ...more,
+});
 
 describe("host settings", () => {
   it("reads a typed list", () => {
@@ -30,10 +59,67 @@ describe("host settings", () => {
     expect(ddnsName(domain("myhome.duckdns.org", "duckdns"), "vpn")).toBe("myhome.duckdns.org");
     expect(ddnsName(domain("", "cloudflare"), "vpn")).toBe("");
   });
-  it("says Tailscale's state", () => {
-    expect(tailscaleState({ state: "running", ips: [] })).toEqual({ tone: "ok", word: "connected" });
-    expect(tailscaleState({ state: "needs-login", ips: [] }).tone).toBe("warn");
-    expect(tailscaleState(undefined).word).toBe("off");
+  it("says Tailscale's state, pending approvals, expiry, and poll interval", () => {
+    const now = Date.UTC(2026, 10, 27, 12, 0, 0);
+    const soon = new Date(now + 5 * 86_400_000).toISOString();
+    const later = new Date(now + 30 * 86_400_000).toISOString();
+    const past = new Date(now - 3600_000).toISOString();
+
+    expect(tailscaleState(tsBase({ key_expiry: later }), now)).toEqual({ tone: "ok", word: "connected" });
+    expect(tailscaleState(tsBase({ key_expiry: soon }), now)).toEqual({ tone: "warn", word: "key expiring" });
+    expect(tailscaleState(tsBase({ key_expiry: past }), now)).toEqual({ tone: "bad", word: "key expired" });
+    expect(tailscaleState(tsBase({ state: "expired" }), now)).toEqual({ tone: "bad", word: "key expired" });
+    expect(tailscaleState(tsBase({ state: "stopped" }), now)).toEqual({ tone: "warn", word: "stopped" });
+    expect(tailscaleState(tsBase({ state: "needs-login" }), now)).toEqual({ tone: "warn", word: "logged out" });
+    expect(tailscaleState(tsBase({ state: "needs-login", auth_url: "https://login.tailscale.com/a/1" }), now)).toEqual({
+      tone: "info",
+      word: "waiting for login",
+    });
+    expect(tailscaleState(tsBase({ state: "running", auth_url: "https://login.tailscale.com/a/2" }), now)).toEqual({
+      tone: "info",
+      word: "waiting for login",
+    });
+    expect(tailscaleState(tsBase({ health: ["relay issue"] }), now)).toEqual({ tone: "warn", word: "warning" });
+    expect(
+      tailscaleState(tsBase({ routes: [{ prefix: "192.168.1.0/24", approved: false }] }), now),
+    ).toEqual({ tone: "warn", word: "awaiting approval" });
+    expect(tailscaleState(undefined)).toEqual({ tone: "idle", word: "off" });
+
+    expect(tailscaleExpiryDays(tsBase({ key_expiry: soon }), now)).toBe(5);
+    expect(tailscalePending(tsBase({ routes: [{ prefix: "192.168.1.0/24", approved: false }], exit_node: "pending" }))).toEqual({
+      routes: 1,
+      exitNode: true,
+      device: false,
+      any: true,
+    });
+    expect(tailscalePendingMessage(tsBase({ routes: [{ prefix: "192.168.1.0/24", approved: false }], exit_node: "pending" }))).toBe(
+      "1 subnet and the exit node wait for approval in the admin console.",
+    );
+    expect(tailscaleNeedsPoll(tsBase({ state: "needs-login", auth_url: "https://login.tailscale.com/a/1" }), now)).toBe(2000);
+    expect(tailscaleNeedsPoll(tsBase({ state: "running", auth_url: "https://login.tailscale.com/a/2" }), now)).toBe(2000);
+    expect(tailscaleNeedsPoll(tsBase({ routes: [{ prefix: "192.168.1.0/24", approved: false }] }), now)).toBe(30000);
+    expect(tailscaleNeedsPoll(tsBase({ key_expiry: soon }), now)).toBe(30000);
+    expect(tailscaleNeedsPoll(tsBase({ key_expiry: later }), now)).toBe(false);
+  });
+
+  it("picks unadded LAN/wired subnets and validates CIDRs and login servers", () => {
+    const hs = {
+      network: { lan: ["192.168.1.0/24"] },
+      wired: [
+        { name: "enp5s0", mac: "m", addresses: ["192.168.1.10"], subnets: ["192.168.1.0/24", "10.0.20.0/24"] },
+      ],
+    } as unknown as HostSettings;
+    expect(subnetChoices(hs, [])).toEqual([
+      { cidr: "192.168.1.0/24", label: "LAN" },
+      { cidr: "10.0.20.0/24", label: "enp5s0" },
+    ]);
+    expect(subnetChoices(hs, ["192.168.1.0/24"])).toEqual([{ cidr: "10.0.20.0/24", label: "enp5s0" }]);
+    expect(subnetProblem(["192.168.1.0/24", ""])).toBe("");
+    expect(subnetProblem(["bad"])).toContain("192.168.1.0/24");
+    expect(subnetProblem(["192.168.1.0/24", "192.168.1.0/24"])).toContain("duplicate");
+    expect(loginServerProblem("")).toBe("");
+    expect(loginServerProblem("https://headscale.example.net")).toBe("");
+    expect(loginServerProblem("http://headscale.example.net")).toContain("https://");
   });
   it("sees a change", () => {
     expect(changed({ a: [1] }, { a: [1] })).toBe(false);

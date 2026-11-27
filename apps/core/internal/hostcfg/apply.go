@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"homelab-ngx.com/core/internal/cmdrunner"
 )
@@ -538,28 +539,35 @@ func (a *ImageApplier) tailscale(ctx context.Context, s Snapshot) error {
 	}
 	// Until the host is logged in (login.go) there is nothing to set; the
 	// login applies the settings again once it is in.
-	if readTailscale(ctx, a.Runner).State != TailscaleRunning {
+	st := readTailscale(ctx, a.Runner, s.Tailscale, time.Now())
+	if st.State != TailscaleRunning && st.State != TailscaleStopped {
 		return nil
 	}
-	if err := a.forwarding(s.Tailscale.AdvertiseRoutes); err != nil {
+	if err := a.forwarding(s.Tailscale.AdvertiseRoutes, s.Tailscale.ExitNode); err != nil {
 		return err
 	}
-	args := []string{"set", "--advertise-routes=" + strings.Join(s.Tailscale.AdvertiseRoutes, ",")}
-	if s.Host.Hostname != "" {
-		args = append(args, "--hostname="+s.Host.Hostname)
+	prefArgs := tailscalePrefArgs(s.Tailscale, s.Host.Hostname)
+	if st.State == TailscaleStopped {
+		args := append([]string{"up", "--reset", "--timeout=30s"}, prefArgs...)
+		if s.Tailscale.LoginServer != "" {
+			args = append(args, "--login-server="+s.Tailscale.LoginServer)
+		}
+		if err := a.run(ctx, "tailscale", args...); err != nil {
+			return fmt.Errorf("starting tailscale: %s", commandError(err))
+		}
+		return nil
 	}
+	args := append([]string{"set"}, prefArgs...)
 	if err := a.run(ctx, "tailscale", args...); err != nil {
-		return fmt.Errorf("offering subnets: %s", commandError(err))
+		return fmt.Errorf("applying tailscale settings: %s", commandError(err))
 	}
 	return nil
 }
 
-// forwarding turns on IP forwarding for each family the offered subnets are
-// in, which Tailscale needs to route them through the host. It used to be on
-// only by chance, while systemd-networkd managed a stack's link; a stack's
-// start now turns on IPv4 forwarding alone (stacks/network.go).
-func (a *ImageApplier) forwarding(routes []string) error {
-	var v4, v6 bool
+// forwarding turns on IP forwarding for each family the offered subnets or an
+// exit node require, which Tailscale needs to route traffic through the host.
+func (a *ImageApplier) forwarding(routes []string, exitNode bool) error {
+	v4, v6 := exitNode, exitNode
 	for _, r := range routes {
 		if p, err := netip.ParsePrefix(r); err == nil {
 			v4, v6 = v4 || p.Addr().Is4(), v6 || !p.Addr().Is4()

@@ -17,9 +17,12 @@
     help: string;
     /** The part of the settings the card edits: a change to it mounts the card afresh. */
     section: (s: HostSettings) => unknown;
+    actions?: Snippet<[CardProps]>;
+    above?: Snippet<[CardProps]>;
     card: Snippet<[CardProps]>;
+    below?: Snippet<[CardProps]>;
   }
-  let { title, help: helpText, section, card }: Props = $props();
+  let { title, help: helpText, section, actions: headActions, above, card, below }: Props = $props();
 
   const client = useQueryClient();
   const settings = createQuery(() => ({
@@ -39,16 +42,25 @@
 <!-- One section of the host's settings on a page of its own: the head, how the last apply went, and the card. -->
 <SettingsHead {title}>
   {#snippet help()}{helpText}{/snippet}
+  {#snippet actions()}
+    {#if s && headActions}{@render headActions({ settings: s, readOnly, onSaved })}{/if}
+  {/snippet}
 </SettingsHead>
 
 {#if settings.error}
   <p role="alert" class="mt-4 rounded-md bg-bad-soft px-3 py-2 text-bad">{describe(settings.error)}</p>
 {:else if s}
   <AppliedStatus settings={s} />
+  {#if above}
+    <div class="mt-4 max-w-4xl empty:hidden">{@render above({ settings: s, readOnly, onSaved })}</div>
+  {/if}
   <!-- Keyed by the stored section: an Apply mounts the card afresh on the new values. -->
   <div class="mt-5 max-w-4xl">
     {#key JSON.stringify(section(s))}{@render card({ settings: s, readOnly, onSaved })}{/key}
   </div>
+  {#if below}
+    <div class="mt-4 max-w-4xl empty:hidden">{@render below({ settings: s, readOnly, onSaved })}</div>
+  {/if}
 {:else}
   <p class="mt-4 text-muted">Loading…</p>
 {/if}

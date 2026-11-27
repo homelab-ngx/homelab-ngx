@@ -259,9 +259,14 @@ func (s *Service) snapshot(ctx context.Context) (Snapshot, error) {
 	snap.WireGuard.Peers = nonNil(snap.WireGuard.Peers)
 	snap.Tunnel.Routes = nonNil(snap.Tunnel.Routes)
 	snap.Tailscale.AdvertiseRoutes = nonNil(snap.Tailscale.AdvertiseRoutes)
+	if snap.Tailscale.AcceptDNS == nil {
+		snap.Tailscale.AcceptDNS = boolPtr(true)
+	}
 	snap.Time.NTP = nonNil(snap.Time.NTP)
 	return snap, nil
 }
+
+func boolPtr(v bool) *bool { return &v }
 
 func nonNil[T any](s []T) []T {
 	if s == nil {
@@ -423,10 +428,87 @@ func (s *Service) fromNix() HostSettings {
 	for _, h := range n.CloudflareTunnel.Hostnames {
 		st.Tunnel.Routes = append(st.Tunnel.Routes, Route{Hostname: h})
 	}
+	st.Tailscale = tailscaleFromFlags(n.Security.Tailscale.UpFlags, n.Security.Tailscale.SetFlags)
 	st.Tailscale.Enabled = n.Security.Tailscale.Enabled
-	st.Tailscale.AdvertiseRoutes = []string{}
 	st.Time.NTP = []string{}
 	return st
+}
+
+// tailscaleFromFlags parses Tailscale CLI flags from NixOS upFlags / setFlags
+// lists (earlier lists first so setFlags wins).
+func tailscaleFromFlags(lists ...[]string) Tailscale {
+	ts := Tailscale{
+		AdvertiseRoutes: []string{},
+		AcceptDNS:       boolPtr(true),
+	}
+	setRoutes := func(csv string) {
+		var out []string
+		seen := map[string]bool{}
+		for _, part := range strings.Split(csv, ",") {
+			if p, err := ipv4Subnet("advertise_routes", part); err == nil && !seen[p] {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+		ts.AdvertiseRoutes = nonNil(out)
+	}
+	parseBool := func(val string, hasVal bool) (bool, bool) {
+		if !hasVal {
+			return true, true
+		}
+		switch strings.ToLower(val) {
+		case "1", "t", "true", "yes":
+			return true, true
+		case "0", "f", "false", "no":
+			return false, true
+		default:
+			return false, false
+		}
+	}
+	for _, flags := range lists {
+		for i := 0; i < len(flags); i++ {
+			arg := flags[i]
+			if !strings.HasPrefix(arg, "--") {
+				continue
+			}
+			name, val, hasEq := strings.Cut(arg[2:], "=")
+			takeValue := func() (string, bool) {
+				if hasEq {
+					return val, true
+				}
+				if i+1 < len(flags) && !strings.HasPrefix(flags[i+1], "-") {
+					i++
+					return flags[i], true
+				}
+				return "", false
+			}
+			switch name {
+			case "advertise-routes":
+				if v, ok := takeValue(); ok {
+					setRoutes(v)
+				}
+			case "advertise-exit-node":
+				if b, ok := parseBool(val, hasEq); ok {
+					ts.ExitNode = b
+				}
+			case "accept-dns":
+				if b, ok := parseBool(val, hasEq); ok {
+					ts.AcceptDNS = boolPtr(b)
+				}
+			case "ssh":
+				if b, ok := parseBool(val, hasEq); ok {
+					ts.SSH = b
+				}
+			case "login-server":
+				if v, ok := takeValue(); ok {
+					if u, err := checkLoginServer(v); err == nil {
+						ts.LoginServer = u
+					}
+				}
+			}
+		}
+	}
+	return ts
 }
 
 // ── changing ─────────────────────────────────────────────────────────────
@@ -845,18 +927,53 @@ func checkTunnelCredentials(c string) error {
 	return nil
 }
 
+// checkLoginServer validates an optional custom control server URL.
+func checkLoginServer(raw string) (string, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return "", nil
+	}
+	for _, r := range s {
+		if r <= ' ' || r == 0x7f {
+			return "", invalid("login_server: must not contain spaces or control characters")
+		}
+	}
+	u, err := url.Parse(s)
+	if err != nil || !strings.EqualFold(u.Scheme, "https") || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", invalid("login_server: an https:// server URL such as https://headscale.example.net")
+	}
+	u.Scheme = "https"
+	u.Host = strings.ToLower(u.Host)
+	return strings.TrimRight(u.String(), "/"), nil
+}
+
 // SetTailscale changes Tailscale.
 func (s *Service) SetTailscale(ctx context.Context, in Tailscale) (HostSettings, error) {
 	var routes []string
+	seen := map[string]bool{}
 	for _, c := range in.AdvertiseRoutes {
 		p, err := ipv4Subnet("advertise_routes", c)
 		if err != nil {
 			return HostSettings{}, err
 		}
-		routes = append(routes, p)
+		if !seen[p] {
+			seen[p] = true
+			routes = append(routes, p)
+		}
+	}
+	server, err := checkLoginServer(in.LoginServer)
+	if err != nil {
+		return HostSettings{}, err
 	}
 	return s.change(ctx, func(map[string]row) error {
-		return s.save(ctx, "tailscale", Tailscale{Enabled: in.Enabled, AdvertiseRoutes: nonNil(routes)}, nil)
+		return s.save(ctx, "tailscale", Tailscale{
+			Enabled:         in.Enabled,
+			AdvertiseRoutes: nonNil(routes),
+			ExitNode:        in.ExitNode,
+			AcceptDNS:       boolPtr(in.UseDNS()),
+			SSH:             in.SSH,
+			LoginServer:     server,
+		}, nil)
 	})
 }
 

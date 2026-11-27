@@ -7847,15 +7847,32 @@
       "Tailscale": {
         "additionalProperties": false,
         "properties": {
+          "accept_dns": {
+            "description": "Use the tailnet's MagicDNS settings (default true).",
+            "type": "boolean"
+          },
           "advertise_routes": {
-            "description": "Subnets offered to the tailnet, such as the LAN.",
+            "description": "IPv4 subnets offered to the tailnet, such as the LAN.",
             "items": {
               "type": "string"
             },
             "type": "array"
           },
           "enabled": {
-            "description": "Runs tailscaled. The host joins a tailnet through the login link (POST /host-settings/tailscale/login).",
+            "description": "Runs tailscaled. The host joins a tailnet through POST /host-settings/tailscale/login.",
+            "type": "boolean"
+          },
+          "exit_node": {
+            "description": "Offer this host as a Tailscale exit node (requires approval in the tailnet admin console).",
+            "type": "boolean"
+          },
+          "login_server": {
+            "description": "Custom control server URL (https://...), such as Headscale. Empty uses Tailscale.",
+            "maxLength": 256,
+            "type": "string"
+          },
+          "ssh": {
+            "description": "Allow SSH over Tailscale using tailnet ACLs.",
             "type": "boolean"
           }
         },
@@ -7864,16 +7881,133 @@
         ],
         "type": "object"
       },
+      "TailscaleLoginInput": {
+        "additionalProperties": false,
+        "properties": {
+          "auth_key": {
+            "description": "Optional node authorization key. Passed via a 0600 temp file and never stored or logged.",
+            "maxLength": 512,
+            "type": "string"
+          },
+          "force_reauth": {
+            "description": "Force re-authentication when already logged in or switching control servers.",
+            "type": "boolean"
+          },
+          "login_server": {
+            "description": "Optional custom control server URL (https://...). Empty uses Tailscale. Absent keeps the stored value.",
+            "maxLength": 256,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "TailscalePeer": {
+        "additionalProperties": false,
+        "properties": {
+          "direct": {
+            "type": "boolean"
+          },
+          "dns_name": {
+            "type": "string"
+          },
+          "ips": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "last_seen": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "online": {
+            "type": "boolean"
+          },
+          "os": {
+            "type": "string"
+          },
+          "relay": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "ips",
+          "online",
+          "direct"
+        ],
+        "type": "object"
+      },
+      "TailscalePeers": {
+        "additionalProperties": false,
+        "properties": {
+          "peers": {
+            "items": {
+              "$ref": "#/components/schemas/TailscalePeer"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "peers"
+        ],
+        "type": "object"
+      },
+      "TailscaleRoute": {
+        "additionalProperties": false,
+        "properties": {
+          "approved": {
+            "description": "Whether the tailnet admin console approved this route.",
+            "type": "boolean"
+          },
+          "prefix": {
+            "description": "Subnet prefix in CIDR notation, such as 192.168.1.0/24.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prefix",
+          "approved"
+        ],
+        "type": "object"
+      },
       "TailscaleStatus": {
         "additionalProperties": false,
         "properties": {
+          "admin_url": {
+            "description": "Tailscale admin console machines page, omitted for custom control servers.",
+            "type": "string"
+          },
           "auth_url": {
             "description": "The link that adds the host to a tailnet, while it needs a login.",
+            "type": "string"
+          },
+          "control_url": {
+            "description": "The control server URL in use.",
             "type": "string"
           },
           "dns_name": {
             "description": "The host's name on the tailnet, such as homelab.tail1234.ts.net.",
             "type": "string"
+          },
+          "exit_node": {
+            "description": "off, pending, or approved exit-node status.",
+            "enum": [
+              "off",
+              "pending",
+              "approved"
+            ],
+            "type": "string"
+          },
+          "health": {
+            "description": "Health warnings reported by tailscaled.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "ips": {
             "description": "The host's addresses on the tailnet.",
@@ -7882,25 +8016,74 @@
             },
             "type": "array"
           },
+          "key_expiry": {
+            "description": "When the node key expires, if key expiry is enabled.",
+            "format": "date-time",
+            "type": "string"
+          },
+          "online_peers": {
+            "description": "Number of online peers on the tailnet.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "relay": {
+            "description": "Preferred DERP relay code for this host.",
+            "type": "string"
+          },
+          "routes": {
+            "description": "Offered subnets with approval state from Self.AllowedIPs.",
+            "items": {
+              "$ref": "#/components/schemas/TailscaleRoute"
+            },
+            "type": "array"
+          },
           "state": {
-            "description": "off: tailscaled is not running. needs-login: open auth_url to add the host to a tailnet. needs-approval: an admin of the tailnet approves the host in its admin console. running: on the tailnet.",
+            "description": "off: tailscaled is not running. needs-login: open auth_url to add the host to a tailnet. needs-approval: an admin of the tailnet approves the host in its admin console. stopped: logged in previously but stopped. expired: node key expired. running: on the tailnet.",
             "enum": [
               "off",
               "needs-login",
               "needs-approval",
+              "stopped",
+              "expired",
               "starting",
               "running"
             ],
             "type": "string"
           },
+          "tags": {
+            "description": "ACL tags assigned to this node.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "tailnet": {
             "description": "The tailnet's name.",
+            "type": "string"
+          },
+          "total_peers": {
+            "description": "Total peers visible on the tailnet.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "user": {
+            "description": "The account or login name the node authenticated as.",
+            "type": "string"
+          },
+          "version": {
+            "description": "The running Tailscale version.",
             "type": "string"
           }
         },
         "required": [
           "state",
-          "ips"
+          "ips",
+          "tags",
+          "health",
+          "routes",
+          "exit_node",
+          "online_peers",
+          "total_peers"
         ],
         "type": "object"
       },
@@ -15380,8 +15563,17 @@
     },
     "/host-settings/tailscale/login": {
       "post": {
-        "description": "Answers with auth_url once tailscale login prints it (within 15 s). The link stays open for 10 minutes; once the host is approved, the settings are applied again. `409 managed_by_nixos` on a NixOS host.",
+        "description": "Starts browser login by default and answers with auth_url once printed (within 15 s). Optional auth_key or login_server logs in directly. Once approved, settings are applied again. `409 managed_by_nixos` on a NixOS host.",
         "operationId": "loginTailscale",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TailscaleLoginInput"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "content": {
@@ -15392,6 +15584,44 @@
               }
             },
             "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Bad Request"
           },
           "409": {
             "content": {
@@ -15430,6 +15660,44 @@
               }
             },
             "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
           },
           "500": {
             "content": {
@@ -15649,6 +15917,65 @@
         ]
       }
     },
+    "/host-settings/tailscale/peers": {
+      "get": {
+        "operationId": "getTailscalePeers",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TailscalePeers"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "The other devices on the host's tailnet.",
+        "tags": [
+          "host"
+        ]
+      }
+    },
     "/host-settings/tailscale/status": {
       "get": {
         "operationId": "getTailscaleStatus",
@@ -15702,7 +16029,7 @@
             "description": "Error"
           }
         },
-        "summary": "The host on its tailnet: logged in or not, its link while a login waits, its addresses.",
+        "summary": "The host on its tailnet: state, identity, routes, key expiry and health.",
         "tags": [
           "host"
         ]

@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -50,8 +54,10 @@ var loginURL = regexp.MustCompile(`https://\S+`)
 
 // loginJob runs one login at a time in the background.
 type loginJob struct {
-	mu sync.Mutex
-	l  Login
+	mu     sync.Mutex
+	l      Login
+	cancel context.CancelFunc
+	gen    uint64
 }
 
 func (j *loginJob) get() Login {
@@ -63,6 +69,21 @@ func (j *loginJob) get() Login {
 	return j.l
 }
 
+// cancelWaiting aborts an in-flight waiting login so a fresh attempt can start.
+func (j *loginJob) cancelWaiting() {
+	j.mu.Lock()
+	cancel := j.cancel
+	j.cancel = nil
+	if j.l.State == LoginWaiting {
+		j.l = Login{State: LoginIdle}
+	}
+	j.gen++
+	j.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
 // start runs fn unless a login is waiting already, and returns once fn has
 // seen its link, has ended, or after loginWait. fn gets a context that ends
 // with the link's lifetime and passes every line of output to line.
@@ -72,6 +93,10 @@ func (j *loginJob) start(fn func(ctx context.Context, line func(stream, s string
 		defer j.mu.Unlock()
 		return j.l
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), loginTimeout)
+	j.gen++
+	myGen := j.gen
+	j.cancel = cancel
 	j.l = Login{State: LoginWaiting}
 	j.mu.Unlock()
 
@@ -84,24 +109,26 @@ func (j *loginJob) start(fn func(ctx context.Context, line func(stream, s string
 			return
 		}
 		j.mu.Lock()
-		if j.l.URL == "" {
+		if j.gen == myGen && j.l.URL == "" {
 			j.l.URL = u
 		}
 		j.mu.Unlock()
 		signal()
 	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), loginTimeout)
 		defer cancel()
 		err := fn(ctx, line)
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			err = errors.New("the link expired before the host was approved; start again")
 		}
 		j.mu.Lock()
-		if err != nil {
-			j.l = Login{State: LoginFailed, Error: commandError(err)}
-		} else {
-			j.l = Login{State: LoginDone}
+		if j.gen == myGen {
+			j.cancel = nil
+			if err != nil {
+				j.l = Login{State: LoginFailed, Error: commandError(err)}
+			} else {
+				j.l = Login{State: LoginDone}
+			}
 		}
 		j.mu.Unlock()
 		signal()
@@ -128,6 +155,11 @@ func commandError(err error) string {
 
 // ── Tailscale ────────────────────────────────────────────────────────────
 
+const (
+	tailscaleDefaultControlURL = "https://controlplane.tailscale.com"
+	tailscaleAdminURL          = "https://login.tailscale.com/admin/machines"
+)
+
 // TailscaleState is where the host is on its tailnet.
 type TailscaleState string
 
@@ -135,53 +167,207 @@ const (
 	TailscaleOff           TailscaleState = "off"
 	TailscaleNeedsLogin    TailscaleState = "needs-login"
 	TailscaleNeedsApproval TailscaleState = "needs-approval"
+	TailscaleStopped       TailscaleState = "stopped"
+	TailscaleExpired       TailscaleState = "expired"
 	TailscaleStarting      TailscaleState = "starting"
 	TailscaleRunning       TailscaleState = "running"
 )
 
+// TailscaleExitNode is whether this host acts as an exit node.
+type TailscaleExitNode string
+
+const (
+	TailscaleExitOff      TailscaleExitNode = "off"
+	TailscaleExitPending  TailscaleExitNode = "pending"
+	TailscaleExitApproved TailscaleExitNode = "approved"
+)
+
+// TailscaleRoute is one offered subnet and whether the tailnet approved it.
+type TailscaleRoute struct {
+	Prefix   string `json:"prefix" doc:"Subnet prefix in CIDR notation, such as 192.168.1.0/24."`
+	Approved bool   `json:"approved" doc:"Whether the tailnet admin console approved this route."`
+}
+
+// TailscalePeer is another device on the tailnet.
+type TailscalePeer struct {
+	Name     string     `json:"name"`
+	DNSName  string     `json:"dns_name,omitempty"`
+	OS       string     `json:"os,omitempty"`
+	IPs      []string   `json:"ips"`
+	Online   bool       `json:"online"`
+	Direct   bool       `json:"direct"`
+	Relay    string     `json:"relay,omitempty"`
+	LastSeen *time.Time `json:"last_seen,omitempty"`
+}
+
+// TailscalePeers lists devices on the host's tailnet.
+type TailscalePeers struct {
+	Peers []TailscalePeer `json:"peers"`
+}
+
+// TailscaleLoginInput configures a login attempt. An empty body starts the
+// standard browser link flow.
+type TailscaleLoginInput struct {
+	AuthKey     string  `json:"auth_key,omitempty" maxLength:"512" doc:"Optional node authorization key. Passed via a 0600 temp file and never stored or logged."`
+	LoginServer *string `json:"login_server,omitempty" maxLength:"256" doc:"Optional custom control server URL (https://...). Empty uses Tailscale. Absent keeps the stored value."`
+	ForceReauth bool    `json:"force_reauth,omitempty" doc:"Force re-authentication when already logged in or switching control servers."`
+}
+
 // TailscaleStatus is what tailscaled reports about the host.
 type TailscaleStatus struct {
-	State   TailscaleState `json:"state" enum:"off,needs-login,needs-approval,starting,running" doc:"off: tailscaled is not running. needs-login: open auth_url to add the host to a tailnet. needs-approval: an admin of the tailnet approves the host in its admin console. running: on the tailnet."`
-	AuthURL string         `json:"auth_url,omitempty" doc:"The link that adds the host to a tailnet, while it needs a login."`
-	Tailnet string         `json:"tailnet,omitempty" doc:"The tailnet's name."`
-	DNSName string         `json:"dns_name,omitempty" doc:"The host's name on the tailnet, such as homelab.tail1234.ts.net."`
-	IPs     []string       `json:"ips" doc:"The host's addresses on the tailnet."`
+	State       TailscaleState    `json:"state" enum:"off,needs-login,needs-approval,stopped,expired,starting,running" doc:"off: tailscaled is not running. needs-login: open auth_url to add the host to a tailnet. needs-approval: an admin of the tailnet approves the host in its admin console. stopped: logged in previously but stopped. expired: node key expired. running: on the tailnet."`
+	AuthURL     string            `json:"auth_url,omitempty" doc:"The link that adds the host to a tailnet, while it needs a login."`
+	Tailnet     string            `json:"tailnet,omitempty" doc:"The tailnet's name."`
+	DNSName     string            `json:"dns_name,omitempty" doc:"The host's name on the tailnet, such as homelab.tail1234.ts.net."`
+	IPs         []string          `json:"ips" doc:"The host's addresses on the tailnet."`
+	Version     string            `json:"version,omitempty" doc:"The running Tailscale version."`
+	KeyExpiry   *time.Time        `json:"key_expiry,omitempty" doc:"When the node key expires, if key expiry is enabled."`
+	Tags        []string          `json:"tags" doc:"ACL tags assigned to this node."`
+	User        string            `json:"user,omitempty" doc:"The account or login name the node authenticated as."`
+	Relay       string            `json:"relay,omitempty" doc:"Preferred DERP relay code for this host."`
+	Health      []string          `json:"health" doc:"Health warnings reported by tailscaled."`
+	Routes      []TailscaleRoute  `json:"routes" doc:"Offered subnets with approval state from Self.AllowedIPs."`
+	ExitNode    TailscaleExitNode `json:"exit_node" enum:"off,pending,approved" doc:"off, pending, or approved exit-node status."`
+	ControlURL  string            `json:"control_url,omitempty" doc:"The control server URL in use."`
+	AdminURL    string            `json:"admin_url,omitempty" doc:"Tailscale admin console machines page, omitted for custom control servers."`
+	OnlinePeers int               `json:"online_peers" doc:"Number of online peers on the tailnet."`
+	TotalPeers  int               `json:"total_peers" doc:"Total peers visible on the tailnet."`
+}
+
+func emptyTailscaleStatus() TailscaleStatus {
+	return TailscaleStatus{
+		State:    TailscaleOff,
+		IPs:      []string{},
+		Tags:     []string{},
+		Health:   []string{},
+		Routes:   []TailscaleRoute{},
+		ExitNode: TailscaleExitOff,
+	}
+}
+
+func normalizeControlURL(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return tailscaleDefaultControlURL
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return strings.TrimRight(s, "/")
+	}
+	u.Scheme = strings.ToLower(u.Scheme)
+	u.Host = strings.ToLower(u.Host)
+	return strings.TrimRight(u.String(), "/")
+}
+
+func isTailscaleControlServer(raw string) bool {
+	if strings.TrimSpace(raw) == "" {
+		return true
+	}
+	u, err := url.Parse(normalizeControlURL(raw))
+	if err != nil {
+		return false
+	}
+	h := strings.ToLower(u.Hostname())
+	return h == "controlplane.tailscale.com" || h == "login.tailscale.com"
+}
+
+func sameControlServer(a, b string) bool {
+	return normalizeControlURL(a) == normalizeControlURL(b)
+}
+
+// tailscalePrefArgs returns the desired tailscale preference flags, always
+// pinning accept-routes=false so remote subnet routers never hijack LAN traffic.
+func tailscalePrefArgs(ts Tailscale, hostname string) []string {
+	dns := "false"
+	if ts.UseDNS() {
+		dns = "true"
+	}
+	exit := "false"
+	if ts.ExitNode {
+		exit = "true"
+	}
+	ssh := "false"
+	if ts.SSH {
+		ssh = "true"
+	}
+	args := []string{
+		"--accept-routes=false",
+		"--accept-dns=" + dns,
+		"--advertise-routes=" + strings.Join(ts.AdvertiseRoutes, ","),
+		"--advertise-exit-node=" + exit,
+		"--ssh=" + ssh,
+	}
+	if hostname != "" {
+		args = append(args, "--hostname="+hostname)
+	}
+	return args
 }
 
 // readTailscale asks tailscaled for its status; a tailscaled that does not
 // answer is off.
-func readTailscale(ctx context.Context, r cmdrunner.Runner) TailscaleStatus {
-	off := TailscaleStatus{State: TailscaleOff, IPs: []string{}}
+func readTailscale(ctx context.Context, r cmdrunner.Runner, cfg Tailscale, now time.Time) TailscaleStatus {
 	if r == nil {
-		return off
+		return emptyTailscaleStatus()
 	}
 	res, err := r.Run(ctx, cmdrunner.Cmd{Module: "hostcfg", Name: "tailscale", Args: []string{"status", "--json"}, ExpectExit: []int{1}})
 	if err != nil && res.Stdout == "" {
-		return off
+		return emptyTailscaleStatus()
 	}
-	return parseTailscale(res.Stdout)
+	return parseTailscale(res.Stdout, cfg, now)
 }
 
-// parseTailscale reads tailscale status --json.
-func parseTailscale(out string) TailscaleStatus {
-	var raw struct {
-		BackendState   string
-		AuthURL        string
-		CurrentTailnet *struct{ Name string }
-		Self           *struct {
-			DNSName      string
-			TailscaleIPs []string
-		}
+type rawTailscaleStatus struct {
+	BackendState   string
+	AuthURL        string
+	Version        string
+	Health         []string
+	CurrentTailnet *struct {
+		Name       string
+		ControlURL string
 	}
-	st := TailscaleStatus{State: TailscaleOff, IPs: []string{}}
+	Self *struct {
+		DNSName        string
+		TailscaleIPs   []string
+		AllowedIPs     []string
+		PrimaryRoutes  []string
+		KeyExpiry      *time.Time
+		Expired        bool
+		Tags           []string
+		Relay          string
+		UserID         int64
+		ExitNodeOption bool
+	}
+	User map[string]struct {
+		LoginName   string
+		DisplayName string
+	}
+	Peer map[string]struct {
+		HostName     string
+		DNSName      string
+		OS           string
+		TailscaleIPs []string
+		Online       bool
+		CurAddr      string
+		Relay        string
+		LastSeen     *time.Time
+	}
+}
+
+// parseTailscale reads tailscale status --json and enriches routes and exit
+// node status from cfg.
+func parseTailscale(out string, cfg Tailscale, now time.Time) TailscaleStatus {
+	st := emptyTailscaleStatus()
+	var raw rawTailscaleStatus
 	if json.Unmarshal([]byte(out), &raw) != nil {
 		return st
 	}
 	switch raw.BackendState {
 	case "Running":
 		st.State = TailscaleRunning
-	case "NeedsLogin", "Stopped":
+	case "NeedsLogin":
 		st.State = TailscaleNeedsLogin
+	case "Stopped":
+		st.State = TailscaleStopped
 	case "NeedsMachineAuth":
 		st.State = TailscaleNeedsApproval
 	case "NoState", "Starting":
@@ -190,69 +376,325 @@ func parseTailscale(out string) TailscaleStatus {
 		return st
 	}
 	st.AuthURL = raw.AuthURL
+	st.Version = strings.TrimSpace(raw.Version)
+	for _, h := range raw.Health {
+		if h = strings.TrimSpace(h); h != "" {
+			st.Health = append(st.Health, h)
+		}
+	}
 	if raw.CurrentTailnet != nil {
 		st.Tailnet = raw.CurrentTailnet.Name
 	}
-	if raw.Self != nil && st.State == TailscaleRunning {
+
+	if raw.Self != nil && raw.Self.KeyExpiry != nil && !raw.Self.KeyExpiry.IsZero() {
+		t := *raw.Self.KeyExpiry
+		st.KeyExpiry = &t
+	}
+	if raw.Self != nil && (st.State == TailscaleRunning || st.State == TailscaleNeedsLogin) {
+		if raw.Self.Expired || (st.KeyExpiry != nil && !st.KeyExpiry.After(now)) {
+			st.State = TailscaleExpired
+		}
+	}
+
+	allowed := map[netip.Prefix]bool{}
+	if raw.Self != nil {
+		for _, list := range [][]string{raw.Self.AllowedIPs, raw.Self.PrimaryRoutes} {
+			for _, s := range list {
+				if p, err := netip.ParsePrefix(s); err == nil {
+					allowed[p.Masked()] = true
+				}
+			}
+		}
+	}
+
+	hasIdentity := raw.Self != nil && (st.State == TailscaleRunning || st.State == TailscaleNeedsApproval || st.State == TailscaleStopped || st.State == TailscaleExpired)
+	if hasIdentity {
 		st.DNSName = strings.TrimSuffix(raw.Self.DNSName, ".")
 		if raw.Self.TailscaleIPs != nil {
-			st.IPs = raw.Self.TailscaleIPs
+			st.IPs = slices.Clone(raw.Self.TailscaleIPs)
+		}
+		st.Relay = raw.Self.Relay
+		for _, tag := range raw.Self.Tags {
+			if tag = strings.TrimSpace(tag); tag != "" {
+				st.Tags = append(st.Tags, tag)
+			}
+		}
+		if raw.Self.UserID != 0 {
+			if u, ok := raw.User[strconv.FormatInt(raw.Self.UserID, 10)]; ok {
+				name := u.LoginName
+				if name == "" {
+					name = u.DisplayName
+				}
+				if !(len(st.Tags) > 0 && name == "tagged-devices") {
+					st.User = name
+				}
+			}
+		}
+	}
+
+	if st.State != TailscaleOff && st.State != TailscaleNeedsLogin && st.State != TailscaleStarting {
+		seen := map[netip.Prefix]bool{}
+		for _, r := range cfg.AdvertiseRoutes {
+			if p, err := netip.ParsePrefix(r); err == nil {
+				m := p.Masked()
+				if !seen[m] {
+					seen[m] = true
+					st.Routes = append(st.Routes, TailscaleRoute{
+						Prefix:   m.String(),
+						Approved: st.State == TailscaleRunning && allowed[m],
+					})
+				}
+			}
+		}
+		if st.State == TailscaleRunning && raw.Self != nil {
+			var extra []string
+			for _, s := range raw.Self.AllowedIPs {
+				if p, err := netip.ParsePrefix(s); err == nil {
+					m := p.Masked()
+					if m.Bits() > 0 && m.Bits() < m.Addr().BitLen() && !seen[m] {
+						seen[m] = true
+						extra = append(extra, m.String())
+					}
+				}
+			}
+			slices.Sort(extra)
+			for _, s := range extra {
+				st.Routes = append(st.Routes, TailscaleRoute{Prefix: s, Approved: true})
+			}
+		}
+	}
+
+	exitApproved := raw.Self != nil && (raw.Self.ExitNodeOption ||
+		allowed[netip.MustParsePrefix("0.0.0.0/0")] ||
+		allowed[netip.MustParsePrefix("::/0")])
+	switch {
+	case st.State == TailscaleRunning && exitApproved:
+		st.ExitNode = TailscaleExitApproved
+	case (st.State == TailscaleRunning || st.State == TailscaleNeedsApproval) && cfg.ExitNode:
+		st.ExitNode = TailscaleExitPending
+	default:
+		st.ExitNode = TailscaleExitOff
+	}
+
+	switch {
+	case cfg.LoginServer != "":
+		st.ControlURL = normalizeControlURL(cfg.LoginServer)
+	case raw.CurrentTailnet != nil && raw.CurrentTailnet.ControlURL != "":
+		st.ControlURL = normalizeControlURL(raw.CurrentTailnet.ControlURL)
+	case st.AuthURL != "":
+		if u, err := url.Parse(st.AuthURL); err == nil && u.Scheme != "" && u.Host != "" && !isTailscaleControlServer(st.AuthURL) {
+			st.ControlURL = strings.ToLower(u.Scheme) + "://" + strings.ToLower(u.Host)
+		} else {
+			st.ControlURL = tailscaleDefaultControlURL
+		}
+	default:
+		st.ControlURL = tailscaleDefaultControlURL
+	}
+	if isTailscaleControlServer(st.ControlURL) {
+		st.AdminURL = tailscaleAdminURL
+	}
+
+	st.TotalPeers = len(raw.Peer)
+	for _, p := range raw.Peer {
+		if p.Online {
+			st.OnlinePeers++
 		}
 	}
 	return st
 }
 
+// parseTailscalePeers reads the peer map from tailscale status --json.
+func parseTailscalePeers(out string) TailscalePeers {
+	res := TailscalePeers{Peers: []TailscalePeer{}}
+	var raw rawTailscaleStatus
+	if json.Unmarshal([]byte(out), &raw) != nil || len(raw.Peer) == 0 {
+		return res
+	}
+	for _, p := range raw.Peer {
+		dnsName := strings.TrimSuffix(p.DNSName, ".")
+		name, _, _ := strings.Cut(dnsName, ".")
+		if name == "" {
+			name = p.HostName
+		}
+		var seen *time.Time
+		if p.LastSeen != nil && !p.LastSeen.IsZero() {
+			t := *p.LastSeen
+			seen = &t
+		}
+		res.Peers = append(res.Peers, TailscalePeer{
+			Name:     name,
+			DNSName:  dnsName,
+			OS:       p.OS,
+			IPs:      nonNil(slices.Clone(p.TailscaleIPs)),
+			Online:   p.Online,
+			Direct:   p.CurAddr != "",
+			Relay:    p.Relay,
+			LastSeen: seen,
+		})
+	}
+	slices.SortFunc(res.Peers, func(a, b TailscalePeer) int {
+		if a.Online != b.Online {
+			if a.Online {
+				return -1
+			}
+			return 1
+		}
+		if c := strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name)); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Name, b.Name)
+	})
+	return res
+}
+
+func (s *Service) tailscaleConfig(ctx context.Context) Tailscale {
+	if s.managed == ManagedNixOS {
+		return s.fromNix().Tailscale
+	}
+	snap, err := s.snapshot(ctx)
+	if err != nil {
+		return Tailscale{AcceptDNS: boolPtr(true)}
+	}
+	return snap.Tailscale
+}
+
 // TailscaleStatus reports the host on its tailnet, with the link of a login
 // started here while it waits.
 func (s *Service) TailscaleStatus(ctx context.Context) TailscaleStatus {
-	st := readTailscale(ctx, s.run)
-	if st.State == TailscaleNeedsLogin && st.AuthURL == "" {
-		if l := s.tailscaleLogin.get(); l.State == LoginWaiting {
+	cfg := s.tailscaleConfig(ctx)
+	st := readTailscale(ctx, s.run, cfg, s.now())
+	if st.State != TailscaleOff && st.AuthURL == "" {
+		if l := s.tailscaleLogin.get(); l.State == LoginWaiting && l.URL != "" {
 			st.AuthURL = l.URL
 		}
 	}
 	return st
 }
 
-// TailscaleLogin turns Tailscale on if it is off and starts tailscale login,
-// which waits for the operator to open its link. Once the host is in, the
-// settings are applied again, so the tailnet gets the offered subnets.
-func (s *Service) TailscaleLogin(ctx context.Context) (TailscaleStatus, error) {
+// TailscalePeers lists the host's tailnet peers.
+func (s *Service) TailscalePeers(ctx context.Context) TailscalePeers {
+	if s.run == nil {
+		return TailscalePeers{Peers: []TailscalePeer{}}
+	}
+	res, err := s.run.Run(ctx, cmdrunner.Cmd{Module: "hostcfg", Name: "tailscale", Args: []string{"status", "--json"}, ExpectExit: []int{1}})
+	if err != nil && res.Stdout == "" {
+		return TailscalePeers{Peers: []TailscalePeer{}}
+	}
+	return parseTailscalePeers(res.Stdout)
+}
+
+func redactSecret(s, secret string) string {
+	if secret == "" {
+		return s
+	}
+	return strings.ReplaceAll(s, secret, "[redacted]")
+}
+
+// TailscaleLogin turns Tailscale on if it is off and starts login (browser
+// link by default, or auth key / custom control server when supplied).
+func (s *Service) TailscaleLogin(ctx context.Context, in TailscaleLoginInput) (TailscaleStatus, error) {
 	if s.managed == ManagedNixOS {
 		return TailscaleStatus{}, ErrManaged
+	}
+	authKey := strings.TrimSpace(in.AuthKey)
+	if authKey != "" && strings.ContainsFunc(authKey, func(r rune) bool { return r <= ' ' || r == 0x7f }) {
+		return TailscaleStatus{}, invalid("auth_key: must not contain spaces or new lines")
 	}
 	cur, err := s.Get(ctx)
 	if err != nil {
 		return TailscaleStatus{}, err
 	}
-	if !cur.Tailscale.Enabled {
-		on := cur.Tailscale
-		on.Enabled = true
-		if _, err := s.SetTailscale(ctx, on); err != nil {
+	targetServer := cur.Tailscale.LoginServer
+	if in.LoginServer != nil {
+		targetServer, err = checkLoginServer(*in.LoginServer)
+		if err != nil {
 			return TailscaleStatus{}, err
 		}
 	}
+	st := readTailscale(ctx, s.run, cur.Tailscale, s.now())
+	loggedIn := st.State == TailscaleRunning || st.State == TailscaleNeedsApproval || st.State == TailscaleStopped || st.State == TailscaleExpired
+	if loggedIn && !sameControlServer(targetServer, st.ControlURL) && !in.ForceReauth {
+		return TailscaleStatus{}, invalid("login_server: changing the control server requires force_reauth")
+	}
+
+	updated := cur.Tailscale
+	if !updated.Enabled || updated.LoginServer != targetServer {
+		updated.Enabled = true
+		updated.LoginServer = targetServer
+		if _, err := s.SetTailscale(ctx, updated); err != nil {
+			return TailscaleStatus{}, err
+		}
+	}
+
 	// tailscaled was just started if it was off: wait for it to answer.
-	st := readTailscale(ctx, s.run)
-	for deadline := time.Now().Add(10 * time.Second); st.State == TailscaleOff && time.Now().Before(deadline); st = readTailscale(ctx, s.run) {
+	st = readTailscale(ctx, s.run, updated, s.now())
+	for deadline := time.Now().Add(10 * time.Second); st.State == TailscaleOff && time.Now().Before(deadline); st = readTailscale(ctx, s.run, updated, s.now()) {
 		select {
 		case <-ctx.Done():
 			return TailscaleStatus{}, ctx.Err()
 		case <-time.After(500 * time.Millisecond):
 		}
 	}
-	if st.State == TailscaleRunning {
+	if st.State == TailscaleRunning && !in.ForceReauth {
 		return st, nil
 	}
+
+	if in.ForceReauth || authKey != "" {
+		s.tailscaleLogin.cancelWaiting()
+	}
+
+	var args []string
+	if in.ForceReauth {
+		args = append([]string{"up", "--force-reauth", "--reset"}, tailscalePrefArgs(updated, cur.Host.Hostname)...)
+		if targetServer != "" {
+			args = append(args, "--login-server="+targetServer)
+		} else {
+			args = append(args, "--login-server="+tailscaleDefaultControlURL)
+		}
+	} else {
+		args = []string{"login", "--accept-routes=false"}
+		if targetServer != "" {
+			args = append(args, "--login-server="+targetServer)
+		}
+	}
+
+	var keyFile string
+	if authKey != "" {
+		f, err := os.CreateTemp("", "homelab-tskey-*")
+		if err != nil {
+			return TailscaleStatus{}, err
+		}
+		keyFile = f.Name()
+		if err := os.Chmod(keyFile, 0o600); err != nil {
+			_ = f.Close()
+			_ = os.Remove(keyFile)
+			return TailscaleStatus{}, err
+		}
+		if _, err := f.WriteString(authKey); err != nil {
+			_ = f.Close()
+			_ = os.Remove(keyFile)
+			return TailscaleStatus{}, err
+		}
+		if err := f.Close(); err != nil {
+			_ = os.Remove(keyFile)
+			return TailscaleStatus{}, err
+		}
+		args = append(args, "--auth-key=file:"+keyFile)
+	}
+
 	l := s.tailscaleLogin.start(func(ctx context.Context, line func(string, string)) error {
-		_, err := s.run.Run(ctx, cmdrunner.Cmd{Module: "hostcfg", Name: "tailscale", Args: []string{"login"}, OnLine: line})
+		if keyFile != "" {
+			defer os.Remove(keyFile)
+		}
+		_, err := s.run.Run(ctx, cmdrunner.Cmd{Module: "hostcfg", Name: "tailscale", Args: args, OnLine: line})
 		if err == nil {
 			s.Apply(context.WithoutCancel(ctx))
+			return nil
 		}
-		return err
+		return errors.New(redactSecret(commandError(err), authKey))
 	})
 	if l.State == LoginFailed {
-		return TailscaleStatus{}, fmt.Errorf("%w: tailscale login: %s", ErrUpstream, l.Error)
+		return TailscaleStatus{}, fmt.Errorf("%w: tailscale login: %s", ErrUpstream, redactSecret(l.Error, authKey))
 	}
 	return s.TailscaleStatus(ctx), nil
 }
@@ -263,6 +705,7 @@ func (s *Service) TailscaleLogout(ctx context.Context) (TailscaleStatus, error) 
 	if s.managed == ManagedNixOS {
 		return TailscaleStatus{}, ErrManaged
 	}
+	s.tailscaleLogin.cancelWaiting()
 	if _, err := s.run.Run(ctx, cmdrunner.Cmd{Module: "hostcfg", Name: "tailscale", Args: []string{"logout"}}); err != nil {
 		return TailscaleStatus{}, fmt.Errorf("%w: tailscale logout: %s", ErrUpstream, commandError(err))
 	}

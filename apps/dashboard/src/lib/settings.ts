@@ -60,7 +60,10 @@ export const SECTIONS: Section[] = [
     tiles: [
       tile("domain", "Domain", Globe, { words: { off: "not set", ...notApplied } }),
       tile("lan", "LAN", Network, { words: { off: "not set" } }),
-      tile("tailscale", "Tailscale", Waypoints, { words: { ok: "connected", warn: "needs login", info: "starting", ...notApplied } }),
+      tile("tailscale", "Tailscale", Waypoints, {
+        words: { ok: "connected", warn: "needs attention", bad: "needs attention", info: "starting" },
+        noun: ["device", "devices"],
+      }),
       tile("wireguard", "WireGuard VPN", ShieldHalf, { words: { ok: "on" }, noun: ["device", "devices"] }),
       tile("tunnel", "Cloudflare Tunnel", Cloud, { words: { ok: "on", ...notApplied }, noun: ["route", "routes"] }),
       tile("firewall", "Firewall", BrickWall, { words: notApplied, noun: ["opening", "openings"] }),

@@ -83,12 +83,16 @@ func (h *HTTP) Register(a httpx.APIs) {
 
 	httpx.Register(a, httpx.ScopeRead, huma.Operation{
 		OperationID: "getTailscaleStatus", Method: http.MethodGet, Path: "/host-settings/tailscale/status", Tags: tags,
-		Summary: "The host on its tailnet: logged in or not, its link while a login waits, its addresses.",
+		Summary: "The host on its tailnet: state, identity, routes, key expiry and health.",
 	}, h.tailscaleStatus)
+	httpx.Register(a, httpx.ScopeRead, huma.Operation{
+		OperationID: "getTailscalePeers", Method: http.MethodGet, Path: "/host-settings/tailscale/peers", Tags: tags,
+		Summary: "The other devices on the host's tailnet.",
+	}, h.tailscalePeers)
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
-		OperationID: "loginTailscale", Method: http.MethodPost, Path: "/host-settings/tailscale/login", Tags: tags, Errors: loginErrs,
+		OperationID: "loginTailscale", Method: http.MethodPost, Path: "/host-settings/tailscale/login", Tags: tags, Errors: append([]int{http.StatusBadRequest}, loginErrs...),
 		Summary:     "Turn Tailscale on and start its login.",
-		Description: "Answers with auth_url once tailscale login prints it (within 15 s). The link stays open for 10 minutes; once the host is approved, the settings are applied again. `409 managed_by_nixos` on a NixOS host.",
+		Description: "Starts browser login by default and answers with auth_url once printed (within 15 s). Optional auth_key or login_server logs in directly. Once approved, settings are applied again. `409 managed_by_nixos` on a NixOS host.",
 	}, h.tailscaleLogin)
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "logoutTailscale", Method: http.MethodPost, Path: "/host-settings/tailscale/logout", Tags: tags, Errors: loginErrs,
@@ -110,13 +114,24 @@ func (h *HTTP) Register(a httpx.APIs) {
 }
 
 type tailscaleOut struct{ Body TailscaleStatus }
+type tailscalePeersOut struct{ Body TailscalePeers }
+type tailscaleLoginIn struct {
+	Body *TailscaleLoginInput `required:"false"`
+}
 type loginOut struct{ Body Login }
 
 func (h *HTTP) tailscaleStatus(ctx context.Context, _ *struct{}) (*tailscaleOut, error) {
 	return &tailscaleOut{Body: h.s.TailscaleStatus(ctx)}, nil
 }
-func (h *HTTP) tailscaleLogin(ctx context.Context, _ *struct{}) (*tailscaleOut, error) {
-	st, err := h.s.TailscaleLogin(ctx)
+func (h *HTTP) tailscalePeers(ctx context.Context, _ *struct{}) (*tailscalePeersOut, error) {
+	return &tailscalePeersOut{Body: h.s.TailscalePeers(ctx)}, nil
+}
+func (h *HTTP) tailscaleLogin(ctx context.Context, in *tailscaleLoginIn) (*tailscaleOut, error) {
+	var body TailscaleLoginInput
+	if in != nil && in.Body != nil {
+		body = *in.Body
+	}
+	st, err := h.s.TailscaleLogin(ctx, body)
 	if err != nil {
 		return nil, problem(err)
 	}

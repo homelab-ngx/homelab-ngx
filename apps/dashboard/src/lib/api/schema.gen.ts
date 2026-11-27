@@ -769,7 +769,7 @@ export interface paths {
         put?: never;
         /**
          * Turn Tailscale on and start its login.
-         * @description Answers with auth_url once tailscale login prints it (within 15 s). The link stays open for 10 minutes; once the host is approved, the settings are applied again. `409 managed_by_nixos` on a NixOS host.
+         * @description Starts browser login by default and answers with auth_url once printed (within 15 s). Optional auth_key or login_server logs in directly. Once approved, settings are applied again. `409 managed_by_nixos` on a NixOS host.
          */
         post: operations["loginTailscale"];
         delete?: never;
@@ -795,6 +795,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/host-settings/tailscale/peers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The other devices on the host's tailnet. */
+        get: operations["getTailscalePeers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/host-settings/tailscale/status": {
         parameters: {
             query?: never;
@@ -802,7 +819,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The host on its tailnet: logged in or not, its link while a login waits, its addresses. */
+        /** The host on its tailnet: state, identity, routes, key expiry and health. */
         get: operations["getTailscaleStatus"];
         put?: never;
         post?: never;
@@ -5283,25 +5300,97 @@ export interface components {
             paths: string[];
         };
         Tailscale: {
-            /** @description Subnets offered to the tailnet, such as the LAN. */
+            /** @description Use the tailnet's MagicDNS settings (default true). */
+            accept_dns?: boolean;
+            /** @description IPv4 subnets offered to the tailnet, such as the LAN. */
             advertise_routes?: string[];
-            /** @description Runs tailscaled. The host joins a tailnet through the login link (POST /host-settings/tailscale/login). */
+            /** @description Runs tailscaled. The host joins a tailnet through POST /host-settings/tailscale/login. */
             enabled: boolean;
+            /** @description Offer this host as a Tailscale exit node (requires approval in the tailnet admin console). */
+            exit_node?: boolean;
+            /** @description Custom control server URL (https://...), such as Headscale. Empty uses Tailscale. */
+            login_server?: string;
+            /** @description Allow SSH over Tailscale using tailnet ACLs. */
+            ssh?: boolean;
+        };
+        TailscaleLoginInput: {
+            /** @description Optional node authorization key. Passed via a 0600 temp file and never stored or logged. */
+            auth_key?: string;
+            /** @description Force re-authentication when already logged in or switching control servers. */
+            force_reauth?: boolean;
+            /** @description Optional custom control server URL (https://...). Empty uses Tailscale. Absent keeps the stored value. */
+            login_server?: string;
+        };
+        TailscalePeer: {
+            direct: boolean;
+            dns_name?: string;
+            ips: string[];
+            /** Format: date-time */
+            last_seen?: string;
+            name: string;
+            online: boolean;
+            os?: string;
+            relay?: string;
+        };
+        TailscalePeers: {
+            peers: components["schemas"]["TailscalePeer"][];
+        };
+        TailscaleRoute: {
+            /** @description Whether the tailnet admin console approved this route. */
+            approved: boolean;
+            /** @description Subnet prefix in CIDR notation, such as 192.168.1.0/24. */
+            prefix: string;
         };
         TailscaleStatus: {
+            /** @description Tailscale admin console machines page, omitted for custom control servers. */
+            admin_url?: string;
             /** @description The link that adds the host to a tailnet, while it needs a login. */
             auth_url?: string;
+            /** @description The control server URL in use. */
+            control_url?: string;
             /** @description The host's name on the tailnet, such as homelab.tail1234.ts.net. */
             dns_name?: string;
+            /**
+             * @description off, pending, or approved exit-node status.
+             * @enum {string}
+             */
+            exit_node: "off" | "pending" | "approved";
+            /** @description Health warnings reported by tailscaled. */
+            health: string[];
             /** @description The host's addresses on the tailnet. */
             ips: string[];
             /**
-             * @description off: tailscaled is not running. needs-login: open auth_url to add the host to a tailnet. needs-approval: an admin of the tailnet approves the host in its admin console. running: on the tailnet.
+             * Format: date-time
+             * @description When the node key expires, if key expiry is enabled.
+             */
+            key_expiry?: string;
+            /**
+             * Format: int64
+             * @description Number of online peers on the tailnet.
+             */
+            online_peers: number;
+            /** @description Preferred DERP relay code for this host. */
+            relay?: string;
+            /** @description Offered subnets with approval state from Self.AllowedIPs. */
+            routes: components["schemas"]["TailscaleRoute"][];
+            /**
+             * @description off: tailscaled is not running. needs-login: open auth_url to add the host to a tailnet. needs-approval: an admin of the tailnet approves the host in its admin console. stopped: logged in previously but stopped. expired: node key expired. running: on the tailnet.
              * @enum {string}
              */
-            state: "off" | "needs-login" | "needs-approval" | "starting" | "running";
+            state: "off" | "needs-login" | "needs-approval" | "stopped" | "expired" | "starting" | "running";
+            /** @description ACL tags assigned to this node. */
+            tags: string[];
             /** @description The tailnet's name. */
             tailnet?: string;
+            /**
+             * Format: int64
+             * @description Total peers visible on the tailnet.
+             */
+            total_peers: number;
+            /** @description The account or login name the node authenticated as. */
+            user?: string;
+            /** @description The running Tailscale version. */
+            version?: string;
         };
         TakeOverInBody: {
             /** @description The six digits on the machine's own screen or serial console. */
@@ -9321,7 +9410,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["TailscaleLoginInput"];
+            };
+        };
         responses: {
             /** @description OK */
             200: {
@@ -9332,8 +9425,46 @@ export interface operations {
                     "application/json": components["schemas"]["TailscaleStatus"];
                 };
             };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -9449,6 +9580,45 @@ export interface operations {
             };
             /** @description Bad Gateway */
             502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getTailscalePeers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TailscalePeers"];
+                };
+            };
+            /** @description Error */
+            default: {
                 headers: {
                     [name: string]: unknown;
                 };

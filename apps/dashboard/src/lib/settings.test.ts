@@ -11,6 +11,9 @@ describe("tileLabel", () => {
     expect(tileLabel(byKey("mail"), { state: "ok" })).toBe("Mail relay, on");
     expect(tileLabel(byKey("mail"), { state: "bad" })).toBe("Mail relay, not applied");
     expect(tileLabel(byKey("mail"), { state: "off" })).toBe("Mail relay, off");
+    expect(tileLabel(byKey("tailscale"), { state: "ok", count: 4 })).toBe("Tailscale, connected, 4 devices");
+    expect(tileLabel(byKey("tailscale"), { state: "warn", count: 1 })).toBe("Tailscale, needs attention, 1 device");
+    expect(tileLabel(byKey("tailscale"), { state: "bad" })).toBe("Tailscale, needs attention");
   });
 
   it("falls back to a plain word for a state the tile does not name", () => {

@@ -145,11 +145,20 @@ func TestNixOSIsReadOnly(t *testing.T) {
 	st, _ := storetest.Open(t)
 	nix := &config.Nix{Stacks: config.Stacks{Domain: "home.example.com", DashboardURL: "https://homelab.home.example.com", LAN: []string{"192.168.1.0/24"}}}
 	nix.Security.Firewall.TCPPorts = []int{8080}
+	nix.Security.Tailscale = config.Tailscale{
+		Enabled:  true,
+		UpFlags:  []string{"--advertise-routes=192.168.1.0/24,10.0.0.0/24", "--ssh"},
+		SetFlags: []string{"--advertise-exit-node", "--accept-dns=false", "--login-server", "https://hs.example.net"},
+	}
 	s := New(st, "", ManagedNixOS, nix, nil, slog.New(slog.DiscardHandler))
 	ctx := context.Background()
 	got, err := s.Get(ctx)
 	if err != nil || got.Managed != ManagedNixOS || got.Domain.Domain != "home.example.com" || got.Domain.DashboardLabel != "homelab" || got.Firewall.Openings[0].Port != 8080 {
 		t.Fatalf("get: %+v %v", got, err)
+	}
+	if !got.Tailscale.Enabled || !slices.Equal(got.Tailscale.AdvertiseRoutes, []string{"192.168.1.0/24", "10.0.0.0/24"}) ||
+		!got.Tailscale.ExitNode || got.Tailscale.UseDNS() || !got.Tailscale.SSH || got.Tailscale.LoginServer != "https://hs.example.net" {
+		t.Fatalf("nixos tailscale = %+v", got.Tailscale)
 	}
 	if _, err := s.SetHost(ctx, Host{Hostname: "x"}); !errors.Is(err, ErrManaged) {
 		t.Fatalf("set on nixos: %v", err)

@@ -242,6 +242,13 @@ type TunnelSet struct {
 
 // Tailscale is the host on a tailnet.
 type Tailscale struct {
-	Enabled         bool     `json:"enabled" doc:"Runs tailscaled. The host joins a tailnet through the login link (POST /host-settings/tailscale/login)."`
-	AdvertiseRoutes []string `required:"false" json:"advertise_routes" doc:"Subnets offered to the tailnet, such as the LAN."`
+	Enabled         bool     `json:"enabled" doc:"Runs tailscaled. The host joins a tailnet through POST /host-settings/tailscale/login."`
+	AdvertiseRoutes []string `required:"false" json:"advertise_routes" doc:"IPv4 subnets offered to the tailnet, such as the LAN."`
+	ExitNode        bool     `required:"false" json:"exit_node" doc:"Offer this host as a Tailscale exit node (requires approval in the tailnet admin console)."`
+	AcceptDNS       *bool    `required:"false" json:"accept_dns,omitempty" doc:"Use the tailnet's MagicDNS settings (default true)."`
+	SSH             bool     `required:"false" json:"ssh" doc:"Allow SSH over Tailscale using tailnet ACLs."`
+	LoginServer     string   `required:"false" json:"login_server,omitempty" maxLength:"256" doc:"Custom control server URL (https://...), such as Headscale. Empty uses Tailscale."`
 }
+
+// UseDNS reports whether tailnet DNS is enabled (nil defaults to true).
+func (t Tailscale) UseDNS() bool { return t.AcceptDNS == nil || *t.AcceptDNS }
