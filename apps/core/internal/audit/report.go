@@ -57,7 +57,7 @@ type Finding struct {
 	Title    string   `json:"title"`
 	Evidence string   `json:"evidence" doc:"The line of the material that shows it, quoted by the model."`
 	Risk     string   `json:"risk" doc:"What could happen, and who could do it."`
-	Fix      string   `json:"fix" doc:"What to change: a dashboard action or the NixOS option."`
+	Fix      string   `json:"fix" doc:"What to change: a dashboard action, a Settings change, or a stack change."`
 	Verified bool     `json:"verified" doc:"The evidence quote was found in the material the model was given. False: the model may have made it up."`
 }
 

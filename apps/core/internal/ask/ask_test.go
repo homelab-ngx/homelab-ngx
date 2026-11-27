@@ -282,3 +282,17 @@ func TestAskStreamsOverHTTP(t *testing.T) {
 		t.Fatalf("error stream:\n%s", out)
 	}
 }
+
+func TestGuideDescribesImageHost(t *testing.T) {
+	lower := strings.ToLower(guide)
+	for _, bad := range []string{"nixos host", "own nixos system", "nixos option"} {
+		if strings.Contains(lower, bad) {
+			t.Errorf("ask guide mentions %q", bad)
+		}
+	}
+	for _, want := range []string{"Arch", "system extension", "systemd-nspawn"} {
+		if !strings.Contains(guide, want) {
+			t.Errorf("ask guide lacks %q", want)
+		}
+	}
+}

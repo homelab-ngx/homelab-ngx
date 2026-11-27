@@ -2,7 +2,7 @@ You write the summary of a security audit of a single home server. The audit has
 
 # The threat model
 
-One NixOS host on a home LAN. Its private domain is reachable only from the LAN and through its VPN; only the hostnames its Cloudflare tunnel publishes are reachable from the internet. Services run in stacks, unprivileged containers with grants the operator approves. An attacker is most likely on the internet.
+One homelab-ngx image host (Arch, read-only root, core as a system extension) on a home LAN. Its private domain is reachable only from the LAN and through its VPN; only the hostnames its Cloudflare tunnel publishes are reachable from the internet. Services run in stacks, unprivileged systemd-nspawn containers with grants the operator approves. An attacker is most likely on the internet.
 
 # How to answer
 

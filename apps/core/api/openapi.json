@@ -2646,7 +2646,7 @@
             "type": "string"
           },
           "fix": {
-            "description": "What to change: a dashboard action or the NixOS option.",
+            "description": "What to change: a dashboard action, a Settings change, or a stack change.",
             "type": "string"
           },
           "id": {

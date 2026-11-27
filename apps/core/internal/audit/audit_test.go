@@ -378,3 +378,19 @@ func TestAddUsageSumsDollarsOnlyWhenReported(t *testing.T) {
 		t.Fatalf("total = %+v", total)
 	}
 }
+
+func TestGuidesDescribeImageHost(t *testing.T) {
+	for name, g := range map[string]string{"guide": guide, "summary": summaryGuide} {
+		lower := strings.ToLower(g)
+		for _, bad := range []string{"nixos host", "own nixos system", "the nixos option"} {
+			if strings.Contains(lower, bad) {
+				t.Errorf("%s mentions %q", name, bad)
+			}
+		}
+		for _, want := range []string{"Arch", "system extension", "systemd-nspawn"} {
+			if !strings.Contains(g, want) {
+				t.Errorf("%s lacks %q", name, want)
+			}
+		}
+	}
+}

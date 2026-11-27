@@ -3631,7 +3631,7 @@ export interface components {
             area: "exposure" | "access" | "stacks" | "secrets" | "updates";
             /** @description The line of the material that shows it, quoted by the model. */
             evidence: string;
-            /** @description What to change: a dashboard action or the NixOS option. */
+            /** @description What to change: a dashboard action, a Settings change, or a stack change. */
             fix: string;
             /** @description Unique within the audit, such as exposure-2. */
             id: string;
