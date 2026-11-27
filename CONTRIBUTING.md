@@ -239,6 +239,12 @@ all 19 steps on main twice a week and by hand as a dry run without
 publishing or tagging. Runs on main fill the Nix store and Arch build root
 caches that releases read.
 
+The **reproducible** workflow (`.github/workflows/reproducible.yml`) builds
+the same commit on two separate runners weekly and on demand, and fails if
+their `SHA256SUMS` differ. Pass `-f tag=vX.Y.Z` to rebuild a release tag on
+two runners and check both against the published `SHA256SUMS` on
+`dl.homelab-ngx.com`.
+
 When a release run fails after tagging or uploading, run it again with
 **Re-run failed jobs**; never move a tag or take the next version number
 for a workflow failure. Once `X.Y.Z` is uploaded, only `announce` runs

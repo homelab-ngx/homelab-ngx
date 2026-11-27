@@ -1,7 +1,36 @@
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import adapter from "@sveltejs/adapter-static";
 import { sveltekit } from "@sveltejs/kit/vite";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vitest/config";
+
+/** Deterministic SvelteKit version name so two builds of the same commit match. */
+function buildVersion(): string {
+  const root = fileURLToPath(new URL(".", import.meta.url));
+  const h = createHash("sha256");
+  const walk = (rel: string): void => {
+    for (const ent of readdirSync(`${root}/${rel}`, { withFileTypes: true }).sort((a, b) =>
+      a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+    )) {
+      const next = `${rel}/${ent.name}`;
+      if (ent.isDirectory()) {
+        walk(next);
+      } else if (ent.isFile()) {
+        h.update(next);
+        h.update("\0");
+        h.update(readFileSync(`${root}/${next}`));
+        h.update("\0");
+      }
+    }
+  };
+  walk("src");
+  walk("static");
+  h.update("package-lock.json\0");
+  h.update(readFileSync(`${root}/package-lock.json`));
+  return h.digest("hex").slice(0, 16);
+}
 
 export default defineConfig({
   plugins: [
@@ -14,6 +43,8 @@ export default defineConfig({
       compilerOptions: { runes: true },
       // static/sw.js is registered by the layout; kit does not build one.
       serviceWorker: { register: false },
+      // Derived from the dashboard source tree instead of Date.now() so builds are reproducible.
+      version: { name: buildVersion() },
     }),
   ],
   server: {

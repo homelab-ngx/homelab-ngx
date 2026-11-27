@@ -247,7 +247,7 @@ jobs:
           cp image/out/homelab_"$VERSION".efi image/out/homelab_"$VERSION".root*.raw image/out/homelab_"$VERSION".manifest "$rel/"
           cp image/out/core/homelab-core_"$VERSION".raw "$rel/core/"
           cd "$rel"
-          sha256sum homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw > SHA256SUMS
+          LC_ALL=C sha256sum homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw > SHA256SUMS
           gpg --batch --detach-sign -o SHA256SUMS.gpg SHA256SUMS
           gpg --batch --verify SHA256SUMS.gpg SHA256SUMS
           { echo "## $VERSION"; echo '```'; ls -l . core; cat SHA256SUMS; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

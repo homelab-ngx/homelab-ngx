@@ -1,0 +1,145 @@
+# Reproducible build check: builds the same commit on two separate runners and
+# compares their release SHA256SUMS. Runs weekly on main and by hand for any
+# release tag (tag=vX.Y.Z); when a tag is already published on RELEASE_URL,
+# the built SHA256SUMS must also match the published one.
+name: reproducible
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag (vX.Y.Z) to rebuild and verify; leave empty to check main
+        required: false
+        default: ''
+  schedule:
+    - cron: '17 3 * * 0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reproducible
+  cancel-in-progress: false
+
+env:
+  RELEASE_URL: ${{ vars.RELEASE_URL }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [1, 2]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+          fetch-depth: 0
+
+      - name: Version
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [ -n "$TAG" ]; then
+            [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::'$TAG' is not vX.Y.Z"; exit 1; }
+            v=${TAG#v}
+          else
+            base=$(git tag -l --sort=-v:refname | awk '!f && /^v[0-9]+\.[0-9]+\.[0-9]+$/ { sub(/^v/, ""); print; f = 1 }')
+            v=${base:-0.0}.$(TZ=UTC git log -1 --format=%cd --date=format-local:%Y%m%d%H%M)
+          fi
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "reproducible build $v (runner ${{ matrix.runner }}, commit $(git rev-parse --short HEAD))"
+
+      - uses: ./.github/actions/image-env
+        with:
+          save: false
+
+      # When the Nix store cache already holds this commit's outputs, force
+      # runner 2 to rebuild the repo's derivations and fail on any drift.
+      - name: Verify cached Nix derivations rebuild identically
+        if: ${{ matrix.runner == 2 }}
+        run: |
+          for attr in dashboard core-extension.daemonStatic core-extension.runner core-extension; do
+            out=$(nix --extra-experimental-features 'nix-command flakes' eval --raw ".#packages.x86_64-linux.$attr.outPath")
+            if [ -e "$out" ]; then
+              echo "rebuilding cached $attr ($out)"
+              nix --extra-experimental-features 'nix-command flakes' build --rebuild --no-link ".#packages.x86_64-linux.$attr"
+            fi
+          done
+
+      # Runner 2 varies checkout permissions and umask to catch mode leaks.
+      - name: make image
+        run: |
+          if [ "${{ matrix.runner }}" = 2 ]; then
+            umask 0002
+            find image/base ! -type l -exec chmod g+w {} +
+          else
+            umask 0022
+          fi
+          make image VERSION="$VERSION"
+
+      - name: Release SHA256SUMS
+        run: |
+          rel=$RUNNER_TEMP/repro-rel
+          out=$RUNNER_TEMP/repro-out
+          mkdir -p "$rel/core" "$out"
+          cp image/out/homelab_"$VERSION".raw "$rel/homelab-ngx_$VERSION.img"
+          cp image/out/homelab_"$VERSION".efi image/out/homelab_"$VERSION".root*.raw image/out/homelab_"$VERSION".manifest "$rel/"
+          cp image/out/core/homelab-core_"$VERSION".raw "$rel/core/"
+          (cd "$rel" && LC_ALL=C sha256sum homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw > "$out/SHA256SUMS")
+          printf '%s\n' "$VERSION" > "$out/VERSION"
+          { echo "### Runner ${{ matrix.runner }} ($VERSION)"; echo '```'; cat "$out/SHA256SUMS"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sha256sums-${{ matrix.runner }}
+          path: ${{ runner.temp }}/repro-out
+          retention-days: 7
+
+  compare:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sha256sums-1
+          path: ${{ runner.temp }}/r1
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: sha256sums-2
+          path: ${{ runner.temp }}/r2
+
+      - name: Compare SHA256SUMS
+        env:
+          TAG: ${{ inputs.tag }}
+        run: |
+          v1=$(cat "$RUNNER_TEMP/r1/VERSION")
+          v2=$(cat "$RUNNER_TEMP/r2/VERSION")
+          [ "$v1" = "$v2" ] || { echo "::error::runners built different versions: $v1 vs $v2"; exit 1; }
+          diff -u "$RUNNER_TEMP/r1/SHA256SUMS" "$RUNNER_TEMP/r2/SHA256SUMS"
+          {
+            echo "## Reproducible build: $v1"
+            echo '```'
+            cat "$RUNNER_TEMP/r1/SHA256SUMS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$TAG" ] && [ -n "$RELEASE_URL" ]; then
+            code=$(curl -sS --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/published" -w '%{http_code}' "$RELEASE_URL/$v1/SHA256SUMS?t=$(date +%s)")
+            case $code in
+              200)
+                diff -u "$RUNNER_TEMP/published" "$RUNNER_TEMP/r1/SHA256SUMS"
+                echo "Matches published $RELEASE_URL/$v1/SHA256SUMS." | tee -a "$GITHUB_STEP_SUMMARY"
+                ;;
+              404)
+                echo "No published release at $RELEASE_URL/$v1/SHA256SUMS; compared runners only." | tee -a "$GITHUB_STEP_SUMMARY"
+                ;;
+              *)
+                echo "::error::$RELEASE_URL/$v1/SHA256SUMS answered HTTP $code"
+                exit 1
+                ;;
+            esac
+          fi

@@ -29,6 +29,9 @@
 # before (Incremental=) when the packages are the same, and the whole-disk
 # .raw, which only an installer needs, is removed.
 set -euo pipefail
+# Fixed umask so files this script creates (var-tree, SHA256SUMS) have the
+# same permissions regardless of the caller's shell.
+umask 022
 here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/.." && pwd)
 if [ -n "${1:-}" ]; then
@@ -119,11 +122,18 @@ mkdir -p "$tree/var/lib/extensions.d" "$tree/var/lib/extensions" "$tree/var/lib/
 cp "$out/core/homelab-core_$version.raw" "$tree/var/lib/extensions.d/"
 ln -s "/var/lib/extensions.d/homelab-core_$version.raw" "$tree/var/lib/extensions/homelab-core.raw"
 echo "Remove this file and the system leaves installer mode." > "$tree/var/lib/homelab/installer"
+find "$tree" ! -type l -exec chmod u+rw,go=rX {} +
 $sudo chown -R 0:0 "$tree"
 
 # mkosi's workspace is in the /out bind, so it renames its outputs into
 # place: from another mount it copies them, gigabytes each time.
 work=$out/.mkosi-work
+# Stage image/base with normalized permissions (0644/0755) so git checkout
+# umask does not leak into the root image or initrd.
+base=$out/.mkosi-base
+$sudo rm -rf "$base"
+cp -a "$here/base" "$base"
+find "$base" ! -type l -exec chmod u+rw,go=rX {} +
 # pacman gives up on a download that stalls for 10 s, and the Arch archive
 # stalls now and then. The packages it did fetch stay in the package cache,
 # so another try fetches only the rest. Any other failure ends the build.
@@ -132,7 +142,7 @@ mirror=$arch_mirror
 for try in 1 2 3 4; do
   $sudo rm -rf "$work"
   mkdir -p "$work"
-  if nspawn --bind="$here:/work" --bind="$out:/out" --bind="$mkcache:/cache" --chdir=/work/base \
+  if nspawn --bind="$base:/work" --bind="$out:/out" --bind="$mkcache:/cache" --chdir=/work \
     /usr/bin/mkosi --mirror "$mirror" --image-version "$version" --output-directory /out --workspace-directory /out/.mkosi-work \
     --cache-directory /cache/images --package-cache-dir /cache/packages \
     ${update:+--incremental=yes} --extra-tree=/out/var-tree:/ --force build 2>&1 | tee "$log"; then
@@ -153,12 +163,12 @@ for try in 1 2 3 4; do
   sleep "$wait"
 done
 rm -f "$log"
-$sudo rm -rf "$tree" "$work"
+$sudo rm -rf "$tree" "$work" "$base"
 # An update needs no installer image; repart writes it with the split files.
 [ -z "$update" ] || $sudo rm -f "$out/homelab_$version.raw"
 $sudo chown -R "$(id -u):$(id -g)" "$out"
 
 # sysupdate reads a manifest in each folder.
-(cd "$out" && sha256sum homelab_"$version".efi homelab_"$version".root*.raw > SHA256SUMS)
-(cd "$out/core" && sha256sum homelab-core_"$version".raw > SHA256SUMS)
+(cd "$out" && LC_ALL=C sha256sum homelab_"$version".efi homelab_"$version".root*.raw > SHA256SUMS)
+(cd "$out/core" && LC_ALL=C sha256sum homelab-core_"$version".raw > SHA256SUMS)
 ls -l "$out" "$out/core"
