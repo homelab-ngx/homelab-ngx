@@ -18,6 +18,7 @@ import (
 	"github.com/ProtonMail/go-crypto/openpgp"
 	"github.com/ProtonMail/go-crypto/openpgp/armor"
 
+	"homelab-ngx.com/core/internal/cmdrunner/cmdrunnertest"
 	"homelab-ngx.com/core/internal/notifications"
 )
 
@@ -280,5 +281,27 @@ func TestReleaseFilesNeedsTheWholeUpdate(t *testing.T) {
 	files, err := releaseFiles([]byte(sums), "1.0.0")
 	if err != nil || len(files) != 4 {
 		t.Fatalf("files %v: %v", files, err)
+	}
+}
+
+func TestDownloadReleaseIsInstantWhenUpToDate(t *testing.T) {
+	root := imageHost(t, "0.4.6")
+	useCore(t, "0.4.6")
+	newTestRelease(t, testKey(t), "0.4.6")
+	f := cmdrunnertest.NewFake()
+	f.On("systemctl", "is-active").FailCode(3, "inactive")
+	stateDir := filepath.Join(root, "state")
+	_ = os.MkdirAll(stateDir, 0o755)
+	m := &Module{dir: stateDir, image: true, r: f, now: time.Now}
+
+	d, err := m.DownloadRelease(context.Background())
+	if err != nil {
+		t.Fatalf("DownloadRelease: %v", err)
+	}
+	if d.Result != DeployHealthy || d.FinishedAt == nil || !strings.HasPrefix(d.Phase, "Up to date") {
+		t.Fatalf("deploy = %+v", d)
+	}
+	if len(f.CallsMatching("systemd-run")) != 0 {
+		t.Fatal("systemd-run should not be invoked when already up to date")
 	}
 }

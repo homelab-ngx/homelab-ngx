@@ -349,7 +349,11 @@ func updateSteps(s *S) {
 			for n := 1; n <= 2; n++ {
 				since := s.must("date +%s")
 				start := time.Now()
-				d := s.op("system-updates/image/build", nil, 60*time.Minute)
+				var body any
+				if n == 2 {
+					body = map[string]any{"force": true}
+				}
+				d := s.op("system-updates/image/build", body, 60*time.Minute)
 				if d.Result != "healthy" {
 					s.die("build %d: %s: %s", n, d.Result, d.Reason)
 				}

@@ -33,6 +33,8 @@ type RunOptions struct {
 	State  string
 	// Reboot is an image update's or an install's: "", "now" or "HH:MM".
 	Reboot string
+	// Force rebuilds from main even when HEAD is already on this host.
+	Force bool
 }
 
 // deployRun is one update in its own process.

@@ -280,6 +280,22 @@ func (m *Module) ImageStatus(context.Context) (ImageStatus, error) {
 	return st, nil
 }
 
+// StartBuild starts a build from main, skipping if HEAD is already on this
+// host unless force is true.
+func (m *Module) StartBuild(ctx context.Context, force bool) (CoreDeploy, error) {
+	if !m.image {
+		return CoreDeploy{}, ErrNotImageHost
+	}
+	if m.dep.Source == "" {
+		return CoreDeploy{}, ErrDeployNotSet
+	}
+	var extra []string
+	if force {
+		extra = append(extra, "--force")
+	}
+	return m.start(ctx, KindBuild, extra...)
+}
+
 // StartImage starts a build, a core update, an image update or an install
 // of everything staged. reboot is for a new image: "" leaves the new version
 // for the next reboot, "now" reboots at once, "HH:MM" at that time.
@@ -382,6 +398,18 @@ func (x *deployRun) build(ctx context.Context) (string, string) {
 	rev, _ := x.cmd(ctx, time.Minute, nil, "git", "-C", src, "rev-parse", "HEAD")
 	x.d.Rev = strings.TrimSpace(rev)
 
+	if !x.o.Force {
+		if ver, ok := x.buildAlreadyOnHost(ctx, src, x.d.Rev); ok {
+			x.d.Version = ver
+			short := x.d.Rev
+			if len(short) > 7 {
+				short = short[:7]
+			}
+			x.phase("Already up to date with main (" + short + ")")
+			return DeployHealthy, ""
+		}
+	}
+
 	x.phase("Build")
 	out := filepath.Join(imageBuildDir, "out")
 	_ = os.RemoveAll(out)
@@ -394,7 +422,7 @@ func (x *deployRun) build(ctx context.Context) (string, string) {
 		return DeployBuildFailed, "the build failed: " + err.Error()
 	}
 
-	x.phase("Stage")
+	x.phase("Prepare")
 	versions := versionsIn(out, stagedImageRE)
 	if len(versions) == 0 {
 		return DeployBuildFailed, "the build made no image"
@@ -407,6 +435,78 @@ func (x *deployRun) build(ctx context.Context) (string, string) {
 	_ = os.RemoveAll(out)
 	x.phase("Built " + v)
 	return DeployHealthy, ""
+}
+
+var semverTagRE = regexp.MustCompile(`^v([0-9]+\.[0-9]+\.[0-9]+)$`)
+
+// buildAlreadyOnHost reports whether main's HEAD is already running,
+// installed, or staged on this host, so Build from main skips unnecessary work.
+func (x *deployRun) buildAlreadyOnHost(ctx context.Context, src, rev string) (string, bool) {
+	if rev == "" {
+		return "", false
+	}
+	// 1. A previous healthy build of this exact commit is still present on the host.
+	for _, d := range x.st.load() {
+		if d.Kind == KindBuild && d.Result == DeployHealthy && d.Rev == rev && d.Version != "" && hasLocalVersion(d.Version) {
+			return d.Version, true
+		}
+	}
+	// 2. HEAD carries an exact release tag (vX.Y.Z) that is already on the host.
+	if out, err := x.cmd(ctx, time.Minute, nil, "git", "-C", src, "tag", "--points-at", "HEAD"); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			if m := semverTagRE.FindStringSubmatch(strings.TrimSpace(line)); m != nil && !wantsRelease(m[1]) {
+				return m[1], true
+			}
+		}
+	}
+	// 3. The version build.sh would produce (<newest vX.Y.Z tag>.<UTC commit time>)
+	// is no newer than what the host already runs, has installed, or has staged.
+	if v := plannedBuildVersion(ctx, x, src); v != "" && !wantsRelease(v) {
+		return v, true
+	}
+	return "", false
+}
+
+// hasLocalVersion reports whether v is booted, installed, or staged on the host.
+func hasLocalVersion(v string) bool {
+	if bootedVersion() == v || activeCore() == v {
+		return true
+	}
+	for _, iv := range parseUKIs(ukiNames(), bootedVersion()) {
+		if iv.Version == v {
+			return true
+		}
+	}
+	if slices.Contains(versionsIn(imageUpdates, stagedImageRE), v) {
+		return true
+	}
+	if slices.Contains(versionsIn(coreExtDir, coreFileRE), v) {
+		return true
+	}
+	return slices.Contains(versionsIn(filepath.Join(imageUpdates, "core"), coreFileRE), v)
+}
+
+// plannedBuildVersion mirrors image/build.sh's default VERSION calculation:
+// <newest release tag (or 0.0)>.<HEAD commit time in UTC YYYYMMDDHHMM>.
+func plannedBuildVersion(ctx context.Context, x *deployRun, src string) string {
+	stampOut, err := x.cmd(ctx, time.Minute, []string{"TZ=UTC"}, "git", "-C", src, "log", "-1", "--format=%cd", "--date=format-local:%Y%m%d%H%M")
+	if err != nil {
+		return ""
+	}
+	stamp := strings.TrimSpace(stampOut)
+	if len(stamp) != 12 {
+		return ""
+	}
+	base := "0.0"
+	if tagsOut, err := x.cmd(ctx, time.Minute, nil, "git", "-C", src, "tag", "-l", "--sort=-v:refname"); err == nil {
+		for _, line := range strings.Split(tagsOut, "\n") {
+			if m := semverTagRE.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+				base = m[1]
+				break
+			}
+		}
+	}
+	return base + "." + stamp
 }
 
 // stage moves version v's UKI, root slot and core extension from out into
@@ -544,7 +644,7 @@ func (x *deployRun) coreUpdate(ctx context.Context) (string, string) {
 		x.d.Version = v
 		return DeployFailed, fmt.Sprintf("core %s needs image %s or newer, and the host runs %s: install the image and restart", v, min, bootedVersion())
 	}
-	x.phase("Update")
+	x.phase("Apply core")
 	if out, err := x.cmd(ctx, 10*time.Minute, nil, sysupdateBin, "--component=homelab-core", "--verify=no", "update"); err != nil {
 		return DeployFailed, "sysupdate: " + strings.TrimSpace(lastLines(out, 5))
 	}
@@ -635,7 +735,7 @@ func (x *deployRun) install(ctx context.Context) (string, string) {
 // version, "" when the host already has the newest; why says what failed.
 func (x *deployRun) installImage(ctx context.Context) (version, why string) {
 	booted := bootedVersion()
-	x.phase("Update")
+	x.phase("Install for next reboot")
 	if out, err := x.cmd(ctx, 30*time.Minute, nil, sysupdateBin, "--verify=no", "update"); err != nil {
 		return "", "sysupdate: " + strings.TrimSpace(lastLines(out, 5))
 	}

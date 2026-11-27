@@ -344,7 +344,7 @@ func fetchFile(ctx context.Context, url, path, sum string) (int64, error) {
 // download fetches the newest release and stages it, if the host has no
 // newer image or core.
 func (x *deployRun) download(ctx context.Context) (string, string) {
-	x.phase("Check")
+	x.phase("Verify signature")
 	base := releaseURL()
 	v, err := latestRelease(ctx, base)
 	if err != nil {
@@ -356,7 +356,6 @@ func (x *deployRun) download(ctx context.Context) (string, string) {
 		return DeployHealthy, ""
 	}
 
-	x.phase("Verify")
 	sums, err := getSmall(ctx, base+"/"+v+"/SHA256SUMS")
 	if err != nil {
 		return DeployFailed, "the release server: " + err.Error()
@@ -412,7 +411,7 @@ func (x *deployRun) download(ctx context.Context) (string, string) {
 		x.logf("%s: %d MB, sum checked", name, n>>20)
 	}
 
-	x.phase("Stage")
+	x.phase("Prepare")
 	if err := stageWith(tmp, v, moveFile); err != nil {
 		return DeployFailed, "staging the update: " + err.Error()
 	}
@@ -485,13 +484,20 @@ func (m *Module) CheckRelease(ctx context.Context) ReleaseCheck {
 	return out
 }
 
-// DownloadRelease checks for a newer release and starts its download; the
-// download records "up to date" when there is none.
+// DownloadRelease checks for a newer release and starts its download; when the
+// host is already up to date (or the check fails), it records the result
+// immediately without starting a background unit.
 func (m *Module) DownloadRelease(ctx context.Context) (CoreDeploy, error) {
 	if !m.image {
 		return CoreDeploy{}, ErrNotImageHost
 	}
-	m.CheckRelease(ctx)
+	c := m.CheckRelease(ctx)
+	if c.Error != "" {
+		return m.recordInstant(ctx, KindDownload, "", "Check failed", DeployFailed, "the release server: "+c.Error)
+	}
+	if !wantsRelease(c.Latest) {
+		return m.recordInstant(ctx, KindDownload, c.Latest, "Up to date: the newest release is "+c.Latest, DeployHealthy, "")
+	}
 	return m.start(ctx, KindDownload)
 }
 

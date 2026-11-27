@@ -3114,6 +3114,10 @@ export interface components {
             /** @description An installed image version; empty with mode default: the newest again. */
             version: string;
         };
+        BuildInBody: {
+            /** @description Rebuild even when main HEAD is already running, installed or staged on this host. */
+            force?: boolean;
+        };
         ChangeInBody: {
             /** @description The password now; required from the dashboard, not from the CLI. */
             current_password?: string;
@@ -16034,7 +16038,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["BuildInBody"];
+            };
+        };
         responses: {
             /** @description Accepted */
             202: {
@@ -16066,6 +16074,25 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Unprocessable Entity */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

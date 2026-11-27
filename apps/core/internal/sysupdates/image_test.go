@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/cmdrunner/cmdrunnertest"
@@ -326,5 +327,55 @@ func TestBuildJobs(t *testing.T) {
 		if got := buildJobs(); got != want {
 			t.Errorf("%s=%q: %q, want %q", buildJobsEnv, env, got, want)
 		}
+	}
+}
+
+func TestBuildSkipsWhenHeadAlreadyOnHost(t *testing.T) {
+	root := imageHost(t, "0.4.6.202611270841")
+	useCore(t, "0.4.6.202611270841")
+	rev := "abcdef1234567890abcdef1234567890abcdef12"
+
+	fakeBuild := func(force bool, revOut, pointsAt, tagsOut, logOut string) (*deployRun, *cmdrunnertest.Fake) {
+		f := cmdrunnertest.NewFake()
+		f.On("git").Reply("")
+		f.On("git", "-C", filepath.Join(imageBuildDir, "src"), "rev-parse", "HEAD").Reply(revOut + "\n")
+		f.On("git", "-C", filepath.Join(imageBuildDir, "src"), "tag", "--points-at", "HEAD").Reply(pointsAt)
+		f.On("git", "-C", filepath.Join(imageBuildDir, "src"), "tag", "-l", "--sort=-v:refname").Reply(tagsOut)
+		f.On("git", "-C", filepath.Join(imageBuildDir, "src"), "log", "-1", "--format=%cd", "--date=format-local:%Y%m%d%H%M").Reply(logOut)
+		x := &deployRun{
+			o:   RunOptions{ID: 1, Kind: KindBuild, Source: "github:example/repo", State: filepath.Join(root, "deploys.json"), Force: force},
+			r:   f,
+			st:  deployStore{path: filepath.Join(root, "deploys.json")},
+			now: time.Now,
+		}
+		return x, f
+	}
+
+	// 1. Computed build.sh version matches the running image -> skips build.sh.
+	x, f := fakeBuild(false, rev, "", "v0.4.6\n", "202611270841\n")
+	res, why := x.build(context.Background())
+	if res != DeployHealthy || why != "" || !strings.Contains(x.d.Phase, "Already up to date with main (abcdef1)") {
+		t.Fatalf("same version: res=%s why=%q phase=%q", res, why, x.d.Phase)
+	}
+	if len(f.CallsMatching(filepath.Join(imageBuildDir, "src", "image", "build.sh"))) != 0 {
+		t.Fatal("build.sh ran despite matching version")
+	}
+
+	// 2. Exact release tag v0.4.6 at HEAD when running 0.4.6 -> skips build.sh.
+	x, f = fakeBuild(false, rev, "v0.4.6\n", "v0.4.6\n", "202611270999\n")
+	res, why = x.build(context.Background())
+	if res != DeployHealthy || why != "" || !strings.Contains(x.d.Phase, "Already up to date with main") {
+		t.Fatalf("release tag match: res=%s why=%q phase=%q", res, why, x.d.Phase)
+	}
+	if len(f.CallsMatching(filepath.Join(imageBuildDir, "src", "image", "build.sh"))) != 0 {
+		t.Fatal("build.sh ran despite HEAD carrying already-running release tag")
+	}
+
+	// 3. Force=true bypasses the skip check and runs build.sh.
+	x, f = fakeBuild(true, rev, "", "v0.4.6\n", "202611270841\n")
+	f.On(filepath.Join(imageBuildDir, "src", "image", "build.sh")).FailCode(1, "forced build ran")
+	res, _ = x.build(context.Background())
+	if res != DeployBuildFailed || len(f.CallsMatching(filepath.Join(imageBuildDir, "src", "image", "build.sh"))) != 1 {
+		t.Fatalf("force=true did not invoke build.sh: res=%s", res)
 	}
 }

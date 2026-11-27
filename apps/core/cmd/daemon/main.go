@@ -392,6 +392,7 @@ func runCoreDeploy(args []string) int {
 	fs.StringVar(&o.Socket, "socket", "", "daemon socket")
 	fs.StringVar(&o.State, "state", "", "update records file")
 	fs.StringVar(&o.Reboot, "reboot", "", "image update: \"\", \"now\" or HH:MM")
+	fs.BoolVar(&o.Force, "force", false, "build even when main HEAD is already on this host")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}

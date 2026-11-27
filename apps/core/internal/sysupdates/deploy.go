@@ -188,6 +188,32 @@ func (m *Module) start(ctx context.Context, kind string, extra ...string) (CoreD
 	return d, nil
 }
 
+// recordInstant writes an already-finished deploy without launching a
+// transient unit (used when Check now finds no newer release).
+func (m *Module) recordInstant(ctx context.Context, kind, version, phase, result, reason string) (CoreDeploy, error) {
+	m.ds.mu.Lock()
+	defer m.ds.mu.Unlock()
+	if m.deployActive(ctx) {
+		return CoreDeploy{}, ErrDeployRunning
+	}
+	now := m.now()
+	d := CoreDeploy{
+		Id:          now.UnixMilli(),
+		Kind:        kind,
+		Version:     version,
+		Phase:       phase,
+		Result:      result,
+		Reason:      reason,
+		StartedAt:   now,
+		FinishedAt:  &now,
+		FailedUnits: []string{},
+	}
+	if err := m.deploys().put(d); err != nil {
+		return CoreDeploy{}, fmt.Errorf("recording the update: %w", err)
+	}
+	return d, nil
+}
+
 // Deploys lists the update records, newest first. A record left running by
 // an update that was killed is closed as interrupted.
 func (m *Module) Deploys(ctx context.Context) []CoreDeploy {

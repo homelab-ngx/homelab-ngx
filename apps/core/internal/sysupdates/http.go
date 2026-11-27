@@ -39,6 +39,11 @@ type (
 			Reboot string `json:"reboot,omitempty" doc:"Empty: the new version boots at the next reboot. now: reboot at once. HH:MM: reboot then, today."`
 		} `required:"false"`
 	}
+	buildIn struct {
+		Body *struct {
+			Force bool `json:"force,omitempty" doc:"Rebuild even when main HEAD is already running, installed or staged on this host."`
+		} `required:"false"`
+	}
 )
 
 // Register adds the sysupdates operations: the GETs are read scope, the
@@ -107,8 +112,9 @@ func (h *HTTP) getChangelog(ctx context.Context, _ *struct{}) (*changelogOut, er
 	return &changelogOut{Body: h.mod.Changelog(ctx)}, nil
 }
 
-func (h *HTTP) build(ctx context.Context, _ *struct{}) (*deployOut, error) {
-	return startOut(h.mod.StartImage(ctx, KindBuild, ""))
+func (h *HTTP) build(ctx context.Context, in *buildIn) (*deployOut, error) {
+	force := in != nil && in.Body != nil && in.Body.Force
+	return startOut(h.mod.StartBuild(ctx, force))
 }
 
 func (h *HTTP) download(ctx context.Context, _ *struct{}) (*deployOut, error) {
