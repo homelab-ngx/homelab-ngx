@@ -468,7 +468,6 @@ func (m *Module) CheckRelease(ctx context.Context) ReleaseCheck {
 	v, err := latestRelease(ctx, base)
 	now := m.now()
 	m.rel.mu.Lock()
-	defer m.rel.mu.Unlock()
 	st := m.releaseStateLocked()
 	st.Url, st.CheckedAt, st.Error = base, &now, ""
 	if err != nil {
@@ -478,7 +477,12 @@ func (m *Module) CheckRelease(ctx context.Context) ReleaseCheck {
 		st.Latest = v
 	}
 	m.saveReleaseLocked(st)
-	return st.ReleaseCheck
+	out := st.ReleaseCheck
+	m.rel.mu.Unlock()
+	if err == nil {
+		m.refreshChangelog(ctx, base, latestTimeout)
+	}
+	return out
 }
 
 // DownloadRelease checks for a newer release and starts its download; the

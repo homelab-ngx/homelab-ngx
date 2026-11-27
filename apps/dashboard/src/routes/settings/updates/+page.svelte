@@ -5,6 +5,8 @@
   import { clockTime } from "#lib/format.ts";
   import PowerDialog from "#lib/components/PowerDialog.svelte";
   import { busyPoll, idlePoll } from "#lib/api/queries.ts";
+  import ChangelogCard from "#lib/components/core/ChangelogCard.svelte";
+  import { changelogKey, fetchChangelog } from "#lib/components/core/changelog.ts";
   import DeployCard from "#lib/components/core/DeployCard.svelte";
   import ImageCard from "#lib/components/core/ImageCard.svelte";
   import { pendingVersion, typicalSeconds } from "#lib/components/core/core.ts";
@@ -30,6 +32,14 @@
     queryFn: () => call(api.GET("/system-updates/image")),
     retry: false,
     refetchInterval: deploying ? busyPoll : idlePoll,
+  }));
+
+  const changelogQuery = createQuery(() => ({
+    queryKey: changelogKey,
+    queryFn: fetchChangelog,
+    enabled: !!image.data,
+    staleTime: 5 * 60_000,
+    retry: false,
   }));
 
   // An update that ended in the last ten minutes stays on the page.
@@ -88,7 +98,12 @@
 {/if}
 
 {#if image.data}
-  <ImageCard image={image.data} busy={deploying} onReboot={() => (confirmReboot = true)} />
+  {@const img = image.data}
+  <ImageCard image={img} busy={deploying} onReboot={() => (confirmReboot = true)}>
+    {#snippet changelog()}
+      <ChangelogCard image={img} releases={changelogQuery.data?.releases ?? []} loading={changelogQuery.isPending} />
+    {/snippet}
+  </ImageCard>
 {:else if image.error && !deploying}
   <p class="mt-5 text-muted">{describe(image.error)}</p>
 {/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { createQuery } from "@tanstack/svelte-query";
   import { goto, replaceState } from "$app/navigation";
   import { page } from "$app/state";
@@ -175,10 +176,14 @@
   // Back: a full load, so an update's new dashboard is the one that runs.
   // An update ends on the overview, which says the version it runs. The
   // demo keeps its made-up host only while the page is not reloaded.
-  const next = to ? `/?updated=${encodeURIComponent(to)}` : back;
+  const next = $derived(to ? `/?updated=${encodeURIComponent(to)}${was ? `&from=${encodeURIComponent(was)}` : ""}` : back);
   $effect(() => {
     if (!isBack) return;
-    const t = setTimeout(() => (DEMO ? void goto(next, { replaceState: true }) : location.replace(next)), 2500);
+    const t = setTimeout(() => {
+      const dest = untrack(() => next);
+      if (DEMO) void goto(dest, { replaceState: true });
+      else location.replace(dest);
+    }, 2500);
     return () => clearTimeout(t);
   });
 

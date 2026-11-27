@@ -7,21 +7,27 @@
 #
 #   scripts/release-notes VERSION [--previous VERSION] [--to REF]
 #       [--manifest FILE] [--previous-manifest FILE] [--caddy VERSION]
+#   scripts/release-notes --changelog-json FILE [--limit N] [--max-changes N]
 #
 # The release before is the newest one on the release server below VERSION,
 # and the package lists are the releases' homelab_VERSION.manifest there
 # (mkosi's). A release without one gets no Packages section. --to names the
-# commit when the tag vVERSION does not exist yet. Needs git, jq and curl.
+# commit when the tag vVERSION does not exist yet. --changelog-json writes
+# the short user-facing changelogs (up to --limit releases from FILE, '-' for
+# stdin) as JSON for the release server. Needs git, jq and curl.
 set -euo pipefail
 
 release_url=${RELEASE_URL:-https://dl.homelab-ngx.com}
 repo_url=${REPO_URL:-https://github.com/homelab-ngx/homelab-ngx}
 # The areas of a commit subject, in the order the notes show them, and the
 # ones a user never meets.
-areas="installer image updates daemon dashboard stacks drafts storage backups notifications"
-upkeep="ci|image check|docs|contributing"
+areas="installer image updates daemon dashboard stacks drafts storage backups notifications host"
+upkeep="ci|image check|docs|contributing|demo-check|builder|release"
+# Prefix aliases mapped to canonical user-facing areas before classification.
+aliases="hostcfg=host,host settings=host,cli=daemon,metrics=daemon"
 
 version='' previous='' to='' manifest='' previous_manifest='' caddy=''
+changelog_file='' limit=20 max_changes=8
 while [ $# -gt 0 ]; do
   case $1 in
     --previous) previous=$2; shift 2 ;;
@@ -29,16 +35,143 @@ while [ $# -gt 0 ]; do
     --manifest) manifest=$2; shift 2 ;;
     --previous-manifest) previous_manifest=$2; shift 2 ;;
     --caddy) caddy=$2; shift 2 ;;
+    --changelog-json) changelog_file=$2; shift 2 ;;
+    --limit) limit=$2; shift 2 ;;
+    --max-changes) max_changes=$2; shift 2 ;;
     -*) echo "release-notes: unknown option $1" >&2; exit 2 ;;
     *) version=$1; shift ;;
   esac
 done
-[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: release-notes X.Y.Z [--previous X.Y.Z] [--to REF]" >&2; exit 2; }
-to=${to:-v$version}
-git rev-parse --verify --quiet "$to^{commit}" >/dev/null || { echo "release-notes: no commit $to (--to names another)" >&2; exit 1; }
+
+awk_classify='
+  BEGIN {
+    an = split(aliases, pairs, ",")
+    for (i = 1; i <= an; i++) {
+      split(pairs[i], kv, "=")
+      if (kv[1] != "" && kv[2] != "") alias[kv[1]] = kv[2]
+    }
+  }
+  function classify(subject,   area, rest, group) {
+    area = ""; rest = subject
+    if (match(subject, /^[A-Za-z][A-Za-z ,-]*: /)) {
+      area = tolower(substr(subject, 1, RLENGTH - 2)); sub(/,.*/, "", area)
+      rest = substr(subject, RLENGTH + 1)
+    }
+    if (alias[area] != "") area = alias[area]
+    if (area ~ "^(" upkeep ")$") group = "upkeep"
+    else if (index(" " areas " ", " " area " ") && area != "") group = area
+    else { group = "other"; rest = subject }
+    cur_group = group
+    cur_rest = rest
+  }
+'
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+
+if [ -n "$changelog_file" ]; then
+  [[ $limit =~ ^[1-9][0-9]*$ ]] || { echo "release-notes: --limit must be a positive integer" >&2; exit 2; }
+  [[ $max_changes =~ ^[1-9][0-9]*$ ]] || { echo "release-notes: --max-changes must be a positive integer" >&2; exit 2; }
+  if [ "$changelog_file" = "-" ]; then
+    cat > "$tmp/versions.in"
+  elif [ -r "$changelog_file" ]; then
+    cp "$changelog_file" "$tmp/versions.in"
+  else
+    echo "release-notes: cannot read $changelog_file" >&2
+    exit 1
+  fi
+
+  mapfile -t all_versions < <(grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' "$tmp/versions.in" | sort -uV || true)
+  total=${#all_versions[@]}
+  if [ "$total" -eq 0 ]; then
+    printf '{"releases":[]}\n'
+    exit 0
+  fi
+
+  mapfile -t all_tags < <(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' --sort=v:refname || true)
+  : > "$tmp/entries.ndjson"
+  start=$(( total > limit ? total - limit : 0 ))
+  for (( i = total - 1; i >= start; i-- )); do
+    v=${all_versions[$i]}
+    tag="v$v"
+    if ! git rev-parse --verify --quiet "$tag^{commit}" >/dev/null; then
+      echo "release-notes: warning: no tag $tag, skipping" >&2
+      continue
+    fi
+    if [ "$i" -gt 0 ]; then
+      range="v${all_versions[$((i - 1))]}..$tag"
+    else
+      prev_tag=''
+      for t in "${all_tags[@]}"; do
+        [ "$t" = "$tag" ] && break
+        prev_tag=$t
+      done
+      if [ -n "$prev_tag" ]; then
+        range="$prev_tag..$tag"
+      else
+        range="$tag"
+      fi
+    fi
+
+    date=$(git log -1 --format=%cs "$tag^{commit}")
+    git log --reverse --no-merges --format='%s' "$range" > "$tmp/subjects"
+    awk -v areas="$areas" -v upkeep="$upkeep" -v aliases="$aliases" -v max_changes="$max_changes" \
+        "$awk_classify"'
+      {
+        classify($0)
+        if (cur_group == "upkeep" || cur_rest == "") next
+        n = ++grp_n[cur_group]
+        items[cur_group, n] = cur_rest
+        total++
+      }
+      END {
+        k = split(areas " other", order, " ")
+        picked = 0
+        if (total <= max_changes) {
+          for (i = 1; i <= k; i++) {
+            g = order[i]
+            for (j = 1; j <= grp_n[g]; j++) sel[g, j] = 1
+          }
+          picked = total
+        } else {
+          round = 1
+          while (picked < max_changes) {
+            added = 0
+            for (i = 1; i <= k && picked < max_changes; i++) {
+              g = order[i]
+              if (round <= grp_n[g]) {
+                sel[g, round] = 1
+                picked++
+                added = 1
+              }
+            }
+            if (!added) break
+            round++
+          }
+        }
+        printf "%d\n", (total - picked)
+        for (i = 1; i <= k; i++) {
+          g = order[i]
+          for (j = 1; j <= grp_n[g]; j++) {
+            if (sel[g, j]) printf "%s\t%s\n", g, items[g, j]
+          }
+        }
+      }' "$tmp/subjects" > "$tmp/selected"
+
+    more=$(head -n 1 "$tmp/selected")
+    tail -n +2 "$tmp/selected" | jq -Rn --arg v "$v" --arg d "$date" --arg u "$repo_url/releases/tag/$tag" --argjson more "${more:-0}" '
+      [inputs | select(length > 0) | split("\t") | {area: .[0], text: .[1]}] as $changes
+      | {version: $v, date: $d, changes: $changes}
+      + (if $more > 0 then {more: $more} else {} end)
+      + {url: $u}' >> "$tmp/entries.ndjson"
+  done
+  jq -s '{releases: .}' "$tmp/entries.ndjson"
+  exit 0
+fi
+
+[[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "usage: release-notes X.Y.Z [--previous X.Y.Z] [--to REF]" >&2; exit 2; }
+to=${to:-v$version}
+git rev-parse --verify --quiet "$to^{commit}" >/dev/null || { echo "release-notes: no commit $to (--to names another)" >&2; exit 1; }
 
 # A file of the release server, or nothing: a release from before the
 # manifests has none, and the notes are then shorter, not wrong.
@@ -91,7 +224,8 @@ if [ ! -s "$tmp/commits" ]; then
   echo
   echo "No commits."
 else
-  awk -F'\t' -v areas="$areas" -v upkeep="$upkeep" -v repo="$repo_url" '
+  awk -F'\t' -v areas="$areas" -v upkeep="$upkeep" -v aliases="$aliases" -v repo="$repo_url" \
+    "$awk_classify"'
     function row(n) { return "| [`" short[n] "`](" repo "/commit/" full[n] ") | " text[n] " |" }
     function table(group,   n, any) {
       for (n = 1; n <= NR; n++) if (of[n] == group) {
@@ -100,17 +234,10 @@ else
       }
     }
     {
-      short[NR] = $1; full[NR] = $2; subject = $3
-      area = ""; rest = subject
-      if (match(subject, /^[A-Za-z][A-Za-z ,]*: /)) {
-        area = tolower(substr(subject, 1, RLENGTH - 2)); sub(/,.*/, "", area)
-        rest = substr(subject, RLENGTH + 1)
-      }
-      if (area ~ "^(" upkeep ")$") group = "upkeep"
-      else if (index(" " areas " ", " " area " ") && area != "") group = area
-      else { group = "other"; rest = subject }
-      gsub(/\|/, "\\|", rest)
-      of[NR] = group; text[NR] = rest; count[group]++
+      short[NR] = $1; full[NR] = $2
+      classify($3)
+      gsub(/\|/, "\\|", cur_rest)
+      of[NR] = cur_group; text[NR] = cur_rest; count[cur_group]++
     }
     END {
       k = split(areas " other", order, " ")

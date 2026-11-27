@@ -5577,6 +5577,37 @@
         ],
         "type": "object"
       },
+      "ReleaseChange": {
+        "additionalProperties": false,
+        "properties": {
+          "area": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "area",
+          "text"
+        ],
+        "type": "object"
+      },
+      "ReleaseChangelog": {
+        "additionalProperties": false,
+        "properties": {
+          "releases": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseNote"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "releases"
+        ],
+        "type": "object"
+      },
       "ReleaseCheck": {
         "additionalProperties": false,
         "properties": {
@@ -5605,6 +5636,37 @@
           "url",
           "latest",
           "checked_at"
+        ],
+        "type": "object"
+      },
+      "ReleaseNote": {
+        "additionalProperties": false,
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/ReleaseChange"
+            },
+            "type": "array"
+          },
+          "date": {
+            "type": "string"
+          },
+          "more": {
+            "description": "Additional user-facing changes omitted from the short list.",
+            "format": "int64",
+            "type": "integer"
+          },
+          "url": {
+            "description": "GitHub Release notes URL.",
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version",
+          "changes"
         ],
         "type": "object"
       },
@@ -26428,6 +26490,65 @@
         "summary": "Unmount a pool.",
         "tags": [
           "storage"
+        ]
+      }
+    },
+    "/system-updates/changelog": {
+      "get": {
+        "operationId": "getReleaseChangelog",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReleaseChangelog"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Short changelogs of recent releases from the release server.",
+        "tags": [
+          "sysupdates"
         ]
       }
     },

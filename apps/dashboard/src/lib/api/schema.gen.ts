@@ -2401,6 +2401,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/system-updates/changelog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Short changelogs of recent releases from the release server. */
+        get: operations["getReleaseChangelog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/system-updates/deploys": {
         parameters: {
             query?: never;
@@ -4576,6 +4593,13 @@ export interface components {
             /** @description The remote's rclone backend, from the pasted config section. */
             type: string;
         };
+        ReleaseChange: {
+            area: string;
+            text: string;
+        };
+        ReleaseChangelog: {
+            releases: components["schemas"]["ReleaseNote"][];
+        };
         ReleaseCheck: {
             /**
              * Format: date-time
@@ -4588,6 +4612,18 @@ export interface components {
             latest: string;
             /** @description Where the host looks for releases. */
             url: string;
+        };
+        ReleaseNote: {
+            changes: components["schemas"]["ReleaseChange"][];
+            date?: string;
+            /**
+             * Format: int64
+             * @description Additional user-facing changes omitted from the short list.
+             */
+            more?: number;
+            /** @description GitHub Release notes URL. */
+            url?: string;
+            version: string;
         };
         ResticInput: {
             /** @description Backend credentials as environment variables (AWS_ACCESS_KEY_ID, B2_ACCOUNT_KEY, ...). On update an absent value keeps the stored ones. */
@@ -15614,6 +15650,45 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getReleaseChangelog: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseChangelog"];
+                };
             };
             /** @description Error */
             default: {

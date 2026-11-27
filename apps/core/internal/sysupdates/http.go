@@ -17,10 +17,11 @@ type HTTP struct{ mod *Module }
 func NewHTTP(mod *Module) *HTTP { return &HTTP{mod: mod} }
 
 type (
-	deployOut  struct{ Body CoreDeploy }
-	deploysOut struct{ Body []CoreDeploy }
-	imageOut   struct{ Body ImageStatus }
-	bootIn     struct {
+	deployOut    struct{ Body CoreDeploy }
+	deploysOut   struct{ Body []CoreDeploy }
+	imageOut     struct{ Body ImageStatus }
+	changelogOut struct{ Body ReleaseChangelog }
+	bootIn       struct {
 		Body struct {
 			Version string `json:"version" doc:"An installed image version; empty with mode default: the newest again."`
 			Mode    string `json:"mode" enum:"once,default" doc:"once: at the next reboot only. default: every boot, until the next image is installed."`
@@ -53,6 +54,10 @@ func (h *HTTP) Register(a httpx.APIs) {
 		Summary: "The booted, installed and staged versions of the image and the core extension.",
 		Errors:  []int{http.StatusConflict},
 	}, h.getImage)
+	httpx.Register(a, httpx.ScopeRead, huma.Operation{
+		OperationID: "getReleaseChangelog", Method: http.MethodGet, Path: "/system-updates/changelog", Tags: tags,
+		Summary: "Short changelogs of recent releases from the release server.",
+	}, h.getChangelog)
 	imageOp := func(id, path, summary, desc string) huma.Operation {
 		return huma.Operation{OperationID: id, Method: http.MethodPost, Path: path, Tags: tags, Summary: summary, Description: desc,
 			DefaultStatus: http.StatusAccepted, Errors: []int{http.StatusBadRequest, http.StatusConflict}}
@@ -96,6 +101,10 @@ func (h *HTTP) getImage(ctx context.Context, _ *struct{}) (*imageOut, error) {
 		return nil, httpx.Conflict("not_image_host", "%s", err.Error())
 	}
 	return &imageOut{Body: st}, nil
+}
+
+func (h *HTTP) getChangelog(ctx context.Context, _ *struct{}) (*changelogOut, error) {
+	return &changelogOut{Body: h.mod.Changelog(ctx)}, nil
 }
 
 func (h *HTTP) build(ctx context.Context, _ *struct{}) (*deployOut, error) {

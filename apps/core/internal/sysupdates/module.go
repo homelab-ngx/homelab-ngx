@@ -31,7 +31,8 @@ type Module struct {
 	// (a development machine) refuses the update operations.
 	image bool
 	ds    deployState
-	rel   imageRelease // the release check (fetch.go)
+	rel   imageRelease   // the release check (fetch.go)
+	cl    changelogCache // the release changelog cache (changelog.go)
 
 	now func() time.Time // seam for tests
 

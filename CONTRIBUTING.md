@@ -246,7 +246,9 @@ from the commit subjects since the release before and from the two
 releases' package lists, and the workflow publishes what it prints. Run it
 with `--to main` before tagging to read the notes the tag would get; a
 subject that reads badly there is fixed in the next commit's subject, not in
-the notes.
+the notes. The workflow also publishes `/changelog.json`
+(`scripts/release-notes --changelog-json`) for the dashboard's Updates page
+and post-upgrade dialog.
 
 ## Knowledge
 

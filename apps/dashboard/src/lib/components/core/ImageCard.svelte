@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from "svelte";
+  import { untrack, type Snippet } from "svelte";
   import { createMutation, createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
@@ -19,8 +19,9 @@
     /** An operation is running. */
     busy: boolean;
     onReboot: () => void;
+    changelog?: Snippet;
   }
-  let { image, busy, onReboot }: Props = $props();
+  let { image, busy, onReboot, changelog }: Props = $props();
   const id = $props.id();
 
   const client = useQueryClient();
@@ -158,6 +159,8 @@
     </div>
   </div>
 </section>
+
+{@render changelog?.()}
 
 <section class="card mt-4">
   <Disclosure section label="Versions on this host" summary="{versions.length} installed" remember="updates-versions">

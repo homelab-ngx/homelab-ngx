@@ -19,9 +19,11 @@
 #   /<version>/SHA256SUMS, SHA256SUMS.gpg         every file above, signed
 #   /versions                                     published versions, oldest first
 #   /latest                                       the newest version
+#   /changelog.json                               short changelogs of recent releases, for the dashboard
 #   /installer                                    a 302 to the newest installer
 # /<version>/ never changes once published (the CDN keeps it a year);
-# /versions and /latest change last, so a host never sees a half release.
+# /changelog.json, /versions and /latest change last, so a host never sees a
+# half release.
 #
 # Two jobs, so that what failed can be run again alone (Re-run failed jobs):
 #   release   builds, checks, signs and uploads /<version>/. SHA256SUMS goes
@@ -223,7 +225,7 @@ jobs:
           get "$RELEASE_URL/$VERSION/homelab_$VERSION.efi"
           grep " homelab_$VERSION.efi\$" SHA256SUMS | sha256sum -c --quiet
 
-      - name: /versions and /latest
+      - name: /versions, /latest and /changelog.json
         id: listed
         env:
           B2_APPLICATION_KEY_ID: ${{ secrets.RELEASE_B2_KEY_ID }}
@@ -233,6 +235,7 @@ jobs:
           retry=$GITHUB_WORKSPACE/.github/scripts/b2-retry
           "$retry" "$b2" account authorize >/dev/null
           uptext() { "$retry" "$b2" file upload --no-progress --content-type "text/plain; charset=utf-8" "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
+          upjson() { "$retry" "$b2" file upload --no-progress --content-type "application/json; charset=utf-8" "$RELEASE_B2_BUCKET" "$1" "$2" >/dev/null; }
           # Only a 404 means no version is published yet: on any other
           # failure stop, or /versions would lose every earlier release.
           code=$(curl -sS --retry 5 --retry-all-errors --retry-delay 5 -o published -w '%{http_code}' "$RELEASE_URL/versions?t=$(date +%s)")
@@ -243,6 +246,10 @@ jobs:
           esac
           { cat published; echo "$VERSION"; } | sed '/^$/d' | sort -uV > versions
           tail -n 1 versions > latest
+          git fetch --tags --quiet origin
+          scripts/release-notes --changelog-json versions > changelog.json
+          jq -e '.releases | type == "array"' changelog.json >/dev/null
+          upjson changelog.json changelog.json
           uptext versions versions
           uptext latest latest
           echo "latest=$(cat latest)" >> "$GITHUB_OUTPUT"

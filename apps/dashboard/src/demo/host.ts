@@ -39,6 +39,7 @@ export interface Host {
   /** Each backup's newest preview, by backup id. */
   previews: Record<number, Schema<"BackupPreview">>;
   image: Schema<"ImageStatus">;
+  changelog: Schema<"ReleaseNote">[];
   deploys: Schema<"CoreDeploy">[];
   storage: Schema<"StorageStatus">;
   power: Schema<"PowerStatus">;
@@ -459,6 +460,39 @@ export function newHost(now: () => number = Date.now): Host {
       core: { active: "0.2.5", available: [], installed: ["0.2.5", "0.2.2"] },
       release: { latest: "0.2.6", url: "https://dl.homelab-ngx.com", checked_at: iso(t - 7 * HOUR) },
     },
+    changelog: [
+      {
+        version: "0.2.6",
+        date: "2026-11-26",
+        changes: [
+          { area: "host", text: "add outbound SMTP relay and SMART disk health checks" },
+          { area: "stacks", text: "fetch private repositories with a host SSH deploy key" },
+          { area: "dashboard", text: "show short changelogs after an upgrade and under Updates" },
+        ],
+        url: "https://github.com/homelab-ngx/homelab-ngx/releases/tag/v0.2.6",
+      },
+      {
+        version: "0.2.5",
+        date: "2026-11-24",
+        changes: [
+          { area: "backups", text: "preview a backup run without copying data" },
+          { area: "daemon", text: "stop running backups cleanly before unmounting pools" },
+          { area: "image", text: "verify root verity errors during boot" },
+        ],
+        url: "https://github.com/homelab-ngx/homelab-ngx/releases/tag/v0.2.5",
+      },
+      {
+        version: "0.2.2",
+        date: "2026-11-19",
+        changes: [
+          { area: "dashboard", text: "follow an update and reboot step by step on the power screen" },
+          { area: "host", text: "configure clock format, NTP servers, and console keyboard" },
+          { area: "storage", text: "open and edit files from the storage browser" },
+        ],
+        more: 4,
+        url: "https://github.com/homelab-ngx/homelab-ngx/releases/tag/v0.2.2",
+      },
+    ],
     deploys: [
       { id: 12, kind: "install", version: "0.2.5", rev: "", phase: "Health check", reason: "", result: "healthy", log: "", failed_units: [], started_at: iso(t - 6 * DAY), finished_at: iso(t - 6 * DAY + 2 * MIN) },
       { id: 11, kind: "download", version: "0.2.5", rev: "", phase: "Stage", reason: "", result: "healthy", log: "", failed_units: [], started_at: iso(t - 6 * DAY - HOUR), finished_at: iso(t - 6 * DAY - HOUR + 4 * MIN) },

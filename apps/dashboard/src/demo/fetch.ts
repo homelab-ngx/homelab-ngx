@@ -382,6 +382,7 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
     measured_at: iso(h.now() - 60 * MIN),
     folders: Object.fromEntries(listing(h, c.query.get("path") ?? "/").entries.map((e) => [e.name, { total: e.disk_bytes, exclusive: Math.round(e.disk_bytes * 0.97), shared: Math.round(e.disk_bytes * 0.03) }])),
   }),
+  "/system-updates/changelog": (h) => ({ releases: h.changelog }),
   "/system-updates/deploys": (h) => h.deploys,
   "/system-updates/image": (h) => h.image,
   "/system/power": (h) => powerStatus(h),
