@@ -82,10 +82,14 @@ if ! $sudo test -e "$buildroot/.ready"; then
   $sudo rm -rf "$buildroot.tmp"
   $sudo mkdir -p "$buildroot.tmp"
   $sudo tar --numeric-owner --zstd -xpf "$tarball" -C "$buildroot.tmp" --strip-components=1 2> >(grep -v 'unknown extended header' >&2)
+  # Inside systemd-nspawn on kernels without Landlock, pacman's download
+  # sandbox fails to restrict the filesystem or switch to user alpm.
+  $sudo sed -i 's/^DownloadUser =.*/DisableSandbox/' "$buildroot.tmp/etc/pacman.conf"
   {
     [ "$arch_mirror" = "$arch_upstream" ] || echo "Server = $arch_mirror/repos/$snapshot/\$repo/os/\$arch"
     echo "Server = $arch_upstream/repos/$snapshot/\$repo/os/\$arch"
   } | $sudo tee "$buildroot.tmp/etc/pacman.d/mirrorlist" >/dev/null
+  $sudo rm -rf "$buildroot"
   $sudo mv "$buildroot.tmp" "$buildroot"
   nspawn /usr/bin/bash -c 'pacman-key --init >/dev/null 2>&1 && pacman-key --populate archlinux >/dev/null 2>&1 &&
     pacman -Syu --noconfirm --needed mkosi systemd-ukify dosfstools mtools erofs-utils squashfs-tools cpio zstd xz openssl git >/dev/null'
