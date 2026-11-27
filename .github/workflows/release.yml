@@ -1,14 +1,10 @@
-# Release: a tag vX.Y.Z on main builds the installer and update images, checks
-# them in a VM, signs SHA256SUMS and publishes to B2 behind dl.homelab-ngx.com.
-# The GitHub Release holds only the notes, which scripts/release-notes writes
-# from the commits and the package list. The image builds and boots on the
-# hosted runner (the image spike workflow proved it).
-#
-# The check here boots this version alone: the installer, the installs and the
-# installed disk (make image-check's steps 1-8, 13-19). The update from the
-# release before and the fall back from a broken image (steps 9-11) are in
-# image-check.yml. Run it before tagging, unless the build machine passed the
-# full check on the same commit (CONTRIBUTING.md, Releasing).
+# Release: start from workflow_dispatch on main with version X.Y.Z (or push
+# tag vX.Y.Z on main). Builds the installer and update images, downloads the
+# newest published release when one is older than X.Y.Z, creates a broken
+# variant X.Y.Z.1, runs the full VM check (steps 1-19), signs SHA256SUMS,
+# publishes to B2 behind dl.homelab-ngx.com, and pushes tag vX.Y.Z. Nothing is
+# uploaded or tagged when the check fails. Runs on main also sync missing
+# Arch snapshot packages and update the build caches.
 #
 # Layout on RELEASE_URL (https://dl.homelab-ngx.com):
 #   /<version>/homelab-ngx_<version>.img          installer (the whole disk)
@@ -27,12 +23,14 @@
 # half release.
 #
 # Two jobs, so that what failed can be run again alone (Re-run failed jobs):
-#   release   builds, checks, signs and uploads /<version>/. SHA256SUMS goes
-#             up last and marks the version as uploaded: run again after
-#             that, the job finds it and builds nothing.
+#   release   downloads the previous release, builds, checks, signs, uploads
+#             /<version>/ and pushes v<version>. SHA256SUMS goes up last and
+#             marks the version as uploaded: run again after that, the job
+#             finds it and builds nothing.
 #   announce  reads the version back through the CDN, then /versions,
-#             /latest, the GitHub Release and the installer link. Every step
-#             can run twice, so a failure here never costs a version number.
+#             /latest, /changelog.json, the GitHub Release and the installer
+#             link. Every step can run twice, so a failure here never costs a
+#             version number.
 #
 # Secrets and variables come from homelab-ngx/infra (OpenTofu): RELEASE_B2_KEY_ID,
 # RELEASE_B2_KEY (write-only, the release bucket), RELEASE_SIGNING_KEY (subkey
@@ -43,13 +41,10 @@ name: release
 on:
   push:
     tags: ['v*.*.*']
-  # By hand, for a version that is uploaded already: runs announce again
-  # (and builds nothing). It finishes a release whose run is gone, and
-  # proves the announce job without a release.
   workflow_dispatch:
     inputs:
       version:
-        description: An uploaded version to announce again, as X.Y.Z
+        description: Version to release (X.Y.Z); builds, checks, uploads, tags and announces, or announces again if already uploaded
         required: true
 
 permissions:
@@ -68,7 +63,10 @@ env:
 jobs:
   release:
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 180
+    permissions:
+      contents: write # push tag vX.Y.Z after check and upload pass
+      actions: write # purge older Nix and build root caches on main
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -87,23 +85,34 @@ jobs:
             git merge-base --is-ancestor "$GITHUB_SHA" origin/main || { echo "::error::$GITHUB_REF_NAME is not on main"; exit 1; }
           fi
           echo "VERSION=$v" >> "$GITHUB_ENV"
+          echo "BROKEN=$v.1" >> "$GITHUB_ENV"
           echo "version=$v" >> "$GITHUB_OUTPUT"
           echo "release $v"
 
       # SHA256SUMS is the last file up. With it there the version is
       # uploaded and never built again: the rest of this job is skipped and
-      # announce finishes the release. A tag pushed for a version that is
-      # already out ends the same way, changing nothing.
+      # announce finishes the release. A new workflow_dispatch release must
+      # start from main and must not overwrite an existing tag on another commit.
       - name: Uploaded already?
         id: uploaded
         run: |
           code=$(curl -sS --retry 5 --retry-all-errors --retry-delay 5 -o /dev/null -w '%{http_code}' "$RELEASE_URL/$VERSION/SHA256SUMS?t=$(date +%s)")
           case $code in
-            404) echo "already=false" >> "$GITHUB_OUTPUT"
-                 # Only a tag builds: a run by hand has no tagged commit.
-                 [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] || { echo "::error::$VERSION is not uploaded; a release starts with its tag"; exit 1; } ;;
-            200) echo "already=true" >> "$GITHUB_OUTPUT"
-                 echo "$VERSION is uploaded already: nothing is built" | tee -a "$GITHUB_STEP_SUMMARY" ;;
+            404)
+              echo "already=false" >> "$GITHUB_OUTPUT"
+              if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+                [ "$GITHUB_REF" = refs/heads/main ] || { echo "::error::a new release must be started from main (got $GITHUB_REF)"; exit 1; }
+                if existing=$(git rev-parse --verify --quiet "v$VERSION^{commit}" 2>/dev/null) && [ "$existing" != "$GITHUB_SHA" ]; then
+                  echo "::error::tag v$VERSION already exists on commit $existing"
+                  exit 1
+                fi
+              fi
+              ;;
+            200)
+              git rev-parse --verify --quiet "v$VERSION^{commit}" >/dev/null || { echo "::error::$VERSION is uploaded but tag v$VERSION does not exist"; exit 1; }
+              echo "already=true" >> "$GITHUB_OUTPUT"
+              echo "$VERSION is uploaded already: nothing is built" | tee -a "$GITHUB_STEP_SUMMARY"
+              ;;
             *) echo "::error::$RELEASE_URL/$VERSION/SHA256SUMS answered HTTP $code"; exit 1 ;;
           esac
 
@@ -117,11 +126,60 @@ jobs:
             { echo "::error::RELEASE_SIGNING_KEY is not a subkey of $SIGNING_PRIMARY"; exit 1; }
 
       - uses: ./.github/actions/image-env
+        id: env
         if: ${{ steps.uploaded.outputs.already != 'true' }}
+        with:
+          save: ${{ github.ref == 'refs/heads/main' }}
+
+      # The version before this one, from the release server: when older than
+      # VERSION, the check boots it and updates to this build, the path real
+      # hosts take.
+      - name: Previous release
+        id: prev
+        if: ${{ steps.uploaded.outputs.already != 'true' }}
+        run: |
+          code=$(curl -sS --retry 5 --retry-all-errors --retry-delay 5 -o "$RUNNER_TEMP/latest" -w '%{http_code}' "$RELEASE_URL/latest?t=$(date +%s)")
+          case $code in
+            200) prev=$(tr -d '[:space:]' < "$RUNNER_TEMP/latest") ;;
+            404) prev= ;;
+            *) echo "::error::$RELEASE_URL/latest answered HTTP $code"; exit 1 ;;
+          esac
+          if [ -z "$prev" ] || [ "$prev" = "$VERSION" ] || [ "$(printf '%s\n%s\n' "$prev" "$VERSION" | sort -V | head -n 1)" != "$prev" ]; then
+            echo "no older published release before $VERSION: checking $VERSION alone"
+            echo "has_prev=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "previous release $prev"
+          d=$RUNNER_TEMP/prev && mkdir -p "$d/core" && cd "$d"
+          curl -fsSO --retry 5 --retry-all-errors --retry-delay 5 "$RELEASE_URL/$prev/SHA256SUMS" && curl -fsSO --retry 5 --retry-all-errors --retry-delay 5 "$RELEASE_URL/$prev/SHA256SUMS.gpg"
+          gpg --batch --verify SHA256SUMS.gpg SHA256SUMS
+          awk '{print $2}' SHA256SUMS | while read -r f; do curl -fsS --retry 5 --retry-all-errors --retry-delay 5 -o "$f" "$RELEASE_URL/$prev/$f"; done
+          sha256sum -c --quiet SHA256SUMS
+          mkdir -p "$GITHUB_WORKSPACE/image/out/core"
+          cp homelab_"$prev".* "$GITHUB_WORKSPACE/image/out/"
+          cp core/homelab-core_"$prev".raw "$GITHUB_WORKSPACE/image/out/core/"
+          [ ! -e homelab-ngx_"$prev".img ] || cp homelab-ngx_"$prev".img "$GITHUB_WORKSPACE/image/out/homelab_$prev.raw"
+          echo "has_prev=true" >> "$GITHUB_OUTPUT"
 
       - name: make image
+        id: image
         if: ${{ steps.uploaded.outputs.already != 'true' }}
         run: make image VERSION="$VERSION"
+
+      - name: Sync Arch mirror
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.image.outcome == 'success' }}
+        env:
+          B2_APPLICATION_KEY_ID: ${{ secrets.RELEASE_B2_KEY_ID }}
+          B2_APPLICATION_KEY: ${{ secrets.RELEASE_B2_KEY }}
+        run: |
+          b2=$(nix build --no-link --print-out-paths --inputs-from . nixpkgs#backblaze-b2)/bin/backblaze-b2
+          B2_BIN="$b2" scripts/sync-arch-mirror --from-cache /var/cache/homelab-image
+
+      # The check only installs and breaks this one: a copy of the build
+      # with a root hash of its own (image/variant.sh), not a second build.
+      - name: make image-variant (broken by the check)
+        if: ${{ steps.uploaded.outputs.already != 'true' && steps.prev.outputs.has_prev == 'true' }}
+        run: make image-variant FROM="$VERSION" VERSION="$BROKEN"
 
       - name: make image-check
         if: ${{ steps.uploaded.outputs.already != 'true' }}
@@ -183,6 +241,61 @@ jobs:
           for f in homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw; do up "$f" "$VERSION/$f"; done
           up SHA256SUMS.gpg "$VERSION/SHA256SUMS.gpg"
           uptext SHA256SUMS "$VERSION/SHA256SUMS"
+
+      - name: Tag
+        if: ${{ steps.uploaded.outputs.already != 'true' }}
+        run: |
+          tag=v$VERSION
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "tag $tag already exists on origin"
+            exit 0
+          fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            tag -a "$tag" -m "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
+          echo "pushed tag $tag at $GITHUB_SHA"
+
+      # The Nix store saves itself at the end of a green job (image-env).
+      # Only the Arch build root is cached (without pacman's downloaded
+      # packages); mkosi fetches the snapshot's packages from the Arch mirror
+      # on dl.homelab-ngx.com. Saved once make image has passed, even when
+      # the check fails.
+      - name: Pack the image cache
+        id: pack
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.image.outcome == 'success' && steps.env.outputs.image-cache-hit != 'true' }}
+        run: |
+          snap=$(sed -n 's/^Snapshot=//p' image/base/mkosi.conf)
+          dir=homelab-image/buildroot-${snap//\//-}
+          sudo test -e "/var/cache/$dir/.ready" || { echo "no build root to save"; exit 0; }
+          sudo tar --zstd --numeric-owner --exclude="$dir/var/cache/pacman/pkg/*" \
+            -cpf "$RUNNER_TEMP/homelab-image.tar.zst" -C /var/cache "$dir"
+          sudo chown "$(id -u):$(id -g)" "$RUNNER_TEMP/homelab-image.tar.zst"
+          ls -lh "$RUNNER_TEMP/homelab-image.tar.zst"
+          echo "packed=1" >> "$GITHUB_OUTPUT"
+
+      - name: Save the image cache
+        if: ${{ !cancelled() && steps.pack.outputs.packed == '1' }}
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: ${{ runner.temp }}/homelab-image.tar.zst
+          key: ${{ steps.env.outputs.image-cache-key }}
+
+      - name: Purge old image caches
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' && steps.pack.outputs.packed == '1' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEEP_KEY: ${{ steps.env.outputs.image-cache-key }}
+        run: |
+          for prefix in "buildroot-$RUNNER_OS-" "image-$RUNNER_OS-"; do
+            gh api --paginate "repos/$GITHUB_REPOSITORY/actions/caches?key=$prefix" \
+              --jq '.actions_caches[] | "\(.id)\t\(.key)"' |
+            while IFS=$'\t' read -r id key; do
+              [ -n "$id" ] || continue
+              [ "$key" = "$KEEP_KEY" ] && continue
+              echo "deleting old cache $id ($key)"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id" || true
+            done
+          done
 
   # Everything after the upload. Each step can run again: a version that is
   # listed stays listed once, /latest and the installer link follow the

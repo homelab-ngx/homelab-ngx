@@ -216,33 +216,23 @@ the run.
 
 ## Releasing
 
-A tag `vX.Y.Z` on main publishes a release (`.github/workflows/release.yml`).
-Its check boots the new version alone (steps 1-8 and 13-19). It does not
-check the update from the release before or the fall back from a broken image
-(steps 9-11).
+Start a release from Actions > **release** > Run workflow on main with
+version `X.Y.Z` (`gh workflow run release.yml --ref main -f version=X.Y.Z`).
+The `release` job downloads the newest published release, builds `X.Y.Z` and
+a broken variant `X.Y.Z.1`, runs the full image check (steps 1-19), signs and
+uploads `X.Y.Z`, pushes tag `vX.Y.Z`, and runs `announce`. If the check
+fails, nothing is uploaded and no tag is pushed. Pushing an annotated or
+lightweight tag `vX.Y.Z` on main runs the same workflow.
 
-So before you tag, the full check must have passed on the commit you tag.
-Run it one of two ways:
+The **image check** workflow (`.github/workflows/image-check.yml`) also runs
+on main twice a week and by hand as a dry run without publishing or tagging.
+Runs on main fill the Nix store and Arch build root caches that releases read.
 
-- on the build machine: `scripts/builder image-check`, with three versions
-  in its `image/out` (see [The image check](#the-image-check));
-- in Actions: **image check** > Run workflow, on main. It updates from the
-  newest published release, and publishes nothing.
-
-On the build machine the third version is only installed and broken, so
-`make image-variant FROM=<second> VERSION=<third>` copies it from the second
-in seconds.
-
-The image check workflow also runs on main twice a week. Those runs fill
-the build caches a release reads.
-
-When a release run fails, run it again with **Re-run failed jobs**; never
-move the tag or take the next number for a failure of the run itself. The
-`release` job builds, checks and uploads the version, and `announce` lists
-it, writes the GitHub Release and moves the installer link. Once the version
-is uploaded only `announce` runs again, and each of its steps can run twice.
-To announce an uploaded version outside its run, start the workflow by hand
-with the version.
+When a release run fails after tagging or uploading, run it again with
+**Re-run failed jobs**; never move a tag or take the next version number
+for a workflow failure. Once `X.Y.Z` is uploaded, only `announce` runs
+again, and each of its steps can run twice. To announce an uploaded version
+outside its run, run **release** by hand with that version.
 
 Nobody writes the release notes. `scripts/release-notes X.Y.Z` makes them
 from the commit subjects since the release before and from the two

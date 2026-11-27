@@ -1,11 +1,9 @@
 # The full image check (make image-check, all its steps): the newest release
 # from the release server boots, updates to a build of this commit, and a
-# third, broken version (a copy of that build) falls back by itself. A
-# release (release.yml) boots its own version alone and leaves these steps to
-# this workflow. Run it by hand (Actions > image check > Run workflow) on main
-# before tagging a release, unless the build machine passed the full check on
-# the same commit (CONTRIBUTING.md, Releasing). It also runs twice a week on
-# main.
+# third, broken version (a copy of that build) falls back by itself. It runs
+# twice a week on main and can be started by hand as a dry run without
+# publishing or tagging (release.yml runs the same full check itself before
+# tagging and uploading a release; see CONTRIBUTING.md, Releasing).
 #
 # It signs SHA256SUMS with the release key and authorizes the B2 key, so a
 # release's credentials are proven too, and publishes no release; runs on
