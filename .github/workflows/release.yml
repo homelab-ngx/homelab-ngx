@@ -1,10 +1,12 @@
 # Release: start from workflow_dispatch on main with version X.Y.Z (or push
 # tag vX.Y.Z on main). Builds the installer and update images, downloads the
-# newest published release when one is older than X.Y.Z, creates a broken
-# variant X.Y.Z.1, runs the full VM check (steps 1-19), signs SHA256SUMS,
-# publishes to B2 behind dl.homelab-ngx.com, and pushes tag vX.Y.Z. Nothing is
-# uploaded or tagged when the check fails. Runs on main also sync missing
-# Arch snapshot packages and update the build caches.
+# newest published release when one is older than X.Y.Z, runs the VM check
+# (routine runs check updates and the new installer in steps 1-10 and 14-19;
+# Arch snapshot or boot/fallback changes since the release before, or
+# full_check=true, add variant X.Y.Z.1 and run all steps 1-19), signs
+# SHA256SUMS, publishes to B2 behind dl.homelab-ngx.com, and pushes tag
+# vX.Y.Z. Nothing is uploaded or tagged when the check fails. Runs on main
+# also sync missing Arch snapshot packages and update the build caches.
 #
 # Layout on RELEASE_URL (https://dl.homelab-ngx.com):
 #   /<version>/homelab-ngx_<version>.img          installer (the whole disk)
@@ -46,6 +48,10 @@ on:
       version:
         description: Version to release (X.Y.Z); builds, checks, uploads, tags and announces, or announces again if already uploaded
         required: true
+      full_check:
+        description: Run the full 19-step image check (including step 11 fallback checks) even when no Arch snapshot or boot/fallback files changed
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -147,6 +153,7 @@ jobs:
           if [ -z "$prev" ] || [ "$prev" = "$VERSION" ] || [ "$(printf '%s\n%s\n' "$prev" "$VERSION" | sort -V | head -n 1)" != "$prev" ]; then
             echo "no older published release before $VERSION: checking $VERSION alone"
             echo "has_prev=false" >> "$GITHUB_OUTPUT"
+            echo "prev=" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           echo "previous release $prev"
@@ -160,6 +167,30 @@ jobs:
           cp core/homelab-core_"$prev".raw "$GITHUB_WORKSPACE/image/out/core/"
           [ ! -e homelab-ngx_"$prev".img ] || cp homelab-ngx_"$prev".img "$GITHUB_WORKSPACE/image/out/homelab_$prev.raw"
           echo "has_prev=true" >> "$GITHUB_OUTPUT"
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"
+
+      - name: Check scope
+        id: scope
+        if: ${{ steps.uploaded.outputs.already != 'true' }}
+        env:
+          FULL_CHECK: ${{ inputs.full_check }}
+          PREV: ${{ steps.prev.outputs.prev }}
+        run: |
+          prev_ref=
+          [ -z "$PREV" ] || prev_ref="v$PREV"
+          out=$(.github/scripts/release-check-scope "$prev_ref" "$GITHUB_SHA")
+          printf '%s\n' "$out"
+          printf '%s\n' "$out" >> "$GITHUB_OUTPUT"
+          fallback=$(printf '%s\n' "$out" | sed -n 's/^fallback=//p')
+          only=$(printf '%s\n' "$out" | sed -n 's/^only=//p')
+          reason=$(printf '%s\n' "$out" | sed -n 's/^reason=//p')
+          if [ "$fallback" = true ]; then
+            echo "Image check: full (steps 1-19): $reason" | tee -a "$GITHUB_STEP_SUMMARY"
+          elif [ -n "$only" ]; then
+            echo "Image check: routine ($only; step 11 fallback and step 13 skipped): $reason" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Image check: single-version (steps 1-8, 13-19): $reason" | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: make image
         id: image
@@ -178,12 +209,14 @@ jobs:
       # The check only installs and breaks this one: a copy of the build
       # with a root hash of its own (image/variant.sh), not a second build.
       - name: make image-variant (broken by the check)
-        if: ${{ steps.uploaded.outputs.already != 'true' && steps.prev.outputs.has_prev == 'true' }}
+        if: ${{ steps.uploaded.outputs.already != 'true' && steps.prev.outputs.has_prev == 'true' && steps.scope.outputs.fallback == 'true' }}
         run: make image-variant FROM="$VERSION" VERSION="$BROKEN"
 
       - name: make image-check
         if: ${{ steps.uploaded.outputs.already != 'true' }}
-        run: make image-check CPUS="$(nproc)"
+        env:
+          ONLY: ${{ steps.scope.outputs.only }}
+        run: make image-check CPUS="$(nproc)" ONLY="$ONLY"
 
       # A failed check leaves its logs behind (image/out/vm/logs, a folder per
       # scenario): each boot's serial log, QEMU's log with the machine's

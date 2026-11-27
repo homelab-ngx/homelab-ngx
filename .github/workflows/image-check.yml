@@ -1,9 +1,10 @@
-# The full image check (make image-check, all its steps): the newest release
+# The full image check (make image-check, all 19 steps): the newest release
 # from the release server boots, updates to a build of this commit, and a
 # third, broken version (a copy of that build) falls back by itself. It runs
 # twice a week on main and can be started by hand as a dry run without
-# publishing or tagging (release.yml runs the same full check itself before
-# tagging and uploading a release; see CONTRIBUTING.md, Releasing).
+# publishing or tagging; release.yml skips step 11 (fallback) and step 13
+# unless Arch snapshot or boot/fallback files changed or full_check is set
+# (see CONTRIBUTING.md, Releasing).
 #
 # It signs SHA256SUMS with the release key and authorizes the B2 key, so a
 # release's credentials are proven too, and publishes no release; runs on

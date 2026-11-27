@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# Usage: .github/scripts/release-check-scope [prev-ref] [head-ref]
+#
+# Decides whether a release needs the full 19-step image check (including the
+# broken-image/core fallback checks in step 11 and the extra install scenarios
+# in step 13) or only the routine check (steps 1-10 and 14-19: ONLY=updates,under).
+#
+# Environment:
+#   FULL_CHECK=true   forces the full check when a previous release exists.
+#
+# Output (key=value lines for GITHUB_OUTPUT):
+#   fallback=true|false
+#   only=updates,under|
+#   reason=<single-line explanation>
+set -euo pipefail
+
+if [ "$#" -gt 2 ]; then
+  echo "usage: $0 [prev-ref] [head-ref]" >&2
+  exit 2
+fi
+
+prev_ref=${1:-}
+head_ref=${2:-HEAD}
+
+emit() {
+  local fallback=$1 only=$2 reason=$3
+  reason=${reason//$'\n'/ }
+  printf 'fallback=%s\nonly=%s\nreason=%s\n' "$fallback" "$only" "$reason"
+}
+
+if [ -z "$prev_ref" ]; then
+  emit false "" "no older published release; running single-version check (steps 1-8, 13-19)"
+  exit 0
+fi
+
+if [ "${FULL_CHECK:-}" = "true" ]; then
+  emit true "" "full_check input enabled"
+  exit 0
+fi
+
+if ! head_sha=$(git rev-parse --verify --quiet "${head_ref}^{commit}"); then
+  echo "release-check-scope: head ref '${head_ref}' not found" >&2
+  exit 2
+fi
+
+base_sha=$(git rev-parse --verify --quiet "${prev_ref}^{commit}" || true)
+if [ -z "$base_sha" ]; then
+  emit true "" "base ref ${prev_ref} not found in git; running full check"
+  exit 0
+fi
+
+if ! changed=$(git diff --name-only "$base_sha" "$head_sha"); then
+  emit true "" "git diff failed between ${prev_ref} and ${head_ref}; running full check"
+  exit 0
+fi
+
+mkosi_key() {
+  local rev=$1 key=$2
+  git show "${rev}:image/base/mkosi.conf" | awk -v target="$key" '
+    BEGIN { cur = "" }
+    /^[ \t]*($|#)/ { next }
+    /^[ \t]*\[/ { cur = ""; next }
+    /^[ \t]/ && cur != "" {
+      line = $0
+      sub(/^[ \t]+/, "", line)
+      sub(/[ \t]+$/, "", line)
+      if (line != "") {
+        val[cur] = (val[cur] != "" ? val[cur] "\n" line : line)
+      }
+      next
+    }
+    /^[A-Za-z0-9_]+[ \t]*=/ {
+      eq = index($0, "=")
+      k = substr($0, 1, eq - 1)
+      sub(/[ \t]+$/, "", k)
+      v = substr($0, eq + 1)
+      sub(/^[ \t]+/, "", v)
+      sub(/[ \t]+$/, "", v)
+      cur = k
+      if (!(k in val)) {
+        val[k] = v
+      } else if (v != "") {
+        val[k] = (val[k] != "" ? val[k] "\n" v : v)
+      }
+      next
+    }
+    { cur = "" }
+    END { if (target in val) printf "set:%s", val[target] }
+  '
+}
+
+reasons=()
+has_mkosi_conf=0
+
+while IFS= read -r f; do
+  [ -n "$f" ] || continue
+  case "$f" in
+    image/base/mkosi.conf)
+      has_mkosi_conf=1
+      ;;
+    image/base/mkosi.initrd.conf/*|\
+    image/base/mkosi.repart/*|\
+    image/base/mkosi.extra/usr/lib/repart.d/*|\
+    image/base/mkosi.extra/usr/lib/repart.sysinstall.d/*|\
+    image/base/mkosi.extra/etc/kernel/tries|\
+    image/base/mkosi.extra/etc/kernel/entry-token|\
+    image/base/mkosi.extra/usr/lib/homelab/boot-check|\
+    image/base/mkosi.extra/usr/lib/homelab/core-at-boot|\
+    image/base/mkosi.extra/usr/lib/homelab/core-min-image|\
+    image/base/mkosi.extra/usr/lib/systemd/system/homelab-boot-check.service|\
+    image/base/mkosi.extra/usr/lib/systemd/system/homelab-core-update.service|\
+    image/base/mkosi.extra/usr/lib/systemd/system/homelab-extension-units.service|\
+    image/base/mkosi.extra/usr/lib/sysupdate.d/*|\
+    image/base/mkosi.extra/usr/lib/sysupdate.homelab-core.d/*|\
+    nix/pkgs/core-extension.nix)
+      reasons+=("$f")
+      ;;
+  esac
+done <<< "$changed"
+
+if [ "$has_mkosi_conf" -eq 1 ]; then
+  if ! git cat-file -e "${base_sha}:image/base/mkosi.conf" 2>/dev/null || \
+     ! git cat-file -e "${head_sha}:image/base/mkosi.conf" 2>/dev/null; then
+    emit true "" "image/base/mkosi.conf missing at base or head; running full check"
+    exit 0
+  fi
+
+  tracked_keys=(
+    Snapshot
+    Bootloader
+    UnifiedKernelImages
+    UnifiedKernelImageFormat
+    Format
+    ImageId
+    Seed
+    SplitArtifacts
+    InitrdProfiles
+    KernelCommandLine
+    KernelInitrdModules
+  )
+  changed_keys=()
+  for k in "${tracked_keys[@]}"; do
+    old_val=$(mkosi_key "$base_sha" "$k")
+    new_val=$(mkosi_key "$head_sha" "$k")
+    if [ "$old_val" != "$new_val" ]; then
+      if [ "$k" = "Snapshot" ]; then
+        old_disp=${old_val#set:}
+        new_disp=${new_val#set:}
+        changed_keys+=("Snapshot (${old_disp:-unset} -> ${new_disp:-unset})")
+      else
+        changed_keys+=("$k")
+      fi
+    fi
+  done
+
+  if [ "${#changed_keys[@]}" -gt 0 ]; then
+    key_list=$(IFS=", "; echo "${changed_keys[*]}")
+    reasons+=("image/base/mkosi.conf (${key_list})")
+  fi
+fi
+
+if [ "${#reasons[@]}" -gt 0 ]; then
+  summary=${reasons[0]}
+  for item in "${reasons[@]:1}"; do
+    summary="$summary, $item"
+  done
+  emit true "" "changed since ${prev_ref}: ${summary}"
+  exit 0
+fi
+
+emit false "updates,under" "no Arch snapshot or boot/fallback changes since ${prev_ref}"

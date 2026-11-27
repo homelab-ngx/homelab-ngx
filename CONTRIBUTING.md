@@ -218,15 +218,26 @@ the run.
 
 Start a release from Actions > **release** > Run workflow on main with
 version `X.Y.Z` (`gh workflow run release.yml --ref main -f version=X.Y.Z`).
-The `release` job downloads the newest published release, builds `X.Y.Z` and
-a broken variant `X.Y.Z.1`, runs the full image check (steps 1-19), signs and
-uploads `X.Y.Z`, pushes tag `vX.Y.Z`, and runs `announce`. If the check
-fails, nothing is uploaded and no tag is pushed. Pushing an annotated or
-lightweight tag `vX.Y.Z` on main runs the same workflow.
+The `release` job downloads the newest published release, builds `X.Y.Z`,
+runs `make image-check`, signs and uploads `X.Y.Z`, pushes tag `vX.Y.Z`, and
+runs `announce`. If the check fails, nothing is uploaded and no tag is pushed.
+Pushing an annotated or lightweight tag `vX.Y.Z` on main runs the same
+workflow.
 
-The **image check** workflow (`.github/workflows/image-check.yml`) also runs
-on main twice a week and by hand as a dry run without publishing or tagging.
-Runs on main fill the Nix store and Arch build root caches that releases read.
+By default, a release runs steps 1-10 and 14-19 (`ONLY=updates,under`): it
+installs and updates from the release before and boots `X.Y.Z`'s own
+installer image. The full 19-step check (broken variant `X.Y.Z.1`, step 11
+fallback checks, and step 13) runs when the Arch snapshot, boot, initrd,
+repart, sysupdate files, or `nix/pkgs/core-extension.nix` changed since the
+release before, or when you pass `full_check=true` (`gh workflow run
+release.yml --ref main -f version=X.Y.Z -f full_check=true`). **Re-run failed
+jobs** reuses the original `full_check` input; changing it needs a new
+workflow dispatch.
+
+The **image check** workflow (`.github/workflows/image-check.yml`) still runs
+all 19 steps on main twice a week and by hand as a dry run without
+publishing or tagging. Runs on main fill the Nix store and Arch build root
+caches that releases read.
 
 When a release run fails after tagging or uploading, run it again with
 **Re-run failed jobs**; never move a tag or take the next version number
