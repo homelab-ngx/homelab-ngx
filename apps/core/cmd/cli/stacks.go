@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -15,20 +14,8 @@ import (
 
 	"github.com/urfave/cli/v2"
 
-	"homelab-ngx.com/core/internal/config"
 	"homelab-ngx.com/core/internal/stacks"
 )
-
-// stackLockPath is where the daemon keeps the lock of the installed stacks:
-// stacks.lock.json in the stacks' state directory under the host's cache
-// directory.
-func stackLockPath() string {
-	cache := config.DefaultCacheDir
-	if nix, err := loadNix(); err == nil {
-		cache = nix.Paths.Cache()
-	}
-	return filepath.Join(stacks.StateDirIn(cache), "stacks.lock.json")
-}
 
 func printStackList(c *cli.Context, in *[]stacks.Stack) error {
 	list := []stacks.Stack{}
@@ -99,20 +86,32 @@ func stacksCmd() *cli.Command {
 				Name:      "restore",
 				Usage:     "Reinstall the stacks a lock lists that are not installed, and start those that were running",
 				ArgsUsage: "[lock file]  (default: the daemon's stacks.lock.json)",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "age-key-file", Usage: "Previous host's age key file (keys.txt) to re-seal stack variables"},
+					&cli.BoolFlag{Name: "age-key-stdin", Usage: "Read the previous host's age key from stdin"},
+				},
 				Action: func(c *cli.Context) error {
-					path := stackLockPath()
-					if c.NArg() > 0 {
-						path = c.Args().First()
-					}
-					data, err := os.ReadFile(path)
+					args, ageKey, err := readAgeKeyFlag(c, false)
 					if err != nil {
 						return err
 					}
-					var l stacks.StackLock
-					if err := json.Unmarshal(data, &l); err != nil {
-						return fmt.Errorf("%s: %w", path, err)
+					if len(args) > 1 {
+						return fmt.Errorf("usage: homelab stacks restore [lock file]")
 					}
-					r, err := call[stacks.StackRestoreResult](c.Context, http.MethodPost, "/stacks-lock/restore", l)
+					req := stacks.StackRestore{UseHostLock: true, AgeKey: ageKey}
+					if len(args) == 1 {
+						path := args[0]
+						data, err := os.ReadFile(path)
+						if err != nil {
+							return err
+						}
+						var l stacks.StackLock
+						if err := json.Unmarshal(data, &l); err != nil {
+							return fmt.Errorf("%s: %w", path, err)
+						}
+						req = stacks.StackRestore{Version: l.Version, Stacks: l.Stacks, AgeKey: ageKey}
+					}
+					r, err := call[stacks.StackRestoreResult](c.Context, http.MethodPost, "/stacks-lock/restore", req)
 					if err != nil {
 						return err
 					}
@@ -121,6 +120,9 @@ func stacksCmd() *cli.Command {
 					}
 					for _, n := range r.Restored {
 						fmt.Printf("✔ %s restored\n", n)
+					}
+					for _, n := range r.Resealed {
+						fmt.Printf("✔ %s variables re-sealed\n", n)
 					}
 					for n, why := range r.Skipped {
 						fmt.Printf("✗ %s: %s\n", n, why)
@@ -677,6 +679,30 @@ func stackVarCmd() *cli.Command {
 					return emit(c, s, fmt.Sprintf("✔ %s removed from %s.", v, name))
 				},
 			},
+			{
+				Name:      "reseal",
+				Usage:     "Re-seal a stack's variables with a previous host's age key",
+				ArgsUsage: "<stack>",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "age-key-file", Usage: "Previous host's age key file (keys.txt)"},
+					&cli.BoolFlag{Name: "age-key-stdin", Usage: "Read the previous host's age key from stdin"},
+				},
+				Action: func(c *cli.Context) error {
+					args, ageKey, err := readAgeKeyFlag(c, true)
+					if err != nil {
+						return err
+					}
+					if len(args) != 1 {
+						return fmt.Errorf("usage: homelab stacks var reseal <stack> (--age-key-file <path> | --age-key-stdin)")
+					}
+					name := args[0]
+					s, err := call[stacks.Stack](c.Context, http.MethodPost, stackPath(name, "/variables/reseal"), stacks.StackVariablesReseal{AgeKey: ageKey})
+					if err != nil {
+						return err
+					}
+					return emit(c, s, fmt.Sprintf("✔ Variables re-sealed for %s.", name))
+				},
+			},
 		},
 	}
 }
@@ -688,8 +714,13 @@ func stackVarPath(name, v string) string {
 // printStackVars prints a stack's variables as a table. A secret shows
 // only whether it is set; a value from the manifest's default is marked so.
 func printStackVars(s stacks.Stack) {
+	if s.VariablesError != "" {
+		printVarsError(s)
+	}
 	if len(s.Variables) == 0 {
-		fmt.Println("No variables.")
+		if s.VariablesError == "" {
+			fmt.Println("No variables.")
+		}
 		return
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -922,10 +953,10 @@ func printStack(c *cli.Context, s stacks.Stack) error {
 	} else if s.Approved != nil {
 		fmt.Println("API:      none")
 	}
-	if len(s.Variables) > 0 {
+	if len(s.Variables) > 0 || s.VariablesError != "" {
 		fmt.Println("\nVariables:")
 		printStackVars(s)
-		if !s.VariablesReady {
+		if !s.VariablesReady && s.VariablesError == "" {
 			fmt.Printf("Fill in the missing values with: homelab stacks var set %s <NAME> --value-stdin\n", s.Name)
 		}
 	}

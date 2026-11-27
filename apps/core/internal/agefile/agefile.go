@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"filippo.io/age"
 )
@@ -30,6 +31,38 @@ func identities(keyFile string) ([]age.Identity, error) {
 		return nil, fmt.Errorf("reading the host age key %s: %w", keyFile, err)
 	}
 	return ids, nil
+}
+
+// ParseIdentities parses an age key file's text (such as keys.txt) without
+// echoing any secret material on error.
+func ParseIdentities(text string) ([]age.Identity, error) {
+	ids, err := age.ParseIdentities(strings.NewReader(text))
+	if err != nil {
+		return nil, fmt.Errorf("parsing age key: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil, errors.New("no age secret key found")
+	}
+	return ids, nil
+}
+
+// IsWrongKey reports whether err is because none of the supplied identities
+// matched the encrypted file.
+func IsWrongKey(err error) bool {
+	var noMatch *age.NoIdentityMatchError
+	return errors.As(err, &noMatch)
+}
+
+// OpenWith decrypts cipher using the supplied identities.
+func OpenWith(ids []age.Identity, cipher []byte) ([]byte, error) {
+	if len(ids) == 0 {
+		return nil, errors.New("no age identity supplied")
+	}
+	r, err := age.Decrypt(bytes.NewReader(cipher), ids...)
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(r)
 }
 
 // recipients are the public halves of the X25519 identities.
@@ -76,11 +109,27 @@ func Open(keyFile string, cipher []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	r, err := age.Decrypt(bytes.NewReader(cipher), ids...)
-	if err != nil {
-		return nil, err
+	return OpenWith(ids, cipher)
+}
+
+// Reseal re-encrypts cipher from oldIDs to the identities in newKeyFile when
+// newKeyFile alone cannot decrypt it. Already readable cipher returns
+// (cipher, false, nil).
+func Reseal(oldIDs []age.Identity, newKeyFile string, cipher []byte) ([]byte, bool, error) {
+	if _, err := Open(newKeyFile, cipher); err == nil {
+		return cipher, false, nil
+	} else if !IsWrongKey(err) {
+		return nil, false, err
 	}
-	return io.ReadAll(r)
+	plain, err := OpenWith(oldIDs, cipher)
+	if err != nil {
+		return nil, false, err
+	}
+	sealed, err := Seal(newKeyFile, plain)
+	if err != nil {
+		return nil, false, err
+	}
+	return sealed, true, nil
 }
 
 // EnsureKey makes keyFile with one new X25519 identity when it does not

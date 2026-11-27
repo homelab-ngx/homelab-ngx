@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"filippo.io/age"
@@ -115,5 +116,79 @@ func TestEnsureKey(t *testing.T) {
 	}
 	if st, _ := os.Stat(p); st.Mode().Perm() != 0o600 {
 		t.Fatalf("mode %v", st.Mode().Perm())
+	}
+}
+
+func TestParseIdentitiesAndIsWrongKeyAndReseal(t *testing.T) {
+	t.Parallel()
+	oldID := newID(t)
+	newID1 := newID(t)
+	oldKeyText := "# comment\n" + oldID.String() + "\n"
+	otherID := newID(t)
+
+	ids, err := ParseIdentities(oldKeyText + "\n" + otherID.String() + "\n")
+	if err != nil || len(ids) != 2 {
+		t.Fatalf("ParseIdentities = %d, %v", len(ids), err)
+	}
+	for _, empty := range []string{"", "# only comments\n  \n"} {
+		if _, err := ParseIdentities(empty); err == nil {
+			t.Errorf("ParseIdentities(%q) succeeded", empty)
+		}
+	}
+	badSecret := "not-an-age-secret-SUPERSECRET-marker"
+	_, err = ParseIdentities(badSecret)
+	if err == nil {
+		t.Fatal("malformed age key succeeded")
+	}
+	if strings.Contains(err.Error(), "SUPERSECRET") {
+		t.Errorf("ParseIdentities leaked input in error: %v", err)
+	}
+
+	oldFile := keyFile(t, oldID)
+	newFile := keyFile(t, newID1)
+	sealed, err := Seal(oldFile, []byte("secret-payload"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Open(newFile, sealed)
+	if !IsWrongKey(err) {
+		t.Fatalf("expected IsWrongKey on mismatched key, got %v", err)
+	}
+	_, err = Open(newFile, []byte("not-age-ciphertext"))
+	if IsWrongKey(err) {
+		t.Errorf("corrupt ciphertext flagged as wrong key: %v", err)
+	}
+	_, err = Open(filepath.Join(t.TempDir(), "missing"), sealed)
+	if IsWrongKey(err) {
+		t.Errorf("missing key file flagged as wrong key: %v", err)
+	}
+
+	// Wrong old key fails.
+	if _, _, err := Reseal([]age.Identity{otherID}, newFile, sealed); !IsWrongKey(err) {
+		t.Errorf("Reseal with wrong old key = %v", err)
+	}
+	// Corrupt ciphertext fails without matching wrong key.
+	if _, _, err := Reseal(ids, newFile, []byte("corrupt")); err == nil || IsWrongKey(err) {
+		t.Errorf("Reseal on corrupt ciphertext = %v", err)
+	}
+
+	// Valid old key re-seals to new host key.
+	resealed, changed, err := Reseal(ids, newFile, sealed)
+	if err != nil || !changed {
+		t.Fatalf("Reseal = changed:%v err:%v", changed, err)
+	}
+	plain, err := Open(newFile, resealed)
+	if err != nil || string(plain) != "secret-payload" {
+		t.Fatalf("Open(newFile, resealed) = %q, %v", plain, err)
+	}
+	if _, err := Open(oldFile, resealed); !IsWrongKey(err) {
+		t.Errorf("resealed still opens with old key: %v", err)
+	}
+
+	// Second Reseal is a no-op when already readable by new host key.
+	again, changed, err := Reseal([]age.Identity{otherID}, newFile, resealed)
+	if err != nil || changed || !bytes.Equal(again, resealed) {
+		t.Errorf("second Reseal = changed:%v err:%v", changed, err)
 	}
 }

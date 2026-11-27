@@ -37,4 +37,18 @@ describe("ReviewDialog", () => {
     const btn = screen.getByRole("button", { name: "Approve and update" }) as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
   });
+
+  it("explains when variables are sealed to another host's key", () => {
+    const locked = {
+      ...stack(false),
+      variables_key_mismatch: true,
+      variables_error: "variables are sealed to another host's age key",
+    } as Stack;
+    render(Harness, { props: { client: new QueryClient(), stack: locked, onClose: () => {} } });
+
+    expect(screen.getByText(/sealed to another host's key/)).toBeTruthy();
+    expect(screen.queryByText(/Needs values first/)).toBeNull();
+    expect(screen.getByRole("link", { name: "Open configuration" }).getAttribute("href")).toBe("/stacks/media/configuration");
+    expect((screen.getByRole("button", { name: "Approve and update" }) as HTMLButtonElement).disabled).toBe(true);
+  });
 });

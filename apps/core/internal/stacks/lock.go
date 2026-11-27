@@ -3,12 +3,18 @@ package stacks
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 
+	"filippo.io/age"
+
+	"homelab-ngx.com/core/internal/agefile"
 	"homelab-ngx.com/core/internal/httpx"
 	"homelab-ngx.com/core/internal/store"
 )
@@ -92,65 +98,135 @@ func (s *Service) writeLock(ctx context.Context) {
 	}
 }
 
+// RestoreLockFile reads stacks.lock.json from the stacks state directory and
+// restores the stacks it lists.
+func (s *Service) RestoreLockFile(ctx context.Context, ageKey string) (StackRestoreResult, error) {
+	b, err := os.ReadFile(s.lockPath())
+	if errors.Is(err, fs.ErrNotExist) {
+		return StackRestoreResult{}, httpx.NotFound("no_host_lock", "no %s found in the host's stacks state directory", LockFile)
+	}
+	if err != nil {
+		return StackRestoreResult{}, fmt.Errorf("reading %s: %w", s.lockPath(), err)
+	}
+	var l Lock
+	if err := json.Unmarshal(b, &l); err != nil {
+		return StackRestoreResult{}, badLock("%v", err)
+	}
+	return s.Restore(ctx, l, ageKey)
+}
+
 // Restore puts back every locked stack that is not installed: the approved
-// commit and grants as they were and, when it is free, its subnet. Its
-// variables come back with its state directory (variables.age). Stacks that were running are started, which
-// builds their approved commit. Installed stacks are left alone.
-func (s *Service) Restore(ctx context.Context, l Lock) (StackRestoreResult, error) {
+// commit and grants as they were and, when it is free, its subnet. When
+// ageKey is given, variables.age files sealed to an old host's age key are
+// re-sealed to this host's key for both newly restored and already installed
+// stacks. Stacks that were running are started, which builds their approved
+// commit.
+func (s *Service) Restore(ctx context.Context, l Lock, ageKey string) (StackRestoreResult, error) {
 	if l.Version != LockVersion {
 		return StackRestoreResult{}, badLock("version %d is not supported (this daemon reads version %d)", l.Version, LockVersion)
 	}
-	res := StackRestoreResult{Restored: []string{}, Skipped: map[string]string{}}
+	var oldIDs []age.Identity
+	if ageKey != "" {
+		var err error
+		oldIDs, err = agefile.ParseIdentities(ageKey)
+		if err != nil {
+			return StackRestoreResult{}, httpx.Unprocessable("invalid_age_key", "invalid age key: %v", err)
+		}
+	}
+	res := StackRestoreResult{Restored: []string{}, Resealed: []string{}, Skipped: map[string]string{}}
+	var toStart []string
 	for _, e := range l.Stacks {
-		if err := s.restoreOne(ctx, e); err != nil {
+		if existing, gerr := s.st.Queries().GetStack(ctx, e.Name); gerr == nil {
+			if len(oldIDs) > 0 {
+				resealed, err := s.resealVarsFile(e.Name, oldIDs)
+				if err != nil {
+					res.Skipped[e.Name] = err.Error()
+					continue
+				}
+				if resealed {
+					res.Resealed = append(res.Resealed, e.Name)
+					if running, err := s.runningManifest(ctx, existing); err == nil && running.Version > 0 {
+						_ = s.renderVars(ctx, e.Name, running)
+					}
+					s.refreshHostIDs(ctx, e.Name)
+					if existing.WantRunning != 0 && !s.isRunning(ctx, e.Name) {
+						toStart = append(toStart, e.Name)
+					}
+					continue
+				}
+			}
+			res.Skipped[e.Name] = "already installed"
+			continue
+		} else if !errors.Is(gerr, sql.ErrNoRows) {
+			res.Skipped[e.Name] = gerr.Error()
+			continue
+		}
+		resealed, err := s.restoreOne(ctx, e, oldIDs)
+		if err != nil {
 			res.Skipped[e.Name] = err.Error()
 			continue
 		}
+		if resealed {
+			res.Resealed = append(res.Resealed, e.Name)
+		}
 		res.Restored = append(res.Restored, e.Name)
+		toStart = append(toStart, e.Name)
 		s.log.Info("stack restored from the lock", "stack", e.Name, "rev", e.Rev)
 	}
 	s.writeLock(ctx)
-	for _, name := range res.Restored {
+	for _, name := range toStart {
 		r, err := s.row(ctx, name)
 		if err != nil || r.WantRunning == 0 {
 			continue
 		}
 		if _, err := s.Start(ctx, name); err != nil {
-			res.Skipped[name] = "restored but not started: " + err.Error()
+			prefix := "restored but not started: "
+			if !slices.Contains(res.Restored, name) {
+				prefix = "re-sealed but not started: "
+			}
+			res.Skipped[name] = prefix + err.Error()
 		}
 	}
 	return res, nil
 }
 
-func (s *Service) restoreOne(ctx context.Context, e LockedStack) error {
+func (s *Service) restoreOne(ctx context.Context, e LockedStack, oldIDs []age.Identity) (bool, error) {
 	if !ValidName(e.Name) {
-		return fmt.Errorf("%q is not a stack name", e.Name)
+		return false, fmt.Errorf("%q is not a stack name", e.Name)
 	}
 	if e.Rev == "" || e.URL == "" || e.Source == "" {
-		return errors.New("source, rev and url are required")
+		return false, errors.New("source, rev and url are required")
 	}
 	m, err := ParseManifest(e.Manifest)
 	if err != nil {
-		return fmt.Errorf("manifest: %w", err)
+		return false, fmt.Errorf("manifest: %w", err)
 	}
 	if err := hostUnitsClash(e.Name, m); err != nil {
-		return err
+		return false, err
 	}
 	label, err := validLabel(e.Label)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if e.Nixpkgs != "" && (m.Version < 7 || !ValidNixpkgs(e.Nixpkgs)) {
-		return fmt.Errorf("nixpkgs %q is not a nixpkgs choice for this manifest", e.Nixpkgs)
+		return false, fmt.Errorf("nixpkgs %q is not a nixpkgs choice for this manifest", e.Nixpkgs)
 	}
 	if e.NixpkgsRev != "" && (m.Version < 7 || !commitRE.MatchString(e.NixpkgsRev)) {
-		return fmt.Errorf("nixpkgs_rev %q is not a nixpkgs commit for this manifest", e.NixpkgsRev)
+		return false, fmt.Errorf("nixpkgs_rev %q is not a nixpkgs commit for this manifest", e.NixpkgsRev)
 	}
 	if _, err := s.st.Queries().GetStack(ctx, e.Name); err == nil {
-		return errors.New("already installed")
+		return false, errors.New("already installed")
 	}
 	if err := s.portClash(ctx, e.Name, m); err != nil {
-		return err
+		return false, err
+	}
+	var resealed bool
+	if len(oldIDs) > 0 {
+		var rerr error
+		resealed, rerr = s.resealVarsFile(e.Name, oldIDs)
+		if rerr != nil {
+			return false, rerr
+		}
 	}
 	subnet := e.Subnet
 	if _, _, err := addrs(subnet); err != nil {
@@ -183,14 +259,14 @@ func (s *Service) restoreOne(ctx context.Context, e LockedStack) error {
 		})
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
 	// The lock holds no token; an API grant gets a new one.
 	s.syncAPITokenLogged(ctx, e.Name)
 	// The restore approves the locked manifest again. Paths kept in the
 	// restored variables.age stay as they are.
 	s.materializePathsLogged(e.Name, m)
-	return nil
+	return resealed, nil
 }
 
 func badLock(f string, a ...any) *httpx.Problem {

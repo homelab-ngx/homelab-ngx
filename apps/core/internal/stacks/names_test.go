@@ -134,7 +134,7 @@ func TestRestoreUnderANameItsManifestDoesNotSuggest(t *testing.T) {
 	res, err := svc.Restore(ctx, Lock{Version: LockVersion, Stacks: []LockedStack{{
 		Name: "photos", Label: "Photos", Source: src, Rev: "aaaaaaa1", URL: "github:o/r/aaaaaaa1",
 		Manifest: json.RawMessage(immichManifest),
-	}}})
+	}}}, "")
 	if err != nil || len(res.Restored) != 1 {
 		t.Fatalf("restore = %+v, %v", res, err)
 	}

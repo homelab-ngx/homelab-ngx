@@ -3,11 +3,14 @@
   import { LayoutGrid, Rows3, Search } from "@lucide/svelte";
   import { api, call, describe } from "#lib/api/client.ts";
   import { busy, busyPoll, fetchDrafts, fetchServices, fetchStacks, idlePoll, keys } from "#lib/api/queries.ts";
+  import RestoreStacksDialog from "#lib/components/RestoreStacksDialog.svelte";
   import RowMenu from "#lib/components/RowMenu.svelte";
   import StackGrid from "#lib/components/StackGrid.svelte";
   import { ago } from "#lib/format.ts";
   import { health, servicesOf, shortName } from "#lib/stacks.ts";
   import { setStacksView, stacksView } from "#lib/stacksView.svelte.ts";
+
+  let restoring = $state(false);
 
   const client = useQueryClient();
   const stacks = createQuery(() => ({
@@ -66,7 +69,16 @@
       label: ready > 0 ? `Update ${ready} stack${ready === 1 ? "" : "s"}` : "Update stacks",
       disabled: ready === 0 || updateAll.isPending || anyBusy,
       title: ready === 0 ? "No update can go without approval" : anyBusy ? "A stack is busy" : undefined,
-      onSelect: () => updateAll.mutate(),
+      onSelect: (): void => {
+        updateAll.mutate();
+      },
+    },
+    {
+      label: "Restore…",
+      disabled: anyBusy,
+      onSelect: (): void => {
+        restoring = true;
+      },
     },
   ]);
 </script>
@@ -138,7 +150,10 @@
   {:else if stacks.data && stacks.data.length === 0}
     <div class="card text-center">
       <p>No stacks yet.</p>
-      <a class="btn btn-primary mt-3" href="/stacks/add">Add stack</a>
+      <div class="mt-3 flex justify-center gap-2">
+        <a class="btn btn-primary" href="/stacks/add">Add stack</a>
+        <button type="button" class="btn" onclick={() => (restoring = true)}>Restore…</button>
+      </div>
     </div>
   {:else if stacks.data && shown.length === 0}
     <p class="rounded-lg border border-line bg-surface px-4 py-3 text-muted">No stack matches.</p>
@@ -147,4 +162,5 @@
   {:else}
     <p class="text-muted">Loading…</p>
   {/if}
+  {#if restoring}<RestoreStacksDialog onClose={() => (restoring = false)} />{/if}
 </div>

@@ -2037,6 +2037,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/stacks/{name}/variables/reseal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Decrypt a stack's variables with the old host's age key and re-seal them to this host's key. */
+        post: operations["resealStackVariables"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/stacks/{name}/variables/{var}": {
         parameters: {
             query?: never;
@@ -4902,6 +4919,10 @@ export interface components {
             usage?: components["schemas"]["Usage"];
             /** @description The stack's variables: the ones the approved and fetched manifests declare first, in manifest order, then the operator's own by name. A secret's value is never returned. */
             variables: components["schemas"]["StackVariable"][];
+            /** @description Why the stack's stored variables (variables.age) could not be read. Empty when readable or absent. */
+            variables_error?: string;
+            /** @description True when variables.age is sealed to another host's age key and needs to be re-sealed with that old key. */
+            variables_key_mismatch?: boolean;
             /** @description Every variable the newest manifest (the fetched one) requires has a value, stored or a default. An install or update of a commit waits until the variables its manifest requires have values. */
             variables_ready: boolean;
             /** @description The operator last started it, and the monitor starts it again when its container stops. Each boot of the host sets it to autostart. */
@@ -5232,7 +5253,22 @@ export interface components {
             /** @description Move the stack to another source, such as github:owner/repo, and fetch it there. The running generation, the variables and the data stay. The commit found is approved by itself when its manifest asks for nothing new, and waits as an update otherwise. When the fetch fails the stack keeps its source. */
             source?: string;
         };
+        StackRestore: {
+            /** @description Old host's age secret key (contents of keys.txt) used to re-seal each stack's variables.age to this host's key. */
+            age_key?: string;
+            /** @description Locked stacks to restore. Ignored when use_host_lock is true. */
+            stacks?: components["schemas"]["StackLockEntry"][];
+            /** @description Read stacks.lock.json from the daemon's state directory instead of using version and stacks from the request body. */
+            use_host_lock?: boolean;
+            /**
+             * Format: int64
+             * @description Lock format version (1). Ignored when use_host_lock is true.
+             */
+            version?: number;
+        };
         StackRestoreResult: {
+            /** @description Stacks whose variables.age were re-sealed to this host's key. */
+            resealed?: string[];
             restored: string[];
             /** @description Stack name to why it was not restored or not started. */
             skipped: {
@@ -5405,6 +5441,10 @@ export interface components {
             secret?: boolean;
             /** @description The value, stored as given. For a declared path, an existing directory on the host. */
             value: string;
+        };
+        StackVariablesReseal: {
+            /** @description Old host's age secret key (contents of keys.txt) used to decrypt variables.age and re-seal it to this host's key. */
+            age_key: string;
         };
         Status: {
             /** @description A password is set; without one, the next visitor sets it. */
@@ -13733,7 +13773,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["StackLock"];
+                "application/json": components["schemas"]["StackRestore"];
             };
         };
         responses: {
@@ -14623,6 +14663,52 @@ export interface operations {
         responses: {
             /** @description Accepted */
             202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Stack"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    resealStackVariables: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The stack's name, as it was installed. */
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StackVariablesReseal"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

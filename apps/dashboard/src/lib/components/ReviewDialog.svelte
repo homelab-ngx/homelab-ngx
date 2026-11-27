@@ -60,7 +60,13 @@
       </section>
       {#if !s.variables_ready}
         <p class="rounded-md bg-warn-soft px-3 py-2 text-warn">
-          Needs values first: {missingVariables(s).join(", ") || "its variables"}.
+          {#if s.variables_key_mismatch}
+            Variables are sealed to another host's key.
+          {:else if s.variables_error}
+            {s.variables_error}
+          {:else}
+            Needs values first: {missingVariables(s).join(", ") || "its variables"}.
+          {/if}
           <a class="underline" href="/stacks/{s.name}/configuration" onclick={onClose}>Open configuration</a>
         </p>
       {/if}

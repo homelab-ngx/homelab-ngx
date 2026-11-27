@@ -424,7 +424,7 @@ func TestAddPrivateGitHubReposUsesHostKeyThenPerStackKey(t *testing.T) {
 	entry := lock.Stacks[idx]
 	entry.WantRunning = false
 	entry.Autostart = &want
-	if _, err := svc.Restore(ctx, Lock{Version: LockVersion, Stacks: []LockedStack{entry}}); err != nil {
+	if _, err := svc.Restore(ctx, Lock{Version: LockVersion, Stacks: []LockedStack{entry}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if row, err := svc.st.Queries().GetStack(ctx, "stack-two"); err != nil || row.SshKey != dedName {

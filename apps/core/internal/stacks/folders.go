@@ -265,7 +265,7 @@ func (s *Service) OwnFolder(ctx context.Context, name, varName string, in StackF
 	vars, err := s.loadVars(name)
 	s.varsMu.Unlock()
 	if err != nil {
-		return Stack{}, err
+		return Stack{}, varsUnreadable(name, err)
 	}
 	path, src := resolve(d, vars)
 	if src == SourceUnset {

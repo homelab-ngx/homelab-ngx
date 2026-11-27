@@ -106,9 +106,14 @@ type sshKeysBody struct{ Body StackSSHKeys }
 
 type nixStoreBody struct{ Body NixStore }
 
-type restoreIn struct{ Body StackLock }
+type restoreIn struct{ Body StackRestore }
 
 type restoreBody struct{ Body StackRestoreResult }
+
+type resealVariablesIn struct {
+	Name string `path:"name" doc:"The stack's name, as it was installed."`
+	Body StackVariablesReseal
+}
 
 type iconIn struct {
 	Name string `path:"name" doc:"The stack's name, as it was installed."`
@@ -409,15 +414,31 @@ func (h *HTTP) Register(a httpx.APIs) {
 	httpx.Register(a, httpx.ScopeOperator, op("restoreStacks", http.MethodPost, "/stacks-lock/restore",
 		"Reinstall the stacks a lock lists.", 0),
 		func(ctx context.Context, in *restoreIn) (*restoreBody, error) {
+			if in.Body.UseHostLock {
+				res, err := h.svc.RestoreLockFile(ctx, in.Body.AgeKey)
+				if err != nil {
+					return nil, err
+				}
+				return &restoreBody{Body: res}, nil
+			}
 			var l Lock
-			if err := convert(in.Body, &l); err != nil {
+			if err := convert(StackLock{Version: in.Body.Version, Stacks: in.Body.Stacks}, &l); err != nil {
 				return nil, badLock("%v", err)
 			}
-			res, err := h.svc.Restore(ctx, l)
+			res, err := h.svc.Restore(ctx, l, in.Body.AgeKey)
 			if err != nil {
 				return nil, err
 			}
 			return &restoreBody{Body: res}, nil
+		})
+	httpx.Register(a, httpx.ScopeOperator, op("resealStackVariables", http.MethodPost, "/stacks/{name}/variables/reseal",
+		"Decrypt a stack's variables with the old host's age key and re-seal them to this host's key.", 0),
+		func(ctx context.Context, in *resealVariablesIn) (*stackBody, error) {
+			s, err := h.svc.ResealVariables(ctx, in.Name, in.Body.AgeKey)
+			if err != nil {
+				return nil, err
+			}
+			return &stackBody{Body: s}, nil
 		})
 	httpx.Register(a, httpx.ScopeRead, op("getStackSSHKeys", http.MethodGet, "/stacks-ssh-keys",
 		"The host's SSH deploy key and any per-stack keys for private repositories.", 0),

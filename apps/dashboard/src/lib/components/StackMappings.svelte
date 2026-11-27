@@ -157,7 +157,10 @@
     delete errors[NEW];
   }
 
+  const unreadable = $derived(Boolean(stack.variables_error));
+
   function openAdd() {
+    if (unreadable) return;
     adding = true;
     newReadOnly = hint?.read_only ?? true;
   }
@@ -203,6 +206,7 @@
   /** Apply saves every changed row and the new mapping; a refused one keeps its text and shows why. */
   function apply(e: SubmitEvent) {
     e.preventDefault();
+    if (unreadable) return;
     const rows = changed.map((v) => ({ v, value: drafts[v.name]! }));
     const added = adding && canAdd ? newMapping() : null;
     if (!rows.length && !added) return;
@@ -657,12 +661,12 @@
 
     <div class="flex flex-wrap items-center justify-end gap-2 border-t border-line pt-3">
       <!-- It stays in place and folds the form away again, like a fold's label. -->
-      <button type="button" class="btn mr-auto" aria-expanded={adding} aria-controls="{id}-new" onclick={() => (adding ? closeAdd() : openAdd())}>
+      <button type="button" class="btn mr-auto" disabled={unreadable} aria-expanded={adding} aria-controls="{id}-new" onclick={() => (adding ? closeAdd() : openAdd())}>
         Add mapping
       </button>
       {#if note}<p role="status" class="text-muted">{note}</p>{/if}
       <button type="button" class="btn" disabled={pending || (changed.length === 0 && Object.keys(drafts).length === 0 && !adding)} onclick={reset}>Reset</button>
-      <button type="submit" class="btn btn-primary" disabled={pending || (changed.length === 0 && !(adding && canAdd))}>{pending ? "Applying…" : "Apply"}</button>
+      <button type="submit" class="btn btn-primary" disabled={unreadable || pending || (changed.length === 0 && !(adding && canAdd))}>{pending ? "Applying…" : "Apply"}</button>
     </div>
   </form>
 </section>

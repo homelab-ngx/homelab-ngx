@@ -136,7 +136,7 @@ func TestV7LockRestoresTheSameNixpkgs(t *testing.T) {
 	other, _, h := newServiceOn(t)
 	other.resolveNixpkgs = func(context.Context, string) (string, error) { return strings.Repeat("c", 40), nil }
 	h.On("systemctl", "--machine=immich", "is-active").Reply("active\n")
-	res, err := other.Restore(context.Background(), l)
+	res, err := other.Restore(context.Background(), l, "")
 	if err != nil || len(res.Restored) != 1 {
 		t.Fatalf("restore = %+v, %v", res, err)
 	}
@@ -204,7 +204,7 @@ func TestAStackApprovedBeforeVersion7IsNotBuilt(t *testing.T) {
 	// A lock from before version 7 brings the old manifest back as approved.
 	if _, err := svc.Restore(ctx, Lock{Version: LockVersion, Stacks: []LockedStack{{
 		Name: "immich", Source: src, Rev: "aaaaaaa1", URL: "github:o/r/aaaaaaa1", Manifest: json.RawMessage(v1Manifest),
-	}}}); err != nil {
+	}}}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if s := finished(t, svc, svc.Start); !strings.Contains(s.Operation.Error, "version 7") || s.Generation != 0 {

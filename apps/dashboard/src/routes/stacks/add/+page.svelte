@@ -316,7 +316,15 @@
 
     {#if !s.variables_ready}
       <p class="mt-4 text-warn">
-        {missing.length ? `Required before install: ${missing.join(", ")}.` : "The stack's variables could not be read. See the daemon's log."}
+        {#if s.variables_key_mismatch}
+          Variables are sealed to another host's key. Unlock them from the stack page first.
+        {:else if s.variables_error}
+          {s.variables_error}
+        {:else if missing.length}
+          Required before install: {missing.join(", ")}.
+        {:else}
+          The stack's variables could not be read. See the daemon's log.
+        {/if}
       </p>
     {/if}
     <div class="mt-4 flex gap-2">

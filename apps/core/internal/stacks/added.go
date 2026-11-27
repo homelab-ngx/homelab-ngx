@@ -95,7 +95,7 @@ func (s *Service) SetFolders(ctx context.Context, name string, in StackFoldersSe
 		defer s.varsMu.Unlock()
 		old, err := s.loadFolders(name)
 		if err != nil {
-			return err
+			return varsUnreadable(name, err)
 		}
 		for i, f := range out { // an unchanged folder keeps its time
 			for _, was := range old {

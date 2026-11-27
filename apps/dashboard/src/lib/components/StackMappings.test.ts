@@ -355,4 +355,15 @@ describe("StackMappings", () => {
       put.mockRestore();
     }
   });
+
+  it("disables Add mapping and Apply when variables cannot be read", () => {
+    const locked = {
+      ...stack([variable("TZ", { declared: true, kind: "env", set: false, source: "unset" })]),
+      variables_key_mismatch: true,
+      variables_error: "variables are sealed to another host's age key",
+    } as Stack;
+    render(Harness, { props: { client: new QueryClient(), stack: locked } });
+    expect((screen.getByRole("button", { name: "Add mapping" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Apply" }) as HTMLButtonElement).disabled).toBe(true);
+  });
 });

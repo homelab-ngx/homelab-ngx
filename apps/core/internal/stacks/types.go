@@ -87,6 +87,12 @@ type Stack struct {
 	// by name. A secret's value is never returned.
 	Variables []StackVariable `json:"variables" doc:"The stack's variables: the ones the approved and fetched manifests declare first, in manifest order, then the operator's own by name. A secret's value is never returned."`
 
+	// VariablesError Why the stack's stored variables could not be read.
+	VariablesError string `json:"variables_error,omitempty" doc:"Why the stack's stored variables (variables.age) could not be read. Empty when readable or absent."`
+
+	// VariablesKeyMismatch variables.age is sealed to another host's age key.
+	VariablesKeyMismatch bool `json:"variables_key_mismatch,omitempty" doc:"True when variables.age is sealed to another host's age key and needs to be re-sealed with that old key."`
+
 	// VariablesReady Every variable the newest manifest (the fetched one)
 	// requires has a value, stored or a default. An install or update of a
 	// commit waits until the variables its manifest requires have values.
@@ -477,8 +483,23 @@ const (
 	StackOperationKindUpdate   StackOperationKind = "update"
 )
 
+// StackRestore is the body of restoreStacks.
+type StackRestore struct {
+	AgeKey      string           `json:"age_key,omitempty" doc:"Old host's age secret key (contents of keys.txt) used to re-seal each stack's variables.age to this host's key."`
+	Stacks      []StackLockEntry `json:"stacks,omitempty" doc:"Locked stacks to restore. Ignored when use_host_lock is true."`
+	UseHostLock bool             `json:"use_host_lock,omitempty" doc:"Read stacks.lock.json from the daemon's state directory instead of using version and stacks from the request body."`
+	Version     int              `json:"version,omitempty" doc:"Lock format version (1). Ignored when use_host_lock is true."`
+}
+
+// StackVariablesReseal is the body of resealStackVariables.
+type StackVariablesReseal struct {
+	AgeKey string `json:"age_key" minLength:"1" doc:"Old host's age secret key (contents of keys.txt) used to decrypt variables.age and re-seal it to this host's key."`
+}
+
 // StackRestoreResult says what a restore did with each locked stack.
 type StackRestoreResult struct {
+	// Resealed Stacks whose variables.age were re-sealed to this host's key.
+	Resealed []string `json:"resealed,omitempty" doc:"Stacks whose variables.age were re-sealed to this host's key."`
 	Restored []string `json:"restored"`
 
 	// Skipped Stack name to why it was not restored or not started.

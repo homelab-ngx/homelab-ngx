@@ -6448,6 +6448,14 @@
             },
             "type": "array"
           },
+          "variables_error": {
+            "description": "Why the stack's stored variables (variables.age) could not be read. Empty when readable or absent.",
+            "type": "string"
+          },
+          "variables_key_mismatch": {
+            "description": "True when variables.age is sealed to another host's age key and needs to be re-sealed with that old key.",
+            "type": "boolean"
+          },
           "variables_ready": {
             "description": "Every variable the newest manifest (the fetched one) requires has a value, stored or a default. An install or update of a commit waits until the variables its manifest requires have values.",
             "type": "boolean"
@@ -7470,9 +7478,42 @@
         },
         "type": "object"
       },
+      "StackRestore": {
+        "additionalProperties": false,
+        "properties": {
+          "age_key": {
+            "description": "Old host's age secret key (contents of keys.txt) used to re-seal each stack's variables.age to this host's key.",
+            "type": "string"
+          },
+          "stacks": {
+            "description": "Locked stacks to restore. Ignored when use_host_lock is true.",
+            "items": {
+              "$ref": "#/components/schemas/StackLockEntry"
+            },
+            "type": "array"
+          },
+          "use_host_lock": {
+            "description": "Read stacks.lock.json from the daemon's state directory instead of using version and stacks from the request body.",
+            "type": "boolean"
+          },
+          "version": {
+            "description": "Lock format version (1). Ignored when use_host_lock is true.",
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "StackRestoreResult": {
         "additionalProperties": false,
         "properties": {
+          "resealed": {
+            "description": "Stacks whose variables.age were re-sealed to this host's key.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "restored": {
             "items": {
               "type": "string"
@@ -7861,6 +7902,20 @@
         },
         "required": [
           "value"
+        ],
+        "type": "object"
+      },
+      "StackVariablesReseal": {
+        "additionalProperties": false,
+        "properties": {
+          "age_key": {
+            "description": "Old host's age secret key (contents of keys.txt) used to decrypt variables.age and re-seal it to this host's key.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "age_key"
         ],
         "type": "object"
       },
@@ -23209,7 +23264,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/StackLock"
+                "$ref": "#/components/schemas/StackRestore"
               }
             }
           },
@@ -24758,6 +24813,87 @@
           }
         },
         "summary": "Build the approved commit and switch the stack to it.",
+        "tags": [
+          "stacks"
+        ]
+      }
+    },
+    "/stacks/{name}/variables/reseal": {
+      "post": {
+        "operationId": "resealStackVariables",
+        "parameters": [
+          {
+            "description": "The stack's name, as it was installed.",
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "description": "The stack's name, as it was installed.",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StackVariablesReseal"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Stack"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Decrypt a stack's variables with the old host's age key and re-seal them to this host's key.",
         "tags": [
           "stacks"
         ]

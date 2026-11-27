@@ -356,3 +356,80 @@ func TestDeclaredSecretsMustHaveValuesBeforeABuild(t *testing.T) {
 		t.Errorf("update problem = %q", problem)
 	}
 }
+
+func TestResealVariablesEndpoint(t *testing.T) {
+	t.Parallel()
+	svc, fs, h := newServiceOn(t)
+	h.On("systemctl", "--machine=immich", "is-active").Reply("active\n")
+	ctx := context.Background()
+	fs.set("aaaaaaa1", v7Secrets(`{"name":"DB_PASSWORD"}`))
+	if _, err := svc.Add(ctx, src, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Approve(ctx, "immich", "aaaaaaa1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetVariable(ctx, "immich", "DB_PASSWORD", StackVariableSet{Value: "s3cret"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.SetVariable(ctx, "immich", "LOG_LEVEL", StackVariableSet{Value: "debug"}); err != nil {
+		t.Fatal(err)
+	}
+	finished(t, svc, svc.Start)
+
+	oldKeyBytes, err := os.ReadFile(svc.host.AgeKeyFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKeyText := string(oldKeyBytes)
+	wrongKeyBytes, err := os.ReadFile(hostKey(t, t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a new host age key while variables.age is still sealed to the old key.
+	svc.host.AgeKeyFile = hostKey(t, t.TempDir())
+	_ = os.RemoveAll(svc.varsDir("immich"))
+
+	s, err := svc.Get(ctx, "immich")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.VariablesReady || !s.VariablesKeyMismatch || s.VariablesError == "" {
+		t.Fatalf("mismatch view = ready:%v mismatch:%v err:%q", s.VariablesReady, s.VariablesKeyMismatch, s.VariablesError)
+	}
+	_, err = svc.SetVariable(ctx, "immich", "LOG_LEVEL", StackVariableSet{Value: "info"})
+	wantCode(t, err, 409, "variables_unreadable")
+
+	_, err = svc.ResealVariables(ctx, "immich", "not-an-age-key-SECRET")
+	wantCode(t, err, 422, "invalid_age_key")
+	if strings.Contains(err.Error(), "SECRET") {
+		t.Errorf("invalid_age_key echoed input: %v", err)
+	}
+
+	_, err = svc.ResealVariables(ctx, "immich", string(wrongKeyBytes))
+	wantCode(t, err, 422, "wrong_age_key")
+
+	s, err = svc.ResealVariables(ctx, "immich", oldKeyText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.VariablesReady || s.VariablesKeyMismatch || s.VariablesError != "" {
+		t.Fatalf("after reseal = ready:%v mismatch:%v err:%q", s.VariablesReady, s.VariablesKeyMismatch, s.VariablesError)
+	}
+	if v := varByName(t, s, "LOG_LEVEL"); v.Value != "debug" {
+		t.Errorf("LOG_LEVEL = %+v", v)
+	}
+	if v := varByName(t, s, "DB_PASSWORD"); !v.Secret || !v.Set {
+		t.Errorf("DB_PASSWORD = %+v", v)
+	}
+	if b, _ := os.ReadFile(filepath.Join(svc.varsDir("immich"), "DB_PASSWORD")); string(b) != "s3cret" {
+		t.Errorf("delivered secret = %q", b)
+	}
+
+	// Second call is an idempotent no-op even with any valid identity syntax.
+	s2, err := svc.ResealVariables(ctx, "immich", string(wrongKeyBytes))
+	if err != nil || !s2.VariablesReady || s2.VariablesKeyMismatch {
+		t.Fatalf("idempotent reseal = ready:%v mismatch:%v err:%v", s2.VariablesReady, s2.VariablesKeyMismatch, err)
+	}
+}

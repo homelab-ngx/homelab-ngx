@@ -20,6 +20,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"homelab-ngx.com/core/internal/agefile"
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/httpx"
 	"homelab-ngx.com/core/internal/services"
@@ -667,6 +668,12 @@ func (s *Service) view(ctx context.Context, r store.Stack) (Stack, error) {
 		// A store that cannot be read shows no values rather than failing
 		// the whole view.
 		s.log.Warn("stack variables not read", "stack", r.Name, "error", varsErr)
+		if agefile.IsWrongKey(varsErr) {
+			v.VariablesKeyMismatch = true
+			v.VariablesError = "variables are sealed to another host's age key"
+		} else {
+			v.VariablesError = varsErr.Error()
+		}
 	}
 	v.Variables, v.VariablesReady = variablesView(vars, approved, fetched, r.ApiTokenHash != "", s.builtins(fetched), s.hostNets())
 	v.VariablesReady = v.VariablesReady && varsErr == nil

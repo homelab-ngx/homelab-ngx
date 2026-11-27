@@ -98,6 +98,8 @@ export function variableError(e: unknown, v: Pick<StackVariable, "name" | "kind"
       return `Declared as ${kindWords[v.kind]}; it cannot be made secret.`;
     case "secret_stays_secret":
       return "A secret stays a secret. Enter a new value instead.";
+    case "variables_unreadable":
+      return "Variables are sealed to another host's key. Unlock them first.";
     default:
       return e.detail || e.message;
   }

@@ -11,6 +11,7 @@
   import OperationCard from "#lib/components/OperationCard.svelte";
   import Pill from "#lib/components/Pill.svelte";
   import RenameStack from "#lib/components/RenameStack.svelte";
+  import ResealVariablesDialog from "#lib/components/ResealVariablesDialog.svelte";
   import ReviewDialog from "#lib/components/ReviewDialog.svelte";
   import RowMenu from "#lib/components/RowMenu.svelte";
   import ServicesTable from "#lib/components/ServicesTable.svelte";
@@ -61,6 +62,7 @@
   let error = $state("");
   let removing = $state(false);
   let renaming = $state(false);
+  let resealing = $state(false);
   let reviewing = $state<Stack | null>(null);
 
   const own = $derived(servicesOf(services.data, name));
@@ -213,7 +215,12 @@
       {#if !s.variables_ready}
         {@const missing = missingVariables(s)}
         <p role="alert" class="rounded-md bg-warn-soft px-3 py-2 text-warn">
-          {#if missing.length}
+          {#if s.variables_key_mismatch}
+            Variables are sealed to another host's key.
+            <button type="button" class="underline" onclick={() => (resealing = true)}>Unlock…</button>
+          {:else if s.variables_error}
+            {s.variables_error}
+          {:else if missing.length}
             Needs values before it can update: {missing.join(", ")}. <a class="underline" href="/stacks/{name}/configuration">Configuration</a>
           {:else}
             The variables could not be read. See the daemon's log.
@@ -317,6 +324,7 @@
 
   <ReviewDialog stack={reviewing} onClose={() => (reviewing = null)} />
   {#if renaming}<RenameStack stack={s} onClose={() => (renaming = false)} />{/if}
+  {#if resealing}<ResealVariablesDialog stack={s} onClose={() => (resealing = false)} />{/if}
 {:else}
   <p class="text-muted">Loading…</p>
 {/if}

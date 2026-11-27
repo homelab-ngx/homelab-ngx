@@ -17,6 +17,8 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"filippo.io/age"
+
 	"homelab-ngx.com/core/internal/agefile"
 	"homelab-ngx.com/core/internal/httpx"
 	"homelab-ngx.com/core/internal/storage"
@@ -114,6 +116,83 @@ func (s *Service) loadVarsFile(name string) (varsFile, error) {
 		return varsFile{}, fmt.Errorf("reading %s: format %d is not supported", s.varsFile(name), f.Version)
 	}
 	return f, nil
+}
+
+// resealVarsFile re-encrypts stack name's variables.age from oldIDs to the
+// host's key when the host's key alone cannot decrypt it. Returns whether the
+// file was re-sealed. Missing files or files already readable by the host key
+// return (false, nil).
+func (s *Service) resealVarsFile(name string, oldIDs []age.Identity) (bool, error) {
+	path := s.varsFile(name)
+	s.varsMu.Lock()
+	defer s.varsMu.Unlock()
+	b, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if _, err := agefile.Open(s.host.AgeKeyFile, b); err == nil {
+		return false, nil
+	} else if !agefile.IsWrongKey(err) {
+		return false, fmt.Errorf("reading %s: %w", path, err)
+	}
+	plain, err := agefile.OpenWith(oldIDs, b)
+	if agefile.IsWrongKey(err) {
+		return false, httpx.Unprocessable("wrong_age_key", "the given age key does not unlock stack %q's variables", name)
+	}
+	if err != nil {
+		return false, fmt.Errorf("decrypting %s: %w", path, err)
+	}
+	var f varsFile
+	if err := json.Unmarshal(plain, &f); err != nil {
+		return false, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if f.Version != varsFormat {
+		return false, fmt.Errorf("reading %s: format %d is not supported", path, f.Version)
+	}
+	sealed, err := agefile.Seal(s.host.AgeKeyFile, plain)
+	if err != nil {
+		return false, err
+	}
+	if err := writeAtomic(path, sealed, 0o600); err != nil {
+		return false, err
+	}
+	s.log.Info("stack variables re-sealed to this host's key", "stack", name)
+	return true, nil
+}
+
+// ResealVariables re-seals stack name's variables.age from ageKey to this
+// host's age key and re-renders delivered variables if needed.
+func (s *Service) ResealVariables(ctx context.Context, name, ageKey string) (Stack, error) {
+	r, err := s.row(ctx, name)
+	if err != nil {
+		return Stack{}, err
+	}
+	oldIDs, err := agefile.ParseIdentities(ageKey)
+	if err != nil {
+		return Stack{}, httpx.Unprocessable("invalid_age_key", "invalid age key: %v", err)
+	}
+	resealed, err := s.resealVarsFile(name, oldIDs)
+	if err != nil {
+		return Stack{}, err
+	}
+	if resealed {
+		if running, err := s.runningManifest(ctx, r); err == nil && running.Version > 0 {
+			_ = s.renderVars(ctx, name, running)
+		}
+		s.refreshHostIDs(ctx, name)
+	}
+	return s.Get(ctx, name)
+}
+
+func varsUnreadable(name string, err error) error {
+	if agefile.IsWrongKey(err) {
+		return httpx.Conflict("variables_unreadable",
+			"stack %q: variables are sealed to another host's age key; re-seal them with the old key", name)
+	}
+	return err
 }
 
 // saveVars stores the variables, keeping the added folders. The caller
@@ -406,7 +485,7 @@ func (s *Service) misfitGate(name string, m Manifest) error {
 	vars, err := s.loadVars(name)
 	s.varsMu.Unlock()
 	if err != nil {
-		return err
+		return varsUnreadable(name, err)
 	}
 	if bad := misfitIn(m, vars); len(bad) > 0 {
 		return httpx.Conflict("invalid_address",
@@ -436,7 +515,7 @@ func (s *Service) missingValues(name string, m Manifest) ([]string, error) {
 	vars, err := s.loadVars(name)
 	s.varsMu.Unlock()
 	if err != nil {
-		return nil, err
+		return nil, varsUnreadable(name, err)
 	}
 	return missingIn(m, vars), nil
 }
@@ -680,7 +759,7 @@ func (s *Service) SetVariable(ctx context.Context, name, varName string, in Stac
 		defer s.varsMu.Unlock()
 		vars, err := s.loadVars(name)
 		if err != nil {
-			return err
+			return varsUnreadable(name, err)
 		}
 		i := slices.IndexFunc(vars, func(v storedVar) bool { return v.Name == varName })
 		wasSecret := i >= 0 && vars[i].Secret
@@ -777,7 +856,7 @@ func (s *Service) DeleteVariable(ctx context.Context, name, varName string) (Sta
 		defer s.varsMu.Unlock()
 		vars, err := s.loadVars(name)
 		if err != nil {
-			return err
+			return varsUnreadable(name, err)
 		}
 		i := slices.IndexFunc(vars, func(v storedVar) bool { return v.Name == varName })
 		if i < 0 {
