@@ -11,7 +11,8 @@ ON CONFLICT (key) DO UPDATE SET
 DELETE FROM notification_problems WHERE key = ?;
 
 -- name: InsertNotification :one
-INSERT INTO notifications (at, key, kind, severity, title, body) VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO notifications (at, key, kind, event, path, severity, title, body)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id;
 
 -- name: ListNotifications :many
@@ -21,7 +22,8 @@ SELECT * FROM notifications ORDER BY at DESC, id DESC LIMIT ?;
 DELETE FROM notifications WHERE at < ?;
 
 -- name: InsertNotificationDelivery :exec
-INSERT INTO notification_deliveries (notification_id, at, channel, ok, error) VALUES (?, ?, ?, ?, ?);
+INSERT INTO notification_deliveries (notification_id, at, channel, ok, filtered, error)
+VALUES (?, ?, ?, ?, ?, ?);
 
 -- name: ListNotificationDeliveries :many
 SELECT * FROM notification_deliveries WHERE notification_id IN (sqlc.slice(ids))
@@ -29,6 +31,18 @@ ORDER BY notification_id, id;
 
 -- name: ListNotificationsBefore :many
 SELECT * FROM notifications WHERE id < ? ORDER BY id DESC LIMIT ?;
+
+-- name: CountUnreadNotifications :one
+SELECT COUNT(*) FROM notifications n
+WHERE n.id > ?
+  AND NOT (
+    n.kind IN ('opened', 'reminded')
+    AND n.key IS NOT NULL
+    AND EXISTS (SELECT 1 FROM notification_problems p WHERE p.key = n.key)
+  );
+
+-- name: LatestNotificationID :one
+SELECT CAST(COALESCE(MAX(id), 0) AS INTEGER) FROM notifications;
 
 -- name: ListNotificationChannels :many
 SELECT * FROM notification_channels ORDER BY name;

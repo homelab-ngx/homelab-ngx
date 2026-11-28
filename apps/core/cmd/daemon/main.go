@@ -119,8 +119,8 @@ func run(configPath string) error {
 	}
 
 	// ── Build ───────────────────────────────────────────────────────────
-	// Notifications go to the channels added on the dashboard; with none
-	// they are off. The age key is the one stack variables are sealed with.
+	// Notifications always populate the dashboard tray; configured external
+	// channels deliver off-host as well. The age key seals channel tokens.
 	linkBase := os.Getenv("HOMELAB_LINK_BASE")
 	channels := notifications.NewChannels(st, stacks.DefaultHost(cmdrunner.OS{}).AgeKeyFile)
 	notify := notifications.New(notifications.Config{Targets: channels, LinkBase: linkBase}, notifications.NewDBStore(st), nil)
@@ -210,6 +210,7 @@ func run(configPath string) error {
 	stor.UsePartitions(st)
 	stor.UseStackFolders(stacksSvc)
 	stor.UseUsers(poolUsers{stacksSvc, bk})
+	stor.UseNotifier(notify)
 	stacksSvc.UsePlaces(stor)
 	// metrics.db sits next to homelab.db but outside its snapshots: it is
 	// throwaway telemetry. Without it the live charts still work.
@@ -225,6 +226,7 @@ func run(configPath string) error {
 	// the work it would cut off refuses one from the API.
 	pw := power.New(stacksSvc, bk, stor, power.SystemLogind{}, st, r, logging.Logger("power"),
 		func(context.Context) []string { return stacksSvc.Busy() }, sysMod.Busy, bk.Busy)
+	pw.SetNotifier(notify)
 	sysMod.SetPower(pw)
 	// The power profile is written to sysfs at every start: /sys resets at
 	// boot.
@@ -315,22 +317,21 @@ func run(configPath string) error {
 	g.Go(func() error { pm.Run(gctx); return nil })
 	// Said only once the daemon has stayed up a while: a daemon that dies at
 	// every start would otherwise send one at each of systemd's restarts.
-	if crashed && notify.Enabled() {
+	if crashed {
 		g.Go(func() error {
 			select {
 			case <-gctx.Done():
 				return nil
 			case <-time.After(crashNoticeAfter):
 			}
-			if _, err := notify.Send(gctx, notifications.Message{
+			notify.Emit(gctx, notifications.Message{
 				Severity: notifications.Alert,
 				Title:    "Daemon recovered from crash",
 				Body:     "homelab-daemon was restarted after an unclean shutdown. All services are being re-monitored.",
-				Path:     "/services",
+				Path:     "/settings/logs?unit=homelab-daemon",
+				Event:    "service.daemon",
 				Key:      "daemon-crash",
-			}); err != nil {
-				log.Warn("failed to send crash notification", "error", err)
-			}
+			})
 			return nil
 		})
 	}

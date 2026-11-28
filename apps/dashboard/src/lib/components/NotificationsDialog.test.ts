@@ -40,7 +40,10 @@ describe("NotificationsDialog", () => {
       history: [],
       failing_channels: {},
       open: { "backup:4": { count: 1, opened_at: "2026-11-23T10:00:00Z", title: "Backup 4 failed" } },
-    } as Snapshot;
+      latest_id: 12,
+      read_up_to: 12,
+      unread: 0,
+    };
     const onClose = vi.fn();
 
     render(Harness, { props: { client: new QueryClient(), snapshot, onClose } });
@@ -59,6 +62,64 @@ describe("NotificationsDialog", () => {
 
     await fireEvent.click(problemLink);
     expect(onClose).toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("marks entries read on open, shows unread dots, uses entry.path, and formats filtered delivery without error tone", async () => {
+    const logEntries: Entry[] = [
+      {
+        id: 14,
+        at: "2026-11-28T10:00:00Z",
+        key: null,
+        kind: "sent",
+        event: "host.power",
+        path: "/settings/system",
+        severity: "info",
+        title: "Host rebooting",
+        body: "",
+        deliveries: [{ channel: "Phone", ok: false, filtered: true, error: "", at: "2026-11-28T10:00:01Z" }],
+      },
+      {
+        id: 10,
+        at: "2026-11-27T10:00:00Z",
+        key: "stack:media",
+        kind: "sent",
+        path: "/",
+        severity: "info",
+        title: "Stack media updated",
+        body: "",
+        deliveries: [{ channel: "Phone", ok: true, error: "", at: "2026-11-27T10:00:01Z" }],
+      },
+    ];
+    vi.spyOn(api, "GET").mockImplementation(async (path: string) => {
+      if (path === "/notifications/log") return { data: logEntries, response: new Response(null, { status: 200 }) } as never;
+      return { data: { provider: "none" }, response: new Response(null, { status: 200 }) } as never;
+    });
+    const postSpy = vi.spyOn(api, "POST").mockResolvedValue({
+      data: { read_up_to: 14, unread: 0 },
+      response: new Response(null, { status: 200 }),
+    } as never);
+
+    const snapshot: Snapshot = {
+      history: [],
+      failing_channels: {},
+      open: {},
+      latest_id: 14,
+      read_up_to: 12,
+      unread: 1,
+    };
+
+    render(Harness, { props: { client: new QueryClient(), snapshot, onClose: vi.fn() } });
+
+    await screen.findByText("Host rebooting");
+    expect(postSpy).toHaveBeenCalledWith("/notifications/read", { body: { up_to: 14 } });
+
+    expect(screen.getAllByLabelText("Unread")).toHaveLength(1);
+    const filteredText = screen.getByText("not sent: filtered");
+    expect(filteredText.className).not.toContain("text-bad");
+
+    const openLinks = screen.getAllByRole("link", { name: "Open" });
+    expect(openLinks.map((a) => a.getAttribute("href"))).toEqual(["/settings/system", "/stacks/media"]);
     vi.restoreAllMocks();
   });
 });

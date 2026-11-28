@@ -3,7 +3,7 @@
   import { api, call, describe } from "#lib/api/client.ts";
   import Help from "#lib/components/Help.svelte";
   import Modal from "#lib/components/Modal.svelte";
-  import { channelDraft, channelInput, channelProblem, DEFAULT_NTFY, KIND_LABEL, type Channel, type ChannelKind } from "#lib/notifications.ts";
+  import { channelDraft, channelInput, channelProblem, DEFAULT_NTFY, EVENT_CATEGORIES, KIND_LABEL, type Channel, type ChannelKind } from "#lib/notifications.ts";
 
   interface Props {
     /** The channel to change; null adds one. */
@@ -57,7 +57,7 @@
       <fieldset class="grid gap-2">
         <legend class="mb-1 text-muted">
           <Help label="Kind">
-            ntfy pushes to its phone app through a topic. A webhook POSTs each notification as JSON (title, message, severity, key, url, sent_at)
+            ntfy pushes to its phone app through a topic. A webhook POSTs each notification as JSON (title, message, severity, event, key, url, sent_at)
             to an address.
           </Help>
         </legend>
@@ -124,6 +124,49 @@
         </label>
       {/if}
     </div>
+
+    <fieldset class="grid gap-2">
+      <legend class="mb-1 text-muted">
+        <Help label="Send">
+          Choose whether info events leave this host too. Open problems and failed recoveries always deliver.
+        </Help>
+      </legend>
+      <div class="grid grid-cols-2 gap-2">
+        <label class="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 {draft.minSeverity === 'all' ? 'border-accent bg-accent-soft' : 'border-line'}">
+          <input type="radio" class="accent-accent" name="{id}-severity" value="all" bind:group={draft.minSeverity} />
+          <span>Alerts and info</span>
+        </label>
+        <label class="flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2 {draft.minSeverity === 'alert' ? 'border-accent bg-accent-soft' : 'border-line'}">
+          <input type="radio" class="accent-accent" name="{id}-severity" value="alert" bind:group={draft.minSeverity} />
+          <span>Alerts only</span>
+        </label>
+      </div>
+    </fieldset>
+
+    <fieldset class="grid gap-1.5">
+      <legend class="mb-1 text-muted">
+        <Help label="Kinds">
+          Uncheck a kind to mute its info events and one-off alerts on this channel. Open problems still deliver.
+        </Help>
+      </legend>
+      <div class="flex flex-wrap gap-x-4 gap-y-2">
+        {#each EVENT_CATEGORIES as cat (cat.id)}
+          {@const checked = !draft.muted.includes(cat.id)}
+          <label class="flex cursor-pointer items-center gap-1.5">
+            <input
+              type="checkbox"
+              class="accent-accent"
+              {checked}
+              onchange={(e) => {
+                const on = (e.currentTarget as HTMLInputElement).checked;
+                draft.muted = on ? draft.muted.filter((k) => k !== cat.id) : [...draft.muted, cat.id];
+              }}
+            />
+            <span>{cat.label}</span>
+          </label>
+        {/each}
+      </div>
+    </fieldset>
 
     {#if error}
       <p role="alert" class="rounded-md bg-bad-soft px-3 py-2 text-bad">{error}</p>

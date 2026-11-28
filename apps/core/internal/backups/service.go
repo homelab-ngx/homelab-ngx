@@ -381,13 +381,13 @@ func (s *Service) checkStale(ctx context.Context) {
 	for _, b := range stale {
 		s.log.Warn("backup is stale", "backup", b.Name)
 	}
-	if s.notify == nil || !s.notify.Enabled() {
+	if s.notify == nil {
 		return
 	}
 	for _, b := range stale {
 		if _, err := s.notify.Report(ctx, notifications.Problem{
 			Key: staleKey(b.ID), Title: "Backup stale: " + b.Name,
-			Detail: "no successful run within two schedule intervals", Path: backupPath(b.ID, 0),
+			Detail: "no successful run within two schedule intervals", Path: backupPath(b.ID, 0), Event: "backup.stale",
 		}); err != nil {
 			s.log.Warn("failed to send stale-backup notification", "backup", b.Name, "error", err)
 		}
@@ -406,7 +406,7 @@ func staleKey(id int64) string   { return fmt.Sprintf("backup-stale:%d", id) }
 // deleted backup, or the unit-named problems of the nix job this replaced.
 // Nothing else would ever resolve them, and an open problem reminds daily.
 func (s *Service) resolveOrphans(ctx context.Context) {
-	if s.notify == nil || !s.notify.Enabled() {
+	if s.notify == nil {
 		return
 	}
 	open, err := s.notify.OpenProblems(ctx)

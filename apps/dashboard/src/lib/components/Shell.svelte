@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { createQuery } from "@tanstack/svelte-query";
+  import { createQuery, useQueryClient } from "@tanstack/svelte-query";
   import { Bell, CircleQuestionMark, Settings } from "@lucide/svelte";
   import type { Snippet } from "svelte";
   import { goto } from "$app/navigation";
@@ -11,9 +11,10 @@
   import StatusMark from "#lib/components/StatusMark.svelte";
   import { help, toggleHelp } from "#lib/help.svelte.ts";
   import { fetchHostSettings, hostKeys } from "#lib/host.ts";
+  import { liveNotifications } from "#lib/live-notifications.svelte.ts";
   import type { NavItem } from "#lib/nav.ts";
   import { notificationsTray } from "#lib/notifications-tray.svelte.ts";
-  import { attention, notificationKeys, type Snapshot } from "#lib/notifications.ts";
+  import { attention, notificationKeys, problemCount, type Snapshot } from "#lib/notifications.ts";
   import { fetchPower, powerHref, powerKey, underWay } from "#lib/power.ts";
   import { fetchSettingsStatus, settingsAttentionTone, settingsStatusKey } from "#lib/settings.ts";
 
@@ -52,12 +53,19 @@
     toggleHelp();
   }
 
-  // The bell counts what needs attention on every page: open problems and failing channels.
+  const client = useQueryClient();
+  $effect(() => {
+    liveNotifications.open(client);
+    return () => liveNotifications.close();
+  });
+
+  // The bell counts open problems, failing channels, and unread history entries.
   const notes = createQuery(() => ({
     queryKey: notificationKeys.snapshot,
     queryFn: () => call<Snapshot>(api.GET("/notifications")),
-    refetchInterval: 30_000,
+    refetchInterval: () => (liveNotifications.connected ? false : 30_000),
   }));
+  const problems = $derived(problemCount(notes.data));
   const count = $derived(attention(notes.data));
 
   const settingsStatus = createQuery(() => ({
@@ -100,13 +108,13 @@
       <button
         type="button"
         class="relative flex shrink-0 items-center rounded-md py-1 pr-3 pl-2 text-muted hover:text-fg focus-visible:outline-2 focus-visible:outline-accent aria-expanded:bg-accent-soft aria-expanded:text-accent"
-        aria-label={count > 0 ? `Notifications, ${count} need attention` : "Notifications"}
+        aria-label={count > 0 ? (problems > 0 ? `Notifications, ${count} need attention` : `Notifications, ${count} unread`) : "Notifications"}
         aria-expanded={notificationsTray.open}
         onclick={() => (notificationsTray.open = !notificationsTray.open)}
       >
         <span class="relative">
           <Bell class="size-4" aria-hidden="true" />
-          {#if count > 0}<span class="absolute -top-1.5 left-full ml-px text-xs leading-none font-semibold tabular-nums text-bad" aria-hidden="true">{count}</span>{/if}
+          {#if count > 0}<span class="absolute -top-1.5 left-full ml-px text-xs leading-none font-semibold tabular-nums {problems > 0 ? 'text-bad' : 'text-accent'}" aria-hidden="true">{count}</span>{/if}
         </span>
       </button>
       <button

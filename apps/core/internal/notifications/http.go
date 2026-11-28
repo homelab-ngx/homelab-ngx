@@ -5,10 +5,14 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/sse"
 	"homelab-ngx.com/core/internal/httpx"
 )
+
+const streamHeartbeat = 25 * time.Second
 
 // HTTP is the notifications slice of the API.
 type HTTP struct {
@@ -22,6 +26,8 @@ func NewHTTP(n *Notifier, ch *Channels) *HTTP { return &HTTP{n: n, ch: ch} }
 type snapshotOut struct{ Body NotificationsSnapshot }
 type applyIn struct{ Body NotifyRequest }
 type applyOut struct{ Body NotifyResponse }
+type markReadIn struct{ Body MarkReadRequest }
+type markReadOut struct{ Body MarkReadResponse }
 type logIn struct {
 	Before int64 `query:"before" minimum:"1" doc:"Return only entries with an id lower than this (keyset pagination)."`
 	Limit  int   `query:"limit" minimum:"1" maximum:"500" default:"50"`
@@ -40,20 +46,32 @@ type channelUpdateIn struct {
 type channelTestOut struct{ Body ChannelTest }
 
 // Register adds the notifications operations: the reads are read, sending
-// is operator.
+// and read-state writes are operator.
 func (h *HTTP) Register(a httpx.APIs) {
 	tags := []string{"notifications"}
 	httpx.Register(a, httpx.ScopeRead, huma.Operation{
 		OperationID: "getNotifications", Method: http.MethodGet, Path: "/notifications", Tags: tags,
-		Summary: "Open problems, failing channels and recent deliveries.",
+		Summary: "Open problems, failing channels, unread count and recent deliveries.",
 	}, h.getNotifications)
 	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
 		OperationID: "applyNotification", Method: http.MethodPost, Path: "/notifications", Tags: tags,
 		Summary: "Send a notification, or report/resolve a deduplicated problem.",
 		Description: "Single write entry point for scripts and units (`homelab notify`). " +
-			"`502` when every channel failed to deliver.",
+			"`502` when every attempted channel failed to deliver.",
 		Errors: []int{http.StatusBadRequest, http.StatusBadGateway},
 	}, h.applyNotification)
+	httpx.Register(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "markNotificationsRead", Method: http.MethodPost, Path: "/notifications/read", Tags: tags,
+		Summary: "Mark notification history read through an entry id.",
+	}, h.markNotificationsRead)
+	httpx.RegisterSSE(a, httpx.ScopeOperator, huma.Operation{
+		OperationID: "streamNotifications", Method: http.MethodGet, Path: "/notifications/stream", Tags: tags,
+		Summary: "Live notification events: an initial snapshot, then new entries and updated snapshots.",
+	}, map[string]any{
+		"snapshot": NotificationsSnapshot{},
+		"entry":    NotificationLogEntry{},
+		"ping":     NotificationPing{},
+	}, h.streamNotifications)
 	httpx.Register(a, httpx.ScopeRead, huma.Operation{
 		OperationID: "listNotificationLog", Method: http.MethodGet, Path: "/notifications/log", Tags: tags,
 		Summary: "Notification history with delivery attempts (newest first).",
@@ -159,6 +177,47 @@ func (h *HTTP) applyNotification(ctx context.Context, in *applyIn) (*applyOut, e
 	return &applyOut{Body: resp}, nil
 }
 
+func (h *HTTP) markNotificationsRead(ctx context.Context, in *markReadIn) (*markReadOut, error) {
+	res, err := h.n.MarkRead(ctx, in.Body.UpTo)
+	if err != nil {
+		return nil, err
+	}
+	return &markReadOut{Body: res}, nil
+}
+
+func (h *HTTP) streamNotifications(ctx context.Context, _ *struct{}, send sse.Sender) {
+	snap, ch, cancel, err := h.n.Subscribe(ctx)
+	if err != nil {
+		return
+	}
+	defer cancel()
+	if send.Data(snap) != nil {
+		return
+	}
+	hb := time.NewTicker(streamHeartbeat)
+	defer hb.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev, ok := <-ch:
+			if !ok {
+				return
+			}
+			if ev.Entry != nil && send.Data(*ev.Entry) != nil {
+				return
+			}
+			if ev.Snapshot != nil && send.Data(*ev.Snapshot) != nil {
+				return
+			}
+		case now := <-hb.C:
+			if send.Data(NotificationPing{Time: now}) != nil {
+				return
+			}
+		}
+	}
+}
+
 func (h *HTTP) listNotificationLog(ctx context.Context, in *logIn) (*logOut, error) {
 	entries, err := h.n.Log(ctx, in.Before, in.Limit)
 	if err != nil {
@@ -166,18 +225,7 @@ func (h *HTTP) listNotificationLog(ctx context.Context, in *logIn) (*logOut, err
 	}
 	out := make([]NotificationLogEntry, 0, len(entries))
 	for _, e := range entries {
-		le := NotificationLogEntry{
-			Id: e.ID, At: e.At, Kind: NotificationLogEntryKind(e.Kind), Severity: e.Severity,
-			Title: e.Title, Body: e.Body, Deliveries: make([]NotificationDelivery, 0, len(e.Deliveries)),
-		}
-		if e.Key != "" {
-			k := e.Key
-			le.Key = &k
-		}
-		for _, d := range e.Deliveries {
-			le.Deliveries = append(le.Deliveries, NotificationDelivery{At: d.At, Channel: d.Channel, Ok: d.OK, Error: d.Error})
-		}
-		out = append(out, le)
+		out = append(out, logEntryOf(e))
 	}
 	return &logOut{Body: out}, nil
 }

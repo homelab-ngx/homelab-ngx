@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"homelab-ngx.com/core/internal/cmdrunner"
+	"homelab-ngx.com/core/internal/notifications"
 	"homelab-ngx.com/core/internal/storage/bcachefs"
 )
 
@@ -488,6 +489,55 @@ func TestRemoveDisk(t *testing.T) {
 	// A removal that ended is cleared from the status.
 	if err := w.svc.CancelRemoval(poolUUID); err != nil || w.svc.operation(poolUUID) != nil {
 		t.Fatalf("clearing a finished removal: %v, %+v", err, w.svc.operation(poolUUID))
+	}
+}
+
+type fakeStorageNotifier struct {
+	mu   sync.Mutex
+	sent []notifications.Message
+}
+
+func (f *fakeStorageNotifier) Send(_ context.Context, m notifications.Message) (string, error) {
+	f.mu.Lock()
+	f.sent = append(f.sent, m)
+	f.mu.Unlock()
+	return "", notifications.ErrNoChannels
+}
+
+func TestRemoveDiskEmitsStorageNotifications(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+
+	w := newWorld(t, true, true)
+	n := &fakeStorageNotifier{}
+	w.svc.UseNotifier(n)
+	end := w.evacuation()
+	if _, err := w.svc.RemoveDisk(ctx, poolUUID, "/dev/sdc"); err != nil {
+		t.Fatal(err)
+	}
+	end <- nil
+	w.waitOp(t, "done", func(op *PoolOperation) bool { return op != nil && op.FinishedAt != nil })
+	n.mu.Lock()
+	gotOK := slices.Clone(n.sent)
+	n.mu.Unlock()
+	if len(gotOK) != 1 || gotOK[0].Severity != notifications.Info || gotOK[0].Event != "storage.disk" || gotOK[0].Title != "Disk sdc removed from pool" {
+		t.Fatalf("remove ok sent = %+v", gotOK)
+	}
+
+	w2 := newWorld(t, true, true)
+	n2 := &fakeStorageNotifier{}
+	w2.svc.UseNotifier(n2)
+	end2 := w2.evacuation()
+	if _, err := w2.svc.RemoveDisk(ctx, poolUUID, "/dev/sdc"); err != nil {
+		t.Fatal(err)
+	}
+	end2 <- errors.New("filesystem needs version_upgrade=incompatible")
+	w2.waitOp(t, "failed", func(op *PoolOperation) bool { return op != nil && op.FinishedAt != nil })
+	n2.mu.Lock()
+	gotFail := slices.Clone(n2.sent)
+	n2.mu.Unlock()
+	if len(gotFail) != 1 || gotFail[0].Severity != notifications.Alert || gotFail[0].Event != "storage.disk" || gotFail[0].Title != "Disk sdc removal failed" {
+		t.Fatalf("remove fail sent = %+v", gotFail)
 	}
 }
 

@@ -1,8 +1,3 @@
-// Package notifications delivers homelab notifications through the
-// channels the operator added (ntfy, webhook); every enabled channel gets
-// every message. Problems are deduplicated through the runtime store, so a
-// stuck failure pushes once when it opens, once when it clears, and one
-// reminder a day while it stays open.
 package notifications
 
 import (
@@ -21,6 +16,9 @@ var log = logging.Logger("notifications")
 // maxMessage bounds a message's text, in runes (ntfy takes 4 KiB).
 const maxMessage = 2000
 
+// ErrNoChannels reports that no notification channel is enabled.
+var ErrNoChannels = errors.New("no notification channel configured")
+
 // Severity selects how loudly the phone announces a message.
 type Severity string
 
@@ -34,7 +32,7 @@ const (
 // Config configures a Notifier.
 type Config struct {
 	// Targets are the channels that deliver; nil or none leaves
-	// notifications off.
+	// external delivery off while still recording to the tray and log.
 	Targets Targets
 	// LinkBase is the dashboard origin that tap-through links start with.
 	LinkBase string
@@ -47,7 +45,8 @@ type Message struct {
 	Severity Severity
 	Title    string
 	Body     string
-	Path     string // dashboard path, e.g. /updates
+	Path     string // dashboard path, e.g. /settings/updates
+	Event    string // stable dotted event id, e.g. core.update
 	// Key is the problem key the message is about, or a sender's stable
 	// key; a channel may replace an earlier message with the same key. ""
 	// for none.
@@ -63,6 +62,9 @@ type Notifier struct {
 	// mu serialises the read-modify-write of problem state in reconcile so two
 	// concurrent reports of the same new problem cannot both push.
 	mu sync.Mutex
+
+	subMu sync.Mutex
+	subs  map[chan StreamEvent]struct{}
 }
 
 // New creates a Notifier with defaults filled in. A nil st keeps state in
@@ -78,7 +80,7 @@ func New(cfg Config, st Store, now func() time.Time) *Notifier {
 	if st == nil {
 		st = newMemStore()
 	}
-	return &Notifier{cfg: cfg, st: st, now: now}
+	return &Notifier{cfg: cfg, st: st, now: now, subs: map[chan StreamEvent]struct{}{}}
 }
 
 // Enabled reports whether any channel is enabled.
@@ -94,46 +96,59 @@ func (n *Notifier) targets(ctx context.Context) ([]Target, error) {
 	return n.cfg.Targets.Targets(ctx)
 }
 
-// Send delivers one message with no dedup state and records it in the log.
-// It returns the channel that carried it. A store failure never blocks or
-// fails delivery.
+// Send delivers one message with no dedup state and records it in the log
+// and live stream. A missing channel configuration still records the entry
+// for the dashboard tray and returns ErrNoChannels.
 func (n *Notifier) Send(ctx context.Context, m Message) (string, error) {
-	channel, attempts, err := n.deliver(ctx, m)
-	n.record(ctx, Change{Entries: []Entry{n.entry(KindSent, m.Key, m, attempts)}}, len(attempts))
+	channel, attempts, err := n.deliver(ctx, m, false)
+	committed, cerr := n.st.Commit(ctx, Change{Entries: []Entry{n.entry(KindSent, m.Key, m, attempts)}})
+	if cerr != nil {
+		log.Warn("notification state unavailable", "error", cerr)
+	} else {
+		n.broadcast(ctx, committed)
+	}
 	return channel, err
 }
 
-// record commits c unless nothing was attempted. Failures are logged only:
-// the notification already went out (or visibly failed).
-func (n *Notifier) record(ctx context.Context, c Change, attempts int) {
-	if attempts == 0 && len(c.Upsert) == 0 && len(c.Delete) == 0 {
-		return
-	}
-	if err := n.st.Commit(ctx, c); err != nil {
-		log.Warn("notification state unavailable", "error", err)
+// Emit records and delivers an internal daemon event. No configured channels
+// is treated as normal; real delivery failures are logged.
+func (n *Notifier) Emit(ctx context.Context, m Message) {
+	if _, err := n.Send(ctx, m); err != nil && !errors.Is(err, ErrNoChannels) {
+		log.Warn("event notification not delivered", "event", m.Event, "title", m.Title, "error", err)
 	}
 }
 
 func (n *Notifier) entry(kind, key string, m Message, attempts []Delivery) Entry {
-	return Entry{At: n.now(), Key: key, Kind: kind, Severity: m.Severity, Title: m.Title, Body: m.Body, Deliveries: attempts}
+	return Entry{
+		At: n.now(), Key: key, Kind: kind, Event: m.Event, Path: m.Path,
+		Severity: m.Severity, Title: m.Title, Body: m.Body, Deliveries: attempts,
+	}
 }
 
-// deliver sends m to every enabled channel and returns the names of those
-// that took it, joined, and one attempt per channel. It fails only when no
-// channel took it.
-func (n *Notifier) deliver(ctx context.Context, m Message) (string, []Delivery, error) {
+// deliver sends m to every enabled channel whose filter permits it and
+// records filtered skips. It fails with ErrNoChannels when no channel is
+// enabled, or with the joined errors when every attempted channel failed;
+// when all enabled channels filtered m out, it returns "", attempts, nil.
+func (n *Notifier) deliver(ctx context.Context, m Message, isProblem bool) (string, []Delivery, error) {
 	targets, err := n.targets(ctx)
 	if err != nil {
 		return "", nil, err
 	}
 	if len(targets) == 0 {
-		return "", nil, errors.New("no notification channel configured")
+		return "", nil, ErrNoChannels
 	}
 	p := n.payload(m)
+	cat := CategoryFor(m.Event, m.Key)
 	var via []string
 	var errs []error
+	attempted := 0
 	attempts := make([]Delivery, 0, len(targets))
 	for _, t := range targets {
+		if !t.Filter.Allows(cat, m.Severity, isProblem) {
+			attempts = append(attempts, Delivery{At: n.now(), Channel: t.Name, Filtered: true})
+			continue
+		}
+		attempted++
 		err := t.Sender.Send(ctx, p)
 		d := Delivery{At: n.now(), Channel: t.Name, OK: err == nil}
 		if err != nil {
@@ -144,17 +159,43 @@ func (n *Notifier) deliver(ctx context.Context, m Message) (string, []Delivery, 
 		}
 		attempts = append(attempts, d)
 	}
+	if attempted == 0 {
+		return "", attempts, nil
+	}
 	if len(via) == 0 {
 		return "", attempts, errors.Join(errs...)
 	}
 	return strings.Join(via, ", "), attempts, nil
 }
 
+// MarkRead advances the read marker to upTo (or the latest entry id when upTo
+// is 0), broadcasts an updated snapshot, and returns the resulting counts.
+func (n *Notifier) MarkRead(ctx context.Context, upTo int64) (MarkReadResponse, error) {
+	latest, err := n.st.LatestID(ctx)
+	if err != nil {
+		return MarkReadResponse{}, err
+	}
+	target := upTo
+	if target <= 0 || target > latest {
+		target = latest
+	}
+	readUpTo, err := n.st.SetReadUpTo(ctx, target)
+	if err != nil {
+		return MarkReadResponse{}, err
+	}
+	unread, err := n.st.CountUnread(ctx, readUpTo)
+	if err != nil {
+		return MarkReadResponse{}, err
+	}
+	n.BroadcastSnapshot(ctx)
+	return MarkReadResponse{ReadUpTo: readUpTo, Unread: unread}, nil
+}
+
 // payload is m as a channel gets it: the dashboard link from the path.
 func (n *Notifier) payload(m Message) Payload {
 	return Payload{
 		Title: truncate(m.Title, maxMessage), Message: truncate(m.Body, maxMessage),
-		Severity: m.Severity, Key: m.Key, URL: n.link(m.Path), SentAt: n.now().Unix(),
+		Severity: m.Severity, Event: m.Event, Key: m.Key, URL: n.link(m.Path), SentAt: n.now().Unix(),
 	}
 }
 

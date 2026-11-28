@@ -222,3 +222,46 @@ func TestChannelTestLinksToSettings(t *testing.T) {
 		t.Fatalf("pushed %+v", *got)
 	}
 }
+
+func TestChannelFilterPersistenceValidationAndPreservation(t *testing.T) {
+	t.Parallel()
+	ch, _ := newChannels(t)
+	ctx := context.Background()
+
+	c, err := ch.Create(ctx, ChannelInput{
+		Name:   "Alerts",
+		Kind:   KindNtfy,
+		Topic:  "alerts",
+		Filter: &ChannelFilter{MinSeverity: MinSeverityAlert, Muted: []EventCategory{CategorySecurity, CategoryBackups, CategorySecurity}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Filter.MinSeverity != MinSeverityAlert || len(c.Filter.Muted) != 2 || c.Filter.Muted[0] != CategoryBackups || c.Filter.Muted[1] != CategorySecurity {
+		t.Fatalf("normalized filter = %+v", c.Filter)
+	}
+	// Editing channel without Filter preserves existing filter (e.g. toggling enabled).
+	off := false
+	updated, err := ch.Update(ctx, c.ID, ChannelInput{Name: "Alerts", Topic: "alerts", Enabled: &off})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Enabled || updated.Filter.MinSeverity != MinSeverityAlert || len(updated.Filter.Muted) != 2 {
+		t.Fatalf("update lost filter: %+v", updated)
+	}
+	// Default created channel normalizes to all + empty slice.
+	def, err := ch.Create(ctx, ChannelInput{Name: "Default", Kind: KindNtfy, Topic: "all"})
+	if err != nil || def.Filter.MinSeverity != MinSeverityAll || def.Filter.Muted == nil || len(def.Filter.Muted) != 0 {
+		t.Fatalf("default filter = %+v, err=%v", def.Filter, err)
+	}
+	// Validation rejects bad filter fields.
+	for _, bad := range []ChannelFilter{
+		{MinSeverity: "debug"},
+		{Muted: []EventCategory{"bogus"}},
+	} {
+		f := bad
+		if _, err := ch.Create(ctx, ChannelInput{Name: "Bad", Kind: KindNtfy, Topic: "bad", Filter: &f}); err == nil {
+			t.Errorf("accepted invalid filter %+v", bad)
+		}
+	}
+}

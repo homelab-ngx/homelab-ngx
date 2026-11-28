@@ -1233,6 +1233,9 @@
           "enabled": {
             "type": "boolean"
           },
+          "filter": {
+            "$ref": "#/components/schemas/ChannelFilter"
+          },
           "has_token": {
             "description": "Whether a token is stored; the token itself is never returned.",
             "type": "boolean"
@@ -1267,6 +1270,7 @@
           "kind",
           "enabled",
           "has_token",
+          "filter",
           "created_at"
         ],
         "type": "object"
@@ -1288,6 +1292,34 @@
         ],
         "type": "object"
       },
+      "ChannelFilter": {
+        "additionalProperties": false,
+        "properties": {
+          "min_severity": {
+            "description": "Minimum severity sent externally: all (alerts and info) or alert (alerts only). Open problems are always sent.",
+            "enum": [
+              "all",
+              "alert"
+            ],
+            "type": "string"
+          },
+          "muted": {
+            "description": "Event kinds held back from this channel (updates, stacks, backups, services, security). Open problems are always sent.",
+            "items": {
+              "enum": [
+                "updates",
+                "stacks",
+                "backups",
+                "services",
+                "security"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "ChannelInput": {
         "additionalProperties": false,
         "properties": {
@@ -1301,6 +1333,10 @@
           },
           "enabled": {
             "type": "boolean"
+          },
+          "filter": {
+            "$ref": "#/components/schemas/ChannelFilter",
+            "description": "External delivery filter. Absent defaults on add and keeps the stored filter on edit."
           },
           "kind": {
             "description": "Set when adding; a channel keeps its kind.",
@@ -3821,6 +3857,36 @@
         ],
         "type": "object"
       },
+      "MarkReadRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "up_to": {
+            "description": "Log entry id to mark read through; 0 marks all current entries read.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "MarkReadResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "read_up_to": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "unread": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "read_up_to",
+          "unread"
+        ],
+        "type": "object"
+      },
       "MetricFrames": {
         "additionalProperties": false,
         "properties": {
@@ -4282,6 +4348,9 @@
           "error": {
             "type": "string"
           },
+          "filtered": {
+            "type": "boolean"
+          },
           "ok": {
             "type": "boolean"
           }
@@ -4347,6 +4416,9 @@
             },
             "type": "array"
           },
+          "event": {
+            "type": "string"
+          },
           "id": {
             "format": "int64",
             "type": "integer"
@@ -4365,6 +4437,9 @@
               "reminded",
               "resolved"
             ],
+            "type": "string"
+          },
+          "path": {
             "type": "string"
           },
           "severity": {
@@ -4390,6 +4465,19 @@
         ],
         "type": "object"
       },
+      "NotificationPing": {
+        "additionalProperties": false,
+        "properties": {
+          "time": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "time"
+        ],
+        "type": "object"
+      },
       "NotificationsSnapshot": {
         "additionalProperties": false,
         "properties": {
@@ -4405,17 +4493,32 @@
             },
             "type": "array"
           },
+          "latest_id": {
+            "format": "int64",
+            "type": "integer"
+          },
           "open": {
             "additionalProperties": {
               "$ref": "#/components/schemas/OpenProblem"
             },
             "type": "object"
+          },
+          "read_up_to": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "unread": {
+            "format": "int64",
+            "type": "integer"
           }
         },
         "required": [
           "failing_channels",
           "history",
-          "open"
+          "latest_id",
+          "open",
+          "read_up_to",
+          "unread"
         ],
         "type": "object"
       },
@@ -4432,6 +4535,10 @@
             "type": "string"
           },
           "body": {
+            "type": "string"
+          },
+          "event": {
+            "description": "Stable dotted event identifier, e.g. core.update.",
             "type": "string"
           },
           "key": {
@@ -21019,13 +21126,13 @@
             "description": "Error"
           }
         },
-        "summary": "Open problems, failing channels and recent deliveries.",
+        "summary": "Open problems, failing channels, unread count and recent deliveries.",
         "tags": [
           "notifications"
         ]
       },
       "post": {
-        "description": "Single write entry point for scripts and units (`homelab notify`). `502` when every channel failed to deliver.",
+        "description": "Single write entry point for scripts and units (`homelab notify`). `502` when every attempted channel failed to deliver.",
         "operationId": "applyNotification",
         "requestBody": {
           "content": {
@@ -21290,6 +21397,239 @@
           }
         },
         "summary": "Notification history with delivery attempts (newest first).",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/notifications/read": {
+      "post": {
+        "operationId": "markNotificationsRead",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkReadRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MarkReadResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Mark notification history read through an entry id.",
+        "tags": [
+          "notifications"
+        ]
+      }
+    },
+    "/notifications/stream": {
+      "get": {
+        "operationId": "streamNotifications",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "description": "Each oneOf object in the array represents one possible Server Sent Events (SSE) message, serialized as UTF-8 text according to the SSE specification.",
+                  "items": {
+                    "oneOf": [
+                      {
+                        "properties": {
+                          "data": {
+                            "$ref": "#/components/schemas/NotificationLogEntry"
+                          },
+                          "event": {
+                            "const": "entry",
+                            "description": "The event name.",
+                            "type": "string"
+                          },
+                          "id": {
+                            "description": "The event ID.",
+                            "oneOf": [
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "retry": {
+                            "description": "The retry time in milliseconds.",
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "data",
+                          "event"
+                        ],
+                        "title": "Event entry",
+                        "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "data": {
+                            "$ref": "#/components/schemas/NotificationPing"
+                          },
+                          "event": {
+                            "const": "ping",
+                            "description": "The event name.",
+                            "type": "string"
+                          },
+                          "id": {
+                            "description": "The event ID.",
+                            "oneOf": [
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "retry": {
+                            "description": "The retry time in milliseconds.",
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "data",
+                          "event"
+                        ],
+                        "title": "Event ping",
+                        "type": "object"
+                      },
+                      {
+                        "properties": {
+                          "data": {
+                            "$ref": "#/components/schemas/NotificationsSnapshot"
+                          },
+                          "event": {
+                            "const": "snapshot",
+                            "description": "The event name.",
+                            "type": "string"
+                          },
+                          "id": {
+                            "description": "The event ID.",
+                            "oneOf": [
+                              {
+                                "type": "integer"
+                              },
+                              {
+                                "type": "string"
+                              }
+                            ]
+                          },
+                          "retry": {
+                            "description": "The retry time in milliseconds.",
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "data",
+                          "event"
+                        ],
+                        "title": "Event snapshot",
+                        "type": "object"
+                      }
+                    ]
+                  },
+                  "title": "Server Sent Events",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "description": "RFC 9457 problem details. `code` is the machine-readable reason; extension members may follow.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "detail": {
+                      "type": "string"
+                    },
+                    "instance": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "format": "int32",
+                      "type": "integer"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "type",
+                    "title",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Live notification events: an initial snapshot, then new entries and updated snapshots.",
         "tags": [
           "notifications"
         ]

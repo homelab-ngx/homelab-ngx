@@ -768,6 +768,7 @@ func (x *deployRun) rebootChoice(ctx context.Context) (string, string) {
 		if err := x.save(); err != nil {
 			return DeployFailed, err.Error()
 		}
+		x.notifyTerminal(ctx)
 		if _, err := x.cmd(ctx, time.Minute, nil, "systemctl", "reboot"); err != nil {
 			return DeployFailed, "the reboot did not start: " + err.Error()
 		}

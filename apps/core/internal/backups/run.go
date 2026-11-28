@@ -633,13 +633,13 @@ func unixMs(t *time.Time) *int64 {
 // detail is empty. The problem links to the run when there is one (runID 0:
 // the backup's page).
 func (s *Service) notifyResult(ctx context.Context, id, runID int64, name, detail string) {
-	if s.notify == nil || !s.notify.Enabled() {
+	if s.notify == nil {
 		return
 	}
 	var err error
 	if detail != "" {
 		_, err = s.notify.Report(ctx, notifications.Problem{
-			Key: problemKey(id), Title: "Backup failed: " + name, Detail: detail, Path: backupPath(id, runID),
+			Key: problemKey(id), Title: "Backup failed: " + name, Detail: detail, Path: backupPath(id, runID), Event: "backup.failed",
 		})
 	} else {
 		_, err = s.notify.Resolve(ctx, problemKey(id))
@@ -651,14 +651,14 @@ func (s *Service) notifyResult(ctx context.Context, id, runID int64, name, detai
 
 // notifyStopped tells, as information, that a run was stopped.
 func (s *Service) notifyStopped(ctx context.Context, id, runID int64, name string) {
-	if s.notify == nil || !s.notify.Enabled() {
+	if s.notify == nil {
 		return
 	}
 	if _, err := s.notify.Send(ctx, notifications.Message{
 		Severity: notifications.Info, Title: "Backup stopped: " + name,
 		Body: "The run was stopped before it finished. Files already copied stay at the destination.",
-		Path: backupPath(id, runID), Key: fmt.Sprintf("backup-stopped:%d", id),
-	}); err != nil {
+		Path: backupPath(id, runID), Event: "backup.stopped", Key: fmt.Sprintf("backup-stopped:%d", id),
+	}); err != nil && !errors.Is(err, notifications.ErrNoChannels) {
 		s.log.Warn("failed to send backup notification", "backup", name, "error", err)
 	}
 }
@@ -674,7 +674,7 @@ func backupPath(id, runID int64) string {
 func notificationFor(stack, body string) notifications.Message {
 	return notifications.Message{
 		Severity: notifications.Info, Title: "Not backed up: " + stack, Body: body,
-		Path: "/backups", Key: "backup-coverage:" + stack,
+		Path: "/backups", Event: "backup.coverage", Key: "backup-coverage:" + stack,
 	}
 }
 

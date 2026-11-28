@@ -8,6 +8,7 @@
  * addresses are from the documentation ranges.
  */
 import type { Schema } from "#lib/api/client.ts";
+import { seedNotifications, type DemoNotificationsState } from "./notifications.ts";
 
 type Stack = Schema<"Stack">;
 type Manifest = Schema<"StackManifest">;
@@ -45,6 +46,7 @@ export interface Host {
   power: Schema<"PowerStatus">;
   profile: Schema<"PowerProfileSettings">;
   meter: { url: string; entity: string; has_token: boolean; idle_only: boolean };
+  notifications: DemoNotificationsState;
   /** Until when the host is down (ms): every request fails, as when it reboots. */
   downUntil: number;
   pending: Pending[];
@@ -587,6 +589,7 @@ export function newHost(now: () => number = Date.now): Host {
     power: idlePower("demo-boot-1"),
     profile: { profile: "balanced", governor: "" },
     meter: { url: "http://homeassistant.local:8123", entity: "sensor.server_plug_power", has_token: true, idle_only: false },
+    notifications: seedNotifications(t),
     downUntil: 0,
     pending: [],
   };

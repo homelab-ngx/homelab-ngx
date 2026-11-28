@@ -13,6 +13,7 @@ import (
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/cmdrunner/cmdrunnertest"
 	"homelab-ngx.com/core/internal/httpx"
+	"homelab-ngx.com/core/internal/notifications"
 )
 
 // journal is the order things happened in, across the fakes.
@@ -652,5 +653,57 @@ func TestCallOffCancelsBackupShutdown(t *testing.T) {
 	tail := r.j.list()[before:]
 	if !slices.Equal(tail, []string{"restore", "thaw", "thaw backups", "inhibit"}) {
 		t.Fatalf("after calling off: %v", tail)
+	}
+}
+
+type fakeNotifier struct {
+	mu   sync.Mutex
+	sent []notifications.Message
+}
+
+func (f *fakeNotifier) Send(_ context.Context, m notifications.Message) (string, error) {
+	f.mu.Lock()
+	f.sent = append(f.sent, m)
+	f.mu.Unlock()
+	return "", notifications.ErrNoChannels
+}
+
+func TestRequestAndFailureEmitHostPowerNotifications(t *testing.T) {
+	r := newRig(t)
+	n := &fakeNotifier{}
+	r.svc.SetNotifier(n)
+	if err := r.svc.Request(context.Background(), Reboot, false, false); err != nil {
+		t.Fatal(err)
+	}
+	if a := r.wait(t); a != Reboot {
+		t.Fatalf("asked logind for %s", a)
+	}
+
+	r2 := newRig(t)
+	n2 := &fakeNotifier{}
+	r2.svc.SetNotifier(n2)
+	r2.logind.failDown = true
+	if err := r2.svc.Request(context.Background(), PowerOff, false, false); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for r2.phase() != PhaseFailed {
+		if time.Now().After(deadline) {
+			t.Fatal("shutdown never failed")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if len(n.sent) != 1 || n.sent[0].Severity != notifications.Info || n.sent[0].Event != "host.power" || n.sent[0].Title != "Host rebooting" {
+		t.Fatalf("reboot sent = %+v", n.sent)
+	}
+
+	n2.mu.Lock()
+	defer n2.mu.Unlock()
+	if len(n2.sent) != 2 || n2.sent[0].Severity != notifications.Info || n2.sent[0].Title != "Host shutting down" ||
+		n2.sent[1].Severity != notifications.Alert || n2.sent[1].Event != "host.power" || n2.sent[1].Title != "Host poweroff failed" {
+		t.Fatalf("poweroff failure sent = %+v", n2.sent)
 	}
 }

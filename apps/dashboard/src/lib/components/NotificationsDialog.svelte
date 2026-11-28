@@ -1,12 +1,14 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import { ChevronDown, X } from "@lucide/svelte";
-  import { createInfiniteQuery } from "@tanstack/svelte-query";
+  import { createInfiniteQuery, useQueryClient } from "@tanstack/svelte-query";
   import { Dialog } from "bits-ui";
-  import { api, call, describe } from "#lib/api/client.ts";
+  import { api, call, describe, type Schema } from "#lib/api/client.ts";
   import AskButton from "#lib/components/ask/AskButton.svelte";
   import Pill from "#lib/components/Pill.svelte";
   import { ago, stamp } from "#lib/format.ts";
-  import { delivery, detail, failingOf, kindTone, LOG_PAGE, notificationHref, notificationKeys, openOf, type Entry, type Snapshot } from "#lib/notifications.ts";
+  import { liveNotifications } from "#lib/live-notifications.svelte.ts";
+  import { delivery, deliveryHasError, detail, entryHref, failingOf, kindTone, LOG_PAGE, notificationHref, notificationKeys, openOf, type Entry, type Snapshot } from "#lib/notifications.ts";
 
   interface Props {
     /** The header's snapshot query data: the tray shows what the bell counts. */
@@ -14,6 +16,28 @@
     onClose: () => void;
   }
   let { snapshot, onClose }: Props = $props();
+
+  const client = useQueryClient();
+  // Capture what was already read before opening so unread dots stay visible during this session.
+  const seenUpTo = untrack(() => snapshot?.read_up_to ?? 0);
+  let markedUpTo = 0;
+
+  $effect(() => {
+    const latest = snapshot?.latest_id ?? 0;
+    const readUpTo = snapshot?.read_up_to ?? 0;
+    if (latest > readUpTo && latest > markedUpTo) {
+      markedUpTo = latest;
+      void call<Schema<"MarkReadResponse">>(api.POST("/notifications/read", { body: { up_to: latest } }))
+        .then((res) => {
+          client.setQueryData<Snapshot>(notificationKeys.snapshot, (cur) =>
+            cur ? { ...cur, read_up_to: Math.max(cur.read_up_to, res.read_up_to), unread: res.unread } : cur,
+          );
+        })
+        .catch(() => {
+          markedUpTo = 0;
+        });
+    }
+  });
 
   const failing = $derived(failingOf(snapshot));
   const open = $derived(openOf(snapshot));
@@ -27,7 +51,7 @@
       call<Entry[]>(api.GET("/notifications/log", { params: { query: { before: pageParam, limit: LOG_PAGE } } })),
     initialPageParam: undefined as number | undefined,
     getNextPageParam: (page: Entry[]) => (page.length === LOG_PAGE ? page.at(-1)?.id : undefined),
-    refetchInterval: 30_000,
+    refetchInterval: () => (liveNotifications.connected ? false : 30_000),
   }));
   const entries = $derived(log.data?.pages.flat() ?? []);
   /** An open problem's newest log entry, which the assistant reads. */
@@ -123,11 +147,13 @@
             <ol class="divide-y divide-line border-t border-line">
               {#each entries as e (e.id)}
                 {@const failed = delivery(e)}
+                {@const hasError = deliveryHasError(e)}
                 {@const more = detail(e)}
-                {@const href = notificationHref(e.key, e.title)}
+                {@const href = entryHref(e)}
+                {@const unread = e.id > seenUpTo}
                 {@const expanded = !!expandedLog[e.id]}
                 {@const hasBody = Boolean(e.body.trim() && e.body.trim() !== e.title.trim())}
-                {@const errors = e.deliveries.filter((d) => !d.ok && d.error)}
+                {@const errors = e.deliveries.filter((d) => !d.ok && !d.filtered && d.error)}
                 <li class="px-4 py-2">
                   <div class="flex items-start gap-2">
                     <button
@@ -136,9 +162,12 @@
                       aria-expanded={expanded}
                       onclick={() => (expandedLog[e.id] = !expanded)}
                     >
-                      <span class="block {expanded ? 'font-medium break-words' : 'truncate'}">{e.title}</span>
+                      <span class="flex items-start gap-1.5 {expanded ? 'font-medium break-words' : ''}">
+                        {#if unread}<span class="mt-1.5 size-1.5 shrink-0 rounded-full bg-accent" aria-label="Unread"></span>{/if}
+                        <span class="min-w-0 flex-1 {expanded ? 'break-words' : 'truncate'}">{e.title}</span>
+                      </span>
                       <span class="block text-xs text-muted {expanded ? 'break-words' : 'truncate'}">
-                        <time datetime={e.at}>{stamp(e.at)}</time>{#if failed}&nbsp;·&nbsp;<span class={failed === "not sent" ? "" : "text-bad"}>{failed}</span>{/if}{#if !expanded && more}&nbsp;·&nbsp;{more}{/if}
+                        <time datetime={e.at}>{stamp(e.at)}</time>{#if failed}&nbsp;·&nbsp;<span class={hasError ? "text-bad" : ""}>{failed}</span>{/if}{#if !expanded && more}&nbsp;·&nbsp;{more}{/if}
                       </span>
                     </button>
                     <span class="w-20 shrink-0"><Pill tone={kindTone(e)}>{e.kind}</Pill></span>

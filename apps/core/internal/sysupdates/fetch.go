@@ -505,6 +505,7 @@ func (m *Module) imageReleaseLoop(ctx context.Context) {
 	// What the boot check left is told at once: after a boot that failed
 	// it, the daemon starts when the operator has repaired it.
 	m.notifyBoot(ctx)
+	m.notifyFinishedDeploys(ctx)
 	t := time.NewTimer(releaseDelay)
 	defer t.Stop()
 	for {
@@ -528,6 +529,7 @@ func (m *Module) releaseTick(ctx context.Context) {
 			}
 		}
 	}
+	m.notifyFinishedDeploys(ctx)
 	m.notifyImageRelease(ctx)
 	m.notifyBoot(ctx)
 	m.autoInstall(ctx)
@@ -554,6 +556,7 @@ func (m *Module) notifyImageRelease(ctx context.Context) {
 			Title:  "Version " + st.Latest + " is ready to install",
 			Detail: "It is downloaded and verified. Install it from Settings when it suits you; it boots at the next reboot.",
 			Path:   "/settings/updates",
+			Event:  "core.available",
 		}}
 		st.Notified = st.Latest
 	default:

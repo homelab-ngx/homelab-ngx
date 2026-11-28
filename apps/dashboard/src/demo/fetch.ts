@@ -8,6 +8,7 @@ import type { paths } from "#lib/api/schema.gen.ts";
 import type { Schema } from "#lib/api/client.ts";
 import { addPoolDisk, approve, createPool, deletePool, DemoProblem, endRemoval, maskService, removePoolDisk, downloadImage, installImage, iso, newHost, power, powerMeter, powerProfile, powerProfiles, powerStatus, previewBackup, cancelBackup, freezeThaw, restart, rollback, runBackup, stackOf, startStop, tick, update, updateSubvolumeProfile, type Host } from "./host.ts";
 import { history } from "./metrics.ts";
+import { createNotificationChannel, deleteNotificationChannel, listNotificationChannels, listNotificationLog, markNotificationsRead, snapshotOf, updateNotificationChannel } from "./notifications.ts";
 
 /** A stack's files as the demo shows them: its manifest and a short flake. */
 function filesOf(s: Schema<"Stack">) {
@@ -300,24 +301,9 @@ const gets: { [P in GetPath]: (h: Host, c: Ctx) => JsonOf<P> } = {
   }),
   "/logs": (h, c) => logs(h, c.query.get("unit") ?? "", Number(c.query.get("lines"))),
   "/metrics/history": (h, c) => history(h, c.query.get("range") ?? "24h"),
-  "/notification-channels": (h) => [
-    { id: 1, name: "Phone", kind: "ntfy", enabled: true, has_token: true, server: "https://ntfy.sh", topic: "homelab-demo", created_at: iso(h.now() - 100 * DAY) },
-    { id: 2, name: "Home Assistant", kind: "webhook", enabled: true, has_token: false, url: "https://home.home.example/api/webhook/homelab", created_at: iso(h.now() - 40 * DAY) },
-  ],
-  "/notifications": (h) => ({
-    failing_channels: {},
-    open: { "disk:sdb:smart": { title: "Disk sdb reports 8 bad sectors", count: 3, opened_at: iso(h.now() - 2 * DAY) }, "backup:4": { title: "Backup Media, weekly failed", count: 1, opened_at: iso(h.now() - 3 * DAY) } },
-    history: [
-      { at: iso(h.now() - 2 * DAY), channel: "Phone", ok: true, severity: "alert", title: "Disk sdb reports 8 bad sectors" },
-      { at: iso(h.now() - 3 * DAY), channel: "Phone", ok: true, severity: "alert", title: "Backup Media, weekly failed" },
-      { at: iso(h.now() - 6 * DAY), channel: "Phone", ok: true, severity: "info", title: "Updated to 0.2.5" },
-    ],
-  }),
-  "/notifications/log": (h) => [
-    { id: 3, at: iso(h.now() - 2 * DAY), key: "disk:sdb:smart", kind: "opened", severity: "alert", title: "Disk sdb reports 8 bad sectors", body: "ST8000VN004 in pool tank. The pool keeps two copies of everything.", deliveries: [{ at: iso(h.now() - 2 * DAY), channel: "Phone", ok: true, error: "" }] },
-    { id: 2, at: iso(h.now() - 3 * DAY), key: "backup:4", kind: "opened", severity: "alert", title: "Backup Media, weekly failed", body: "the destination did not answer: dial tcp: i/o timeout", deliveries: [{ at: iso(h.now() - 3 * DAY), channel: "Phone", ok: true, error: "" }] },
-    { id: 1, at: iso(h.now() - 6 * DAY), key: null, kind: "sent", severity: "info", title: "Updated to 0.2.5", body: "The host runs 0.2.5.", deliveries: [{ at: iso(h.now() - 6 * DAY), channel: "Phone", ok: true, error: "" }] },
-  ],
+  "/notification-channels": (h) => listNotificationChannels(h),
+  "/notifications": (h) => snapshotOf(h),
+  "/notifications/log": (h, c) => listNotificationLog(h, Number(c.query.get("before") ?? 0), Number(c.query.get("limit") ?? 50)),
   "/security/audits": () => [],
   "/security/audits/{id}": () => {
     throw missing("audit");
@@ -422,11 +408,23 @@ const posts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknow
     if (entity !== "sensor.server_plug_power") return { status: 200, body: { ok: false, code: "entity_not_found", error: `Home Assistant has no ${entity}`, watts: null } };
     return { status: 200, body: { ok: true, name: "Server plug Power", watts: powerMeter(h).watts ?? 23.4 } };
   },
+  "/notifications/read": (h, c) => ({ status: 200, body: markNotificationsRead(h, Number(c.body.up_to ?? 0)) }),
+  "/notification-channels": (h, c) => ({ status: 201, body: createNotificationChannel(h, c.body) }),
+  "/notification-channels/{id}/test": (h, c) => {
+    const id = Number(c.path.id);
+    if (!listNotificationChannels(h).some((ch) => ch.id === id)) throw missing("channel");
+    return { status: 200, body: { ok: true } };
+  },
 };
 
 /** The puts it acts out: disabling a stack's service. */
 const puts: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknown }> = {
   "/services/{unit}/mask": (h, c) => (maskService(h, c.path.unit!, true), { status: 204 }),
+  "/notification-channels/{id}": (h, c) => {
+    const ch = updateNotificationChannel(h, Number(c.path.id), c.body);
+    if (!ch) throw missing("channel");
+    return { status: 200, body: ch };
+  },
   "/system/power-profile": (h, c) => {
     const p = String(c.body.profile);
     if (p !== "power-saver" && p !== "balanced" && p !== "performance") throw new DemoProblem(400, "invalid_setting", "profile: power-saver, balanced or performance");
@@ -452,6 +450,10 @@ const patches: Record<string, (h: Host, c: Ctx) => { status: number; body?: unkn
 /** The deletes it acts out: a pool, a pool's disk, a removal that is stopped, and enabling a disabled service. */
 const deletes: Record<string, (h: Host, c: Ctx) => { status: number; body?: unknown }> = {
   "/services/{unit}/mask": (h, c) => (maskService(h, c.path.unit!, false), { status: 204 }),
+  "/notification-channels/{id}": (h, c) => {
+    if (!deleteNotificationChannel(h, Number(c.path.id))) throw missing("channel");
+    return { status: 204 };
+  },
   "/storage/pools/{uuid}": (h, c) => (deletePool(h, c.path.uuid!, c.query.get("confirm")), { status: 204 }),
   "/storage/pools/{uuid}/disks": (h, c) => ({ status: 202, body: removePoolDisk(h, c.path.uuid!, c.query.get("disk") ?? "") }),
   "/storage/pools/{uuid}/operation": (h, c) => (endRemoval(h, c.path.uuid!), { status: 204 }),

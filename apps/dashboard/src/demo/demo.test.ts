@@ -25,10 +25,10 @@ const fill: Record<string, string> = { name: "photos", id: "1", run: "100", unit
 describe("the demo's API", () => {
   it("answers every GET the daemon's document describes", async () => {
     const d = demo();
-    // Paths the demo answers 404 on purpose, the event stream (metrics.ts),
-    // and icons: an <img> never goes through the demo's fetch, so the page
-    // draws its letter tiles.
-    const none = new Set(["/backups/{id}/preview", "/drafts/{name}", "/security/audits/{id}", "/metrics/stream", "/stacks/{name}/icon"]);
+    // Paths the demo answers 404 on purpose, the event streams (metrics.ts,
+    // notifications.ts), and icons: an <img> never goes through the demo's fetch,
+    // so the page draws its letter tiles.
+    const none = new Set(["/backups/{id}/preview", "/drafts/{name}", "/security/audits/{id}", "/metrics/stream", "/notifications/stream", "/stacks/{name}/icon"]);
     for (const [path, ops] of Object.entries(openapi.paths)) {
       if (!("get" in ops) || none.has(path)) continue;
       const url = path.replace(/{(\w+)}/g, (_, n: string) => fill[n] ?? "1").replace("/stack-updates/1", "/stack-updates/1000");
@@ -247,5 +247,27 @@ describe("the demo's API", () => {
     const done = await d.get<Schema<"Stack">>("/stacks/git");
     expect(done.running).toBe(true);
     expect(done.operation).toBeUndefined();
+  });
+
+  it("marks demo notifications read and persists channel filter edits", async () => {
+    const d = demo();
+    const initial = await d.get<Schema<"NotificationsSnapshot">>("/notifications");
+    expect(initial.unread).toBe(1);
+    expect(initial.latest_id).toBeGreaterThan(initial.read_up_to);
+
+    const read = await d.post<Schema<"MarkReadResponse">>("/notifications/read", { up_to: initial.latest_id });
+    expect(read.status).toBe(200);
+    expect(read.body.unread).toBe(0);
+    expect((await d.get<Schema<"NotificationsSnapshot">>("/notifications")).unread).toBe(0);
+
+    const chans = await d.get<Schema<"Channel">[]>("/notification-channels");
+    const put = await d.send<Schema<"Channel">>("PUT", `/notification-channels/${chans[0]!.id}`, {
+      name: chans[0]!.name,
+      kind: chans[0]!.kind,
+      topic: chans[0]!.topic,
+      filter: { min_severity: "alert", muted: ["updates", "security"] },
+    });
+    expect(put.status).toBe(200);
+    expect(put.body.filter).toEqual({ min_severity: "alert", muted: ["updates", "security"] });
   });
 });

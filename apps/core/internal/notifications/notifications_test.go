@@ -315,7 +315,7 @@ func TestDBLogAttachesDeliveriesPerEntry(t *testing.T) {
 	entry := func(title string, dls ...Delivery) Entry {
 		return Entry{At: at, Kind: KindSent, Severity: Info, Title: title, Deliveries: dls}
 	}
-	if err := st.Commit(ctx, Change{Entries: []Entry{
+	if _, err := st.Commit(ctx, Change{Entries: []Entry{
 		entry("old", dl("email", true, "")),
 		entry("two", dl("ntfy", false, "503"), dl("email", true, "")),
 		entry("none"),
@@ -391,11 +391,144 @@ func TestSendPreservesKeyInLog(t *testing.T) {
 	now := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
 	n := testNotifier(t, srv.URL, &now)
 	ctx := context.Background()
-	if _, err := n.Send(ctx, Message{Severity: Alert, Key: "stack:media", Title: "Stack media did not start"}); err != nil {
+	if _, err := n.Send(ctx, Message{Severity: Alert, Key: "stack:media", Event: "stack.start", Path: "/stacks/media", Title: "Stack media did not start"}); err != nil {
 		t.Fatal(err)
 	}
 	entries, err := n.Log(ctx, 0, 10)
-	if err != nil || len(entries) != 1 || entries[0].Key != "stack:media" {
+	if err != nil || len(entries) != 1 || entries[0].Key != "stack:media" || entries[0].Event != "stack.start" || entries[0].Path != "/stacks/media" {
 		t.Fatalf("entries = %+v, err %v", entries, err)
+	}
+}
+
+func TestReadUpToAndUnreadCounting(t *testing.T) {
+	t.Parallel()
+	eachStore(t, func(t *testing.T, st Store) {
+		srv, _ := newHook(t, 200)
+		now := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
+		n := testNotifierStore(t, srv.URL, &now, st)
+		ctx := context.Background()
+
+		snap, err := n.Snapshot(ctx)
+		if err != nil || snap.Unread != 0 || snap.ReadUpTo != 0 || snap.LatestID != 0 {
+			t.Fatalf("initial snap = %+v, err=%v", snap, err)
+		}
+		if _, err := n.Send(ctx, Message{Severity: Info, Event: "core.update", Title: "Updated"}); err != nil {
+			t.Fatal(err)
+		}
+		// Open problem counts in Open, not Unread (no double count).
+		if _, err := n.Report(ctx, Problem{Key: "unit:a", Title: "a failing"}); err != nil {
+			t.Fatal(err)
+		}
+		snap, err = n.Snapshot(ctx)
+		if err != nil || snap.Unread != 1 || len(snap.Open) != 1 || snap.LatestID != 2 {
+			t.Fatalf("after send+report = %+v, err=%v", snap, err)
+		}
+		// Mark read through entry 1 leaves unread = 0; open problem still open.
+		res, err := n.MarkRead(ctx, 1)
+		if err != nil || res.ReadUpTo != 1 || res.Unread != 0 {
+			t.Fatalf("mark read(1) = %+v, err=%v", res, err)
+		}
+		// Marking read up_to=0 advances to latest_id (2); smaller up_to never rewinds.
+		res, err = n.MarkRead(ctx, 0)
+		if err != nil || res.ReadUpTo != 2 || res.Unread != 0 {
+			t.Fatalf("mark read(0) = %+v, err=%v", res, err)
+		}
+		res, err = n.MarkRead(ctx, 1)
+		if err != nil || res.ReadUpTo != 2 {
+			t.Fatalf("monotonic = %+v, err=%v", res, err)
+		}
+		// Resolving the problem logs a resolved note that is unread until acknowledged.
+		if _, err := n.Resolve(ctx, "unit:a"); err != nil {
+			t.Fatal(err)
+		}
+		snap, err = n.Snapshot(ctx)
+		if err != nil || snap.Unread != 1 || len(snap.Open) != 0 {
+			t.Fatalf("after resolve = %+v, err=%v", snap, err)
+		}
+		res, err = n.MarkRead(ctx, 999)
+		if err != nil || res.ReadUpTo != 3 || res.Unread != 0 {
+			t.Fatalf("clamped mark read = %+v, err=%v", res, err)
+		}
+	})
+}
+
+func TestChannelFiltersAndLocalRecording(t *testing.T) {
+	t.Parallel()
+	eachStore(t, func(t *testing.T, st Store) {
+		allHook, gotAll := newHook(t, 200)
+		alertsOnlyHook, gotAlertsOnly := newHook(t, 200)
+		noStacksHook, gotNoStacks := newHook(t, 200)
+		targets := fixed{
+			{Name: "all", Sender: Webhook{URL: allHook.URL, Token: testToken}, Filter: ChannelFilter{MinSeverity: MinSeverityAll}},
+			{Name: "alerts", Sender: Webhook{URL: alertsOnlyHook.URL, Token: testToken}, Filter: ChannelFilter{MinSeverity: MinSeverityAlert}},
+			{Name: "nostacks", Sender: Webhook{URL: noStacksHook.URL, Token: testToken}, Filter: ChannelFilter{MinSeverity: MinSeverityAll, Muted: []EventCategory{CategoryStacks}}},
+		}
+		now := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
+		n := New(Config{Targets: targets}, st, func() time.Time { return now })
+		ctx := context.Background()
+
+		// Info stack update: hits "all", filtered on "alerts" and "nostacks".
+		via, err := n.Send(ctx, Message{Severity: Info, Event: "stack.update", Title: "Stack immich updated", Path: "/stacks/immich"})
+		if err != nil || via != "all" {
+			t.Fatalf("via=%q err=%v", via, err)
+		}
+		// Alert in muted category (stack.start) via one-shot Send: filtered on "nostacks", hits "all" and "alerts".
+		via, err = n.Send(ctx, Message{Severity: Alert, Event: "stack.start", Key: "stack:immich", Title: "Stack immich did not start"})
+		if err != nil || via != "all, alerts" {
+			t.Fatalf("stack alert via=%q err=%v", via, err)
+		}
+		// Open problem in muted category: ALWAYS hits every channel including "nostacks".
+		if _, err := n.Report(ctx, Problem{Key: "stack:media", Event: "stack.start", Title: "Stack media failing"}); err != nil {
+			t.Fatal(err)
+		}
+		if len(*gotAll) != 3 || len(*gotAlertsOnly) != 2 || len(*gotNoStacks) != 1 {
+			t.Fatalf("counts all=%d alerts=%d nostacks=%d", len(*gotAll), len(*gotAlertsOnly), len(*gotNoStacks))
+		}
+		// Filtered deliveries are stored in Log but never fail a channel in Snapshot.
+		snap, err := n.Snapshot(ctx)
+		if err != nil || len(snap.FailingChannels) != 0 {
+			t.Fatalf("snapshot failing = %+v, err=%v", snap.FailingChannels, err)
+		}
+		log, err := n.Log(ctx, 0, 10)
+		if err != nil || len(log) != 3 {
+			t.Fatalf("log = %+v", log)
+		}
+		if d := log[2].Deliveries; len(d) != 3 || !d[0].OK || d[0].Filtered || !d[1].Filtered || !d[2].Filtered {
+			t.Fatalf("filtered deliveries = %+v", d)
+		}
+	})
+
+	// When every enabled channel filters a message out, Send still commits it cleanly and returns nil.
+	srv, got := newHook(t, 200)
+	now := time.Now()
+	n := New(Config{Targets: fixed{{Name: "alerts", Sender: Webhook{URL: srv.URL, Token: testToken}, Filter: ChannelFilter{MinSeverity: MinSeverityAlert}}}}, nil, func() time.Time { return now })
+	via, err := n.Send(context.Background(), Message{Severity: Info, Event: "core.update", Title: "Updated"})
+	if err != nil || via != "" || len(*got) != 0 {
+		t.Fatalf("all filtered: via=%q err=%v pushes=%d", via, err, len(*got))
+	}
+	entries, _ := n.Log(context.Background(), 0, 10)
+	if len(entries) != 1 || len(entries[0].Deliveries) != 1 || !entries[0].Deliveries[0].Filtered {
+		t.Fatalf("entries = %+v", entries)
+	}
+}
+
+func TestRecordsTrayAndProblemsWithoutChannels(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 10, 12, 8, 0, 0, 0, time.UTC)
+	n := testNotifier(t, "", &now)
+	ctx := context.Background()
+
+	n.Emit(ctx, Message{Severity: Info, Event: "host.power", Title: "Host rebooting", Path: "/settings/system"})
+	res, err := n.Reconcile(ctx, "audit:", []Problem{{Key: "audit:disk", Title: "Disk full", Path: "/storage"}})
+	if err != nil || len(res.Opened) != 1 {
+		t.Fatalf("reconcile without channels: %+v, err=%v", res, err)
+	}
+	res, err = n.Reconcile(ctx, "audit:", nil)
+	if err != nil || len(res.Resolved) != 1 {
+		t.Fatalf("resolve without channels: %+v, err=%v", res, err)
+	}
+	snap, err := n.Snapshot(ctx)
+	if err != nil || snap.Unread != 3 {
+		t.Fatalf("snap without channels = %+v, err=%v", snap, err)
 	}
 }

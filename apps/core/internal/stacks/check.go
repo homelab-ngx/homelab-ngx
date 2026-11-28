@@ -89,6 +89,7 @@ func (s *Service) notifyUpdates(ctx context.Context) {
 			}
 			problems = append(problems, notifications.Problem{
 				Key: key, Title: fmt.Sprintf("Stack %s has an update that needs approval", title(r)), Detail: detail,
+				Path: "/stacks/" + r.Name, Event: "stack.updates_available",
 			})
 		case pending(r, *g):
 			detail := fmt.Sprintf("It runs %s; commit %s is approved. Update it with `homelab stacks update %s`.",
@@ -106,6 +107,7 @@ func (s *Service) notifyUpdates(ctx context.Context) {
 			}
 			problems = append(problems, notifications.Problem{
 				Key: key, Title: fmt.Sprintf("Stack %s has an update", title(r)), Detail: detail,
+				Path: "/stacks/" + r.Name, Event: "stack.updates_available",
 			})
 		}
 	}

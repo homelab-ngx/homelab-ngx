@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"homelab-ngx.com/core/internal/cmdrunner"
+	"homelab-ngx.com/core/internal/notifications"
 )
 
 // An update (image.go, fetch.go) can restart the daemon, and a restart kills
@@ -125,7 +126,8 @@ func (s deployStore) put(d CoreDeploy) error {
 // ── daemon side ─────────────────────────────────────────────────────────
 
 type deployState struct {
-	mu sync.Mutex // one start at a time
+	mu       sync.Mutex // one start at a time
+	notifyMu sync.Mutex // serializes deploy-notification dedup reads/writes
 }
 
 func (m *Module) deploys() deployStore {
@@ -182,7 +184,36 @@ func (m *Module) start(ctx context.Context, kind string, extra ...string) (CoreD
 		fin := m.now()
 		d.Result, d.Reason, d.FinishedAt = DeployFailed, "the update could not be started: "+err.Error(), &fin
 		_ = st.put(d)
+		if m.notify != nil {
+			ev := "core.update"
+			if kind == KindBuild {
+				ev = "host.rebuild"
+			}
+			if _, nerr := m.notify.Send(ctx, notifications.Message{
+				Severity: notifications.Alert,
+				Title:    "Host update could not start",
+				Body:     d.Reason,
+				Path:     deployUpdatesPath,
+				Event:    ev,
+				Key:      fmt.Sprintf("core-deploy:%d", d.Id),
+			}); nerr != nil && !errors.Is(nerr, notifications.ErrNoChannels) {
+				log.Warn("update start failure notification not sent", "id", d.Id, "error", nerr)
+			} else {
+				markNotifiedID(m.dir, d.Id)
+			}
+		}
 		return d, fmt.Errorf("starting the update: %w", err)
+	}
+	if m.notify != nil && kind == KindBuild {
+		if _, nerr := m.notify.Send(ctx, notifications.Message{
+			Severity: notifications.Info,
+			Title:    "Building host image from main",
+			Path:     deployUpdatesPath,
+			Event:    "host.rebuild",
+			Key:      fmt.Sprintf("host-rebuild:%d", d.Id),
+		}); nerr != nil && !errors.Is(nerr, notifications.ErrNoChannels) {
+			log.Warn("build start notification not sent", "id", d.Id, "error", nerr)
+		}
 	}
 	log.Info("core "+kind+" started", "id", d.Id)
 	return d, nil
@@ -227,6 +258,8 @@ func (m *Module) Deploys(ctx context.Context) []CoreDeploy {
 			list[0].Result, list[0].Reason, list[0].FinishedAt = DeployInterrupted, errDeployInterrupted, &fin
 			if err := st.put(list[0]); err != nil {
 				log.Warn("could not close the interrupted update", "error", err)
+			} else {
+				m.notifyFinishedDeploys(ctx)
 			}
 		}
 	}

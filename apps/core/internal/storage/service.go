@@ -20,6 +20,7 @@ import (
 
 	"golang.org/x/sync/singleflight"
 	"homelab-ngx.com/core/internal/config"
+	"homelab-ngx.com/core/internal/notifications"
 	"homelab-ngx.com/core/internal/storage/bcachefs"
 )
 
@@ -141,6 +142,7 @@ type Service struct {
 	// Pool changes (pools.go, operation.go).
 	poolMu     sync.Mutex // one create, add, remove or delete at a time
 	users      Users      // who uses a pool's folders; may be nil
+	notify     Notifier   // tells the operator when disk removal finishes or fails; may be nil
 	bg         context.Context
 	opMu       sync.Mutex
 	ops        map[string]*poolOp // by pool uuid
@@ -168,6 +170,14 @@ func New(bc *bcachefs.Client, cfg *config.Manager, log *slog.Logger) *Service {
 		usageEvery: 5 * time.Second, stallAfter: 15 * time.Minute,
 	}
 }
+
+// Notifier receives storage operation events (*notifications.Notifier).
+type Notifier interface {
+	Send(ctx context.Context, m notifications.Message) (string, error)
+}
+
+// UseNotifier sets the notification sink for storage operations.
+func (s *Service) UseNotifier(n Notifier) { s.notify = n }
 
 // UseStore keeps measured folder sizes in m across restarts.
 func (s *Service) UseStore(m MetaStore) { s.meta = m }

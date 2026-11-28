@@ -16,6 +16,7 @@ import (
 
 	"github.com/robfig/cron/v3"
 
+	"homelab-ngx.com/core/internal/notifications"
 	"homelab-ngx.com/core/internal/stacks"
 	"homelab-ngx.com/core/internal/storage"
 	"homelab-ngx.com/core/internal/store"
@@ -388,7 +389,7 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 }
 
 func (s *Service) resolve(ctx context.Context, key string) {
-	if s.notify == nil || !s.notify.Enabled() {
+	if s.notify == nil {
 		return
 	}
 	if _, err := s.notify.Resolve(ctx, key); err != nil {
@@ -667,7 +668,7 @@ func (s *Service) FoldersAdded(ctx context.Context, stack string, keys []string)
 	s.mu.Lock()
 	s.folders = nil
 	s.mu.Unlock()
-	if len(keys) == 0 || s.notify == nil || !s.notify.Enabled() {
+	if len(keys) == 0 || s.notify == nil {
 		return
 	}
 	covered, err := s.coveredBy(ctx)
@@ -688,7 +689,7 @@ func (s *Service) FoldersAdded(ctx context.Context, stack string, keys []string)
 	if n == 1 {
 		body = stack + " recommends a folder that no backup includes yet."
 	}
-	if _, err := s.notify.Send(ctx, notificationFor(stack, body)); err != nil {
+	if _, err := s.notify.Send(ctx, notificationFor(stack, body)); err != nil && !errors.Is(err, notifications.ErrNoChannels) {
 		s.log.Warn("failed to send the not-backed-up notification", "stack", stack, "error", err)
 	}
 }

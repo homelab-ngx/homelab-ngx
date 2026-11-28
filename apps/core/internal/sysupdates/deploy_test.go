@@ -11,6 +11,7 @@ import (
 
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/cmdrunner/cmdrunnertest"
+	"homelab-ngx.com/core/internal/notifications"
 	"homelab-ngx.com/core/internal/power"
 )
 
@@ -214,5 +215,156 @@ func TestRebootGoesThroughPower(t *testing.T) {
 	m.SetPower(p)
 	if err := m.reboot(context.Background()); err != nil || len(p.asked) != 1 || p.asked[0] != power.Reboot {
 		t.Fatalf("err=%v asked=%v", err, p.asked)
+	}
+}
+
+func TestDeployNotificationMessages(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name      string
+		deploy    CoreDeploy
+		wantOK    bool
+		wantSev   notifications.Severity
+		wantEvent string
+		wantTitle string
+	}{
+		{
+			name:   "build already current skipped",
+			deploy: CoreDeploy{Id: 1, Kind: KindBuild, Result: DeployHealthy, Phase: "Already on HEAD"},
+		},
+		{
+			name:      "build healthy",
+			deploy:    CoreDeploy{Id: 2, Kind: KindBuild, Version: "0.9.0", Result: DeployHealthy, Phase: "Built 0.9.0"},
+			wantOK:    true,
+			wantSev:   notifications.Info,
+			wantEvent: "host.rebuild",
+			wantTitle: "Built image 0.9.0",
+		},
+		{
+			name:      "build failed",
+			deploy:    CoreDeploy{Id: 3, Kind: KindBuild, Result: DeployBuildFailed, Reason: "oom"},
+			wantOK:    true,
+			wantSev:   notifications.Alert,
+			wantEvent: "host.rebuild",
+			wantTitle: "Host image build failed",
+		},
+		{
+			name:      "core update rolled back",
+			deploy:    CoreDeploy{Id: 4, Kind: KindCoreUpdate, Result: DeployRolledBack, Reason: "caddy down"},
+			wantOK:    true,
+			wantSev:   notifications.Alert,
+			wantEvent: "core.update",
+			wantTitle: "Core update rolled back",
+		},
+		{
+			name:      "install needs reboot",
+			deploy:    CoreDeploy{Id: 5, Kind: KindInstall, Version: "0.9.0", Result: DeployHealthy, Phase: "Installed 0.9.0; it boots at the next reboot"},
+			wantOK:    true,
+			wantSev:   notifications.Info,
+			wantEvent: "core.reboot_needed",
+			wantTitle: "Installed 0.9.0; reboot needed",
+		},
+		{
+			name:      "image update rebooting",
+			deploy:    CoreDeploy{Id: 6, Kind: KindImageUpdate, Version: "0.9.0", Result: DeployHealthy, Phase: "Installed 0.9.0; rebooting"},
+			wantOK:    true,
+			wantSev:   notifications.Info,
+			wantEvent: "core.update",
+			wantTitle: "Installed 0.9.0",
+		},
+		{
+			name:   "download healthy skipped",
+			deploy: CoreDeploy{Id: 7, Kind: KindDownload, Version: "0.9.0", Result: DeployHealthy, Phase: "Downloaded 0.9.0"},
+		},
+		{
+			name:      "download failed",
+			deploy:    CoreDeploy{Id: 8, Kind: KindDownload, Result: DeployFailed, Reason: "timeout"},
+			wantOK:    true,
+			wantSev:   notifications.Alert,
+			wantEvent: "core.update",
+			wantTitle: "Release download failed",
+		},
+	} {
+		msg, ok := deployNotification(tc.deploy)
+		if ok != tc.wantOK {
+			t.Errorf("%s: ok=%v, want %v (%+v)", tc.name, ok, tc.wantOK, msg)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if msg.Severity != tc.wantSev || msg.Event != tc.wantEvent || msg.Title != tc.wantTitle || msg.Path != deployUpdatesPath {
+			t.Errorf("%s: got %+v", tc.name, msg)
+		}
+	}
+}
+
+func TestStartBuildAndFinishedDeploysDeduplicate(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 11, 28, 12, 0, 0, 0, time.UTC)
+	f := cmdrunnertest.NewFake()
+	f.On("systemctl", "is-active", deployUnit).FailCode(3, "inactive\n")
+	f.On("systemd-run").Reply("")
+	dir := t.TempDir()
+	m := New(f, dir)
+	m.SetImage(true)
+	m.now = func() time.Time { return now }
+	m.SetDeploy(DeployConfig{Source: "github:o/r", Exe: "/bin/daemon", Socket: "/s"})
+	n := &fakeNotifier{}
+	m.SetNotifier(n)
+
+	d, err := m.StartImage(context.Background(), KindBuild, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.sent) != 1 || n.sent[0].Event != "host.rebuild" || n.sent[0].Severity != notifications.Info {
+		t.Fatalf("start build sent = %+v", n.sent)
+	}
+
+	// Pre-existing old deploy is skipped on bootstrap, recent finished deploy is emitted once.
+	oldFin := now.Add(-2 * time.Hour)
+	recentFin := now.Add(-2 * time.Minute)
+	st := m.deploys()
+	_ = st.put(CoreDeploy{Id: 10, Kind: KindCoreUpdate, Version: "0.8.0", Result: DeployHealthy, Phase: "Updated", FinishedAt: &oldFin})
+	_ = st.put(CoreDeploy{Id: d.Id, Kind: KindBuild, Version: "0.9.0", Result: DeployHealthy, Phase: "Built 0.9.0", FinishedAt: &recentFin})
+
+	m.notifyFinishedDeploys(context.Background())
+	m.notifyFinishedDeploys(context.Background())
+	if len(n.sent) != 2 || n.sent[1].Title != "Built image 0.9.0" {
+		t.Fatalf("finished deploy sent = %+v", n.sent)
+	}
+}
+
+func TestDeployRunNotifyTerminalFiresOnceOnRebootNow(t *testing.T) {
+	t.Parallel()
+	f := coreUpdateHost(t)
+	caddyRuns(f)
+	x := newRun(t, f, KindCoreUpdate, func() error { return nil })
+	var calls int
+	x.notifyFn = func(_ context.Context, d CoreDeploy) {
+		calls++
+		if d.Result != DeployHealthy {
+			t.Errorf("result = %s", d.Result)
+		}
+	}
+	_ = x.run(context.Background())
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1", calls)
+	}
+
+	f2 := cmdrunnertest.NewFake()
+	f2.On("systemctl", "reboot").Reply("")
+	x2 := newRun(t, f2, KindInstall, func() error { return nil })
+	x2.o.Reboot = "now"
+	x2.d.Version = "1.0.0"
+	var calls2 int
+	x2.notifyFn = func(_ context.Context, d CoreDeploy) { calls2++ }
+	res, why := x2.rebootChoice(context.Background())
+	if res != DeployHealthy || why != "" || calls2 != 1 {
+		t.Fatalf("res=%s why=%q calls2=%d", res, why, calls2)
+	}
+	x2.notifyTerminal(context.Background())
+	if calls2 != 1 {
+		t.Fatalf("calls2 after second trigger = %d, want 1", calls2)
 	}
 }

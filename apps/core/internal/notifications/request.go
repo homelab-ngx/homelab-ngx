@@ -21,7 +21,7 @@ func (n *Notifier) Apply(ctx context.Context, req NotifyRequest) (NotifyResponse
 		if req.Key == "" || req.Title == "" {
 			return out, fmt.Errorf("%w: report needs key and title", ErrInvalid)
 		}
-		res, err = n.Report(ctx, Problem{Key: req.Key, Title: req.Title, Detail: req.Body, Path: req.Path})
+		res, err = n.Report(ctx, Problem{Key: req.Key, Title: req.Title, Detail: req.Body, Path: req.Path, Event: req.Event})
 	case Resolve:
 		if req.Key == "" {
 			return out, fmt.Errorf("%w: resolve needs key", ErrInvalid)
@@ -35,7 +35,7 @@ func (n *Notifier) Apply(ctx context.Context, req NotifyRequest) (NotifyResponse
 		if sev != Alert {
 			sev = Info
 		}
-		out.Channel, err = n.Send(ctx, Message{Severity: sev, Title: req.Title, Body: req.Body, Path: req.Path, Key: req.Key})
+		out.Channel, err = n.Send(ctx, Message{Severity: sev, Title: req.Title, Body: req.Body, Path: req.Path, Event: req.Event, Key: req.Key})
 	default:
 		err = fmt.Errorf("%w: unknown action %q", ErrInvalid, req.Action)
 	}

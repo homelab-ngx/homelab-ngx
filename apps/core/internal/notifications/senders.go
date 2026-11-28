@@ -24,6 +24,8 @@ type Payload struct {
 	Title    string   `json:"title"`
 	Message  string   `json:"message"`
 	Severity Severity `json:"severity"`
+	// Event is a stable dotted event identifier, e.g. core.update. Omitted when empty.
+	Event string `json:"event,omitempty"`
 	// Key is a stable problem key; a receiver may replace an earlier
 	// notification with the same key. Omitted when there is none.
 	Key string `json:"key,omitempty"`
@@ -38,11 +40,12 @@ type Sender interface {
 	Send(ctx context.Context, p Payload) error
 }
 
-// Target is one channel a Notifier delivers to: its name in the log and
-// its sender.
+// Target is one channel a Notifier delivers to: its name in the log,
+// its sender, and its optional external filter.
 type Target struct {
 	Name   string
 	Sender Sender
+	Filter ChannelFilter
 }
 
 // Targets lists the channels a message goes to now.

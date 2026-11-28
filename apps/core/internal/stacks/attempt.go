@@ -11,6 +11,7 @@ import (
 
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/httpx"
+	"homelab-ngx.com/core/internal/notifications"
 	"homelab-ngx.com/core/internal/store"
 	"homelab-ngx.com/core/internal/sysupdates"
 )
@@ -77,6 +78,8 @@ func (s *Service) startAttempt(ctx context.Context, o *operation, name, kind, re
 	}
 	s.mu.Lock()
 	o.attempt = id
+	o.attemptStack = name
+	o.attemptKind = kind
 	s.mu.Unlock()
 }
 
@@ -112,7 +115,7 @@ func (s *Service) attemptBuilt(ctx context.Context, o *operation, to int64, from
 // shutting down leaves it running; the next one marks it interrupted.
 func (s *Service) endAttempt(ctx context.Context, o *operation, err error) {
 	s.mu.Lock()
-	id, result, log := o.attempt, o.result, o.log.String()
+	id, stack, kind, result, notified, log := o.attempt, o.attemptStack, o.attemptKind, o.result, o.notified, o.log.String()
 	s.mu.Unlock()
 	if id == 0 || ctx.Err() != nil {
 		return
@@ -130,6 +133,50 @@ func (s *Service) endAttempt(ctx context.Context, o *operation, err error) {
 		ID: id, Now: s.now().UnixMilli(), Result: result, Reason: reason, Log: log,
 	}); ferr != nil {
 		s.log.Warn("stack attempt not finished", "attempt", id, "error", ferr)
+	}
+	if !notified && result != resultRolledBack {
+		s.notifyAttempt(ctx, stack, kind, result, reason)
+	}
+}
+
+func (s *Service) notifyAttempt(ctx context.Context, stack, kind, result, reason string) {
+	if s.notifier == nil || stack == "" {
+		return
+	}
+	path := "/stacks/" + stack
+	var msg notifications.Message
+	switch kind {
+	case attemptInstall:
+		msg = notifications.Message{
+			Severity: notifications.Alert, Title: "Stack " + stack + " install failed", Body: reason,
+			Path: path, Event: "stack.install", Key: "stack-install:" + stack,
+		}
+		if result == resultHealthy {
+			msg.Severity, msg.Title, msg.Body = notifications.Info, "Stack "+stack+" installed", ""
+		}
+	case attemptUpdate:
+		msg = notifications.Message{
+			Severity: notifications.Alert, Title: "Stack " + stack + " update failed", Body: reason,
+			Path: path, Event: "stack.update", Key: "stack-update:" + stack,
+		}
+		if result == resultHealthy {
+			msg.Severity, msg.Title, msg.Body = notifications.Info, "Stack "+stack+" updated", ""
+		} else if result == resultBuildFailed {
+			msg.Title = "Stack " + stack + " build failed"
+		}
+	case attemptRollback:
+		msg = notifications.Message{
+			Severity: notifications.Alert, Title: "Stack " + stack + " rollback failed", Body: reason,
+			Path: path, Event: "stack.rollback", Key: "stack-rollback:" + stack,
+		}
+		if result == resultHealthy {
+			msg.Severity, msg.Title, msg.Body = notifications.Info, "Stack "+stack+" rolled back", ""
+		}
+	default:
+		return
+	}
+	if _, err := s.notifier.Send(ctx, msg); err != nil && !errors.Is(err, notifications.ErrNoChannels) {
+		s.log.Warn("stack attempt notification not delivered", "stack", stack, "kind", kind, "error", err)
 	}
 }
 

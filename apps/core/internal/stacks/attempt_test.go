@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"homelab-ngx.com/core/internal/cmdrunner"
+	"homelab-ngx.com/core/internal/notifications"
 	"homelab-ngx.com/core/internal/services"
 	"homelab-ngx.com/core/internal/store"
 )
@@ -291,5 +292,70 @@ func TestALocalSourceReadsItsCommittedTreeAsItsOwner(t *testing.T) {
 	}
 	if ref, _ := svc.buildRef(context.Background(), "github:o/r/r1"); ref != "github:o/r/r1" {
 		t.Errorf("a remote is built as is: %q", ref)
+	}
+}
+
+func TestAttemptNotifications(t *testing.T) {
+	t.Parallel()
+	svc, fs, h := newRuntime(t)
+	finished(t, svc, svc.Start)
+	h.mu.Lock()
+	installSent := slices.Clone(h.sent)
+	h.sent = nil
+	h.mu.Unlock()
+	if len(installSent) != 1 || installSent[0].Severity != notifications.Info || installSent[0].Event != "stack.install" || installSent[0].Title != "Stack immich installed" {
+		t.Fatalf("install sent = %+v", installSent)
+	}
+
+	release(t, svc, fs, "bbbbbbb2", immichManifest)
+	finished(t, svc, svc.Update)
+	h.mu.Lock()
+	updateSent := slices.Clone(h.sent)
+	h.sent = nil
+	h.mu.Unlock()
+	if len(updateSent) != 1 || updateSent[0].Severity != notifications.Info || updateSent[0].Event != "stack.update" || updateSent[0].Title != "Stack immich updated" {
+		t.Fatalf("update sent = %+v", updateSent)
+	}
+
+	if _, err := svc.Rollback(context.Background(), "immich", 1); err != nil {
+		t.Fatal(err)
+	}
+	finishedWait(t, svc, "immich")
+	h.mu.Lock()
+	rbSent := slices.Clone(h.sent)
+	h.sent = nil
+	h.mu.Unlock()
+	if len(rbSent) != 1 || rbSent[0].Severity != notifications.Info || rbSent[0].Event != "stack.rollback" || rbSent[0].Title != "Stack immich rolled back" {
+		t.Fatalf("rollback sent = %+v", rbSent)
+	}
+
+	release(t, svc, fs, "ccccccc3", immichManifest)
+	h.On("nix", "--extra-experimental-features", "nix-command flakes", "build").Do(func(c cmdrunner.Cmd) (cmdrunner.Result, error) {
+		return fail(1, "")
+	})
+	finished(t, svc, svc.Update)
+	h.mu.Lock()
+	failSent := slices.Clone(h.sent)
+	h.mu.Unlock()
+	if len(failSent) != 1 || failSent[0].Severity != notifications.Alert || failSent[0].Event != "stack.update" || failSent[0].Title != "Stack immich build failed" {
+		t.Fatalf("build fail sent = %+v", failSent)
+	}
+}
+
+func finishedWait(t *testing.T, svc *Service, name string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		s, err := svc.Get(context.Background(), name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Operation == nil || s.Operation.FinishedAt != nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("stack %s operation never finished", name)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

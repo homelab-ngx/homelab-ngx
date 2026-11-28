@@ -2,6 +2,7 @@ package notifications
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -14,6 +15,7 @@ type Problem struct {
 	Title  string
 	Detail string
 	Path   string // dashboard path to open
+	Event  string // stable dotted event id
 }
 
 // Result describes what a reconcile did.
@@ -46,9 +48,6 @@ func (n *Notifier) Reconcile(ctx context.Context, scope string, current []Proble
 
 func (n *Notifier) reconcile(ctx context.Context, scope string, current []Problem, resolveMissing bool) (Result, error) {
 	var res Result
-	if !n.Enabled() {
-		return res, nil
-	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
@@ -89,16 +88,18 @@ func (n *Notifier) reconcile(ctx context.Context, scope string, current []Proble
 	}
 
 	var firstErr error
-	attempts := 0
 	if len(fresh)+len(reminders) > 0 {
 		all := append(append([]Problem{}, fresh...), reminders...)
 		m := n.alertMessage(fresh, reminders)
 		m.Path = commonPath(all)
+		m.Event = commonEvent(all)
 		if len(all) == 1 {
 			m.Key = all[0].Key // a grouped message carries no tag
 		}
-		via, dels, err := n.deliver(ctx, m)
-		attempts += len(dels)
+		via, dels, err := n.deliver(ctx, m, true)
+		if errors.Is(err, ErrNoChannels) {
+			err = nil
+		}
 		kind, key := KindReminded, ""
 		if len(fresh) > 0 {
 			kind = KindOpened
@@ -133,8 +134,10 @@ func (n *Notifier) reconcile(ctx context.Context, scope string, current []Proble
 		if len(gone) == 1 {
 			m.Key = gone[0] // a channel may replace the alert with it
 		}
-		_, dels, err := n.deliver(ctx, m)
-		attempts += len(dels)
+		_, dels, err := n.deliver(ctx, m, true)
+		if errors.Is(err, ErrNoChannels) {
+			err = nil
+		}
 		key := ""
 		if len(gone) == 1 {
 			key = gone[0]
@@ -153,9 +156,11 @@ func (n *Notifier) reconcile(ctx context.Context, scope string, current []Proble
 		log.Error("notification delivery failed", "error", firstErr.Error())
 	}
 	if len(ch.Upsert)+len(ch.Delete)+len(ch.Entries) > 0 {
-		if err := n.st.Commit(ctx, ch); err != nil {
+		committed, err := n.st.Commit(ctx, ch)
+		if err != nil {
 			return res, fmt.Errorf("record notification state: %w", err)
 		}
+		n.broadcast(ctx, committed)
 	}
 	return res, nil
 }
@@ -203,4 +208,15 @@ func commonPath(ps []Problem) string {
 		return "/"
 	}
 	return path
+}
+
+// commonEvent returns the shared event identifier, or "" when problems differ.
+func commonEvent(ps []Problem) string {
+	ev := ps[0].Event
+	for _, p := range ps[1:] {
+		if p.Event != ev {
+			return ""
+		}
+	}
+	return ev
 }

@@ -53,9 +53,12 @@ type operation struct {
 	cancelWait context.CancelFunc
 	// attempt is the stack_updates row of an install, update or rollback;
 	// 0 for anything else. result overrides the outcome finish derives.
-	attempt int64
-	result  string
-	log     attemptLog
+	attempt      int64
+	attemptStack string
+	attemptKind  string
+	notified     bool
+	result       string
+	log          attemptLog
 	// check: the monitor holds the slot for a health check, not for work
 	// the operator would miss.
 	check bool
@@ -451,18 +454,18 @@ func (s *Service) StartWanted(ctx context.Context) {
 		err = s.start(ctx, o, r.Name)
 		s.finish(r.Name, o, err)
 		if err != nil && ctx.Err() == nil && !errors.Is(err, errStartCancelled) {
-			s.notify(ctx, r.Name, "Stack "+r.Name+" did not start", err.Error())
+			s.notify(ctx, r.Name, "stack.start", "Stack "+r.Name+" did not start", err.Error())
 		}
 	}
 }
 
-func (s *Service) notify(ctx context.Context, name, title, body string) {
+func (s *Service) notify(ctx context.Context, name, event, title, body string) {
 	if s.notifier == nil {
 		return
 	}
 	if _, err := s.notifier.Send(ctx, notifications.Message{
-		Severity: notifications.Alert, Title: title, Body: body, Path: "/stacks/" + name, Key: "stack:" + name,
-	}); err != nil {
+		Severity: notifications.Alert, Title: title, Body: body, Path: "/stacks/" + name, Event: event, Key: "stack:" + name,
+	}); err != nil && !errors.Is(err, notifications.ErrNoChannels) {
 		s.log.Warn("stack notification not delivered", "stack", name, "error", err)
 	}
 }
@@ -851,7 +854,12 @@ func (s *Service) revert(ctx context.Context, o *operation, r store.Stack, g, pr
 	if err := back(); err != nil {
 		err = fmt.Errorf("generation %d (%s) was not healthy (%w), and going back to generation %d failed: %w",
 			g.ID, short(g.Rev), cause, prev.ID, err)
-		s.notify(ctx, name, "Stack "+name+": update failed and so did the rollback", err.Error())
+		if o != nil {
+			s.mu.Lock()
+			o.notified = true
+			s.mu.Unlock()
+		}
+		s.notify(ctx, name, "stack.update", "Stack "+name+": update failed and so did the rollback", err.Error())
 		return err
 	}
 	s.setResult(o, resultRolledBack)
@@ -860,7 +868,12 @@ func (s *Service) revert(ctx context.Context, o *operation, r store.Stack, g, pr
 	if g.ID == prev.ID {
 		err = fmt.Errorf("commit %s was not healthy (%w); generation %d is back on commit %s", short(g.Rev), cause, prev.ID, short(prev.Rev))
 	}
-	s.notify(ctx, name, "Stack "+name+": update rolled back", err.Error())
+	if o != nil {
+		s.mu.Lock()
+		o.notified = true
+		s.mu.Unlock()
+	}
+	s.notify(ctx, name, "stack.update", "Stack "+name+": update rolled back", err.Error())
 	return err
 }
 
@@ -947,7 +960,7 @@ func (s *Service) resume(ctx context.Context, o *operation, r store.Stack) error
 	}
 	err = s.settle(ctx, o, r, *cur, prev, cause)
 	if err != nil && prev == nil && ctx.Err() == nil {
-		s.notify(ctx, name, "Stack "+name+" did not start", err.Error())
+		s.notify(ctx, name, "stack.start", "Stack "+name+" did not start", err.Error())
 	}
 	return err
 }
@@ -1118,7 +1131,7 @@ func (s *Service) monitorOnce(ctx context.Context, fails map[string]int) {
 		}
 		s.log.Warn("stack is unhealthy", "stack", name, "error", err)
 		if _, rerr := s.notifier.Report(ctx, notifications.Problem{
-			Key: key, Title: "Stack " + title(r) + " is unhealthy", Detail: err.Error(), Path: "/stacks/" + name,
+			Key: key, Title: "Stack " + title(r) + " is unhealthy", Detail: err.Error(), Path: "/stacks/" + name, Event: "stack.unhealthy",
 		}); rerr != nil {
 			s.log.Warn("stack problem not reported", "stack", name, "error", rerr)
 		}

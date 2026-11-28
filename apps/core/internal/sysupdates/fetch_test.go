@@ -228,7 +228,15 @@ func TestTheEmbeddedReleaseKeyReads(t *testing.T) {
 	}
 }
 
-type countingNotifier struct{ calls [][]notifications.Problem }
+type countingNotifier struct {
+	calls [][]notifications.Problem
+	sent  []notifications.Message
+}
+
+func (c *countingNotifier) Send(_ context.Context, m notifications.Message) (string, error) {
+	c.sent = append(c.sent, m)
+	return "", nil
+}
 
 func (c *countingNotifier) Reconcile(_ context.Context, scope string, current []notifications.Problem) (notifications.Result, error) {
 	c.calls = append(c.calls, current)

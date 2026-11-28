@@ -51,6 +51,7 @@ func (m *Module) SetPower(p Power) { m.power = p }
 // Notifier keeps the release and boot check notifications in line with
 // what the host found (*notifications.Notifier).
 type Notifier interface {
+	Send(ctx context.Context, m notifications.Message) (string, error)
 	Reconcile(ctx context.Context, scope string, current []notifications.Problem) (notifications.Result, error)
 }
 

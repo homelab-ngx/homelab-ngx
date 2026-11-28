@@ -130,6 +130,8 @@ type Notification struct {
 	Severity string
 	Title    string
 	Body     string
+	Event    string
+	Path     string
 }
 
 type NotificationChannel struct {
@@ -149,6 +151,7 @@ type NotificationDelivery struct {
 	Channel        string
 	Ok             bool
 	Error          string
+	Filtered       bool
 }
 
 type NotificationProblem struct {

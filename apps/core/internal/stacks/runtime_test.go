@@ -459,6 +459,9 @@ func TestUpdateRollsBackAnUnhealthyGeneration(t *testing.T) {
 	svc, fs, h := newRuntime(t)
 	svc.healthTimeout = 0
 	finished(t, svc, svc.Start)
+	h.mu.Lock()
+	h.sent = nil
+	h.mu.Unlock()
 
 	h.unhealthy["/nix/store/bbbbbbb2-system"] = true
 	release(t, svc, fs, "bbbbbbb2", strings.Replace(immichManifest, `"port": 2283, "max_body": "50GB"`, `"port": 3001`, 1))
@@ -623,6 +626,7 @@ func TestStartWantedStartsOnlyWhatTheOperatorLeftRunning(t *testing.T) {
 	// A reboot: nothing runs, the rules and addresses are gone.
 	h.mu.Lock()
 	h.running = false
+	h.sent = nil
 	h.mu.Unlock()
 	svc.StartWanted(context.Background())
 	if !h.running {
@@ -906,6 +910,11 @@ func interruptedUpdate(t *testing.T, svc *Service, fs *fakeSource, at string, af
 	ctx, shutdown := context.WithCancel(context.Background())
 	svc.StartWanted(ctx) // nothing to start yet; makes ctx the daemon's lifetime
 	finished(t, svc, svc.Start)
+	if fh, ok := svc.notifier.(*fakeHost); ok {
+		fh.mu.Lock()
+		fh.sent = nil
+		fh.mu.Unlock()
+	}
 	release(t, svc, fs, "bbbbbbb2", immichManifest)
 	svc.healthTimeout = time.Hour
 	if _, err := svc.Update(context.Background(), "immich"); err != nil {

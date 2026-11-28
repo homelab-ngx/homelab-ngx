@@ -147,7 +147,7 @@ func (s *Service) Watch(ctx context.Context) {
 
 // housekeep runs one watch pass.
 func (s *Service) housekeep(ctx context.Context, snap *config.Snapshot) {
-	if s.notify == nil || !s.notify.Enabled() {
+	if s.notify == nil {
 		return
 	}
 	open, err := s.notify.OpenProblems(ctx)
@@ -197,6 +197,7 @@ func (s *Service) watchChurn(ctx context.Context, open []notifications.ProblemSt
 				Title:  unitLabel(u) + " keeps restarting",
 				Detail: fmt.Sprintf("%d starts in the last hour", restarts),
 				Path:   "/settings/logs?unit=" + strings.TrimSuffix(u, ".service"),
+				Event:  "service.churn",
 			}); err != nil {
 				s.log.Warn("failed to report unit churn", "unit", u, "error", err)
 			}

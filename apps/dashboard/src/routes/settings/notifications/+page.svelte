@@ -7,8 +7,10 @@
   import Pill from "#lib/components/Pill.svelte";
   import RowMenu from "#lib/components/RowMenu.svelte";
   import { stamp } from "#lib/format.ts";
+  import { liveNotifications } from "#lib/live-notifications.svelte.ts";
   import {
     channelDraft,
+    channelFilterSummary,
     channelInput,
     channelKeys,
     channelState,
@@ -31,7 +33,7 @@
   const snapshot = createQuery(() => ({
     queryKey: notificationKeys.snapshot,
     queryFn: () => call<Snapshot>(api.GET("/notifications")),
-    refetchInterval: 30_000,
+    refetchInterval: () => (liveNotifications.connected ? false : 30_000),
   }));
   const failing = $derived(failingOf(snapshot.data));
 
@@ -95,23 +97,24 @@
   <section class="card" aria-labelledby="channels-h">
     <div class="flex flex-wrap items-baseline gap-2">
       <h2 id="channels-h" class="min-w-0 flex-1 font-semibold">
-        <Help label="Channels">Every channel that is on gets every notification. One that takes it is enough; a failing one shows here.</Help>
+        <Help label="Channels">Each enabled channel gets notifications allowed by its filter. Open problems always deliver. A failing channel shows here.</Help>
       </h2>
       <button type="button" class="btn btn-primary" onclick={() => (form = { channel: null })}>Add channel</button>
     </div>
     {#if channels.error}
       <p class="mt-1 text-bad">{describe(channels.error)}</p>
     {:else if channels.data && chans.length === 0}
-      <p class="mt-1 text-muted">No channels. Notifications are off.</p>
+      <p class="mt-1 text-muted">No channels. Notifications stay in the bell.</p>
     {:else}
       <ul class="mt-2 divide-y divide-line">
         {#each chans as c (c.id)}
           {@const t = tests[c.id]}
           {@const st = channelState(c, !!snapshot.data?.failing_channels[c.name], t)}
+          {@const filterSummary = channelFilterSummary(c)}
           <li class="flex flex-wrap items-center gap-x-3 gap-y-1 py-1.5">
             <span class="min-w-0 flex-1">
               <span class="block truncate">{c.name}</span>
-              <span class="block truncate text-xs text-muted">{KIND_LABEL[c.kind]} · {channelWhere(c)}</span>
+              <span class="block truncate text-xs text-muted">{KIND_LABEL[c.kind]} · {channelWhere(c)}{filterSummary ? ` · ${filterSummary}` : ""}</span>
               {#if t && t !== "running" && !t.ok}<span class="block text-xs break-words text-bad">{t.error}</span>{/if}
             </span>
             <span class="w-24 shrink-0"><Pill tone={st.tone}>{st.label}</Pill></span>

@@ -182,7 +182,7 @@ func (a Auditor) Apply(ctx context.Context, r Report) Outcome {
 		}
 		for _, p := range open {
 			if keep[p.Key] {
-				current = append(current, notifications.Problem{Key: p.Key, Title: p.Title, Path: pathFor(strings.TrimPrefix(p.Key, ProblemScope))})
+				current = append(current, notifications.Problem{Key: p.Key, Title: p.Title, Path: pathFor(strings.TrimPrefix(p.Key, ProblemScope)), Event: "doctor.check"})
 			}
 		}
 	}
@@ -219,7 +219,7 @@ func problemFor(res Result) notifications.Problem {
 	if !ok {
 		title = "🔧 " + res.Name
 	}
-	return notifications.Problem{Key: ProblemScope + res.Name, Title: title, Detail: tidyDetail(res.Detail), Path: pathFor(res.Name)}
+	return notifications.Problem{Key: ProblemScope + res.Name, Title: title, Detail: tidyDetail(res.Detail), Path: pathFor(res.Name), Event: "doctor.check"}
 }
 
 // tidyDetail trims a check detail for a phone screen: no ".service" noise,

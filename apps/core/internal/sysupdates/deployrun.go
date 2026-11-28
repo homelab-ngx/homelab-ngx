@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -44,13 +45,15 @@ type deployRun struct {
 	st deployStore
 	d  CoreDeploy
 
-	mu    sync.Mutex // guards d.Log and saved
-	saved time.Time
+	mu       sync.Mutex // guards d.Log and saved
+	saved    time.Time
+	notified bool
 
 	// Seams for tests.
 	answers       func(ctx context.Context) error // the daemon answers on its socket
 	restarts      func(ctx context.Context) int   // the daemon unit's automatic restarts; -1 unknown
-	restartsFrom  int                             // restarts before the daemon was restarted
+	notifyFn      func(ctx context.Context, d CoreDeploy)
+	restartsFrom  int // restarts before the daemon was restarted
 	healthTimeout time.Duration
 	healthEvery   time.Duration
 	now           func() time.Time
@@ -64,9 +67,18 @@ func RunDeploy(ctx context.Context, r cmdrunner.Runner, o RunOptions) error {
 		o: o, r: r, st: deployStore{path: o.State},
 		answers:       func(ctx context.Context) error { return daemonAnswers(ctx, o.Socket) },
 		restarts:      func(ctx context.Context) int { return daemonRestarts(ctx, r) },
+		notifyFn:      postDeployNotification(o.Socket, filepath.Dir(o.State)),
 		healthTimeout: 3 * time.Minute, healthEvery: 3 * time.Second, now: time.Now,
 	}
 	return x.run(ctx)
+}
+
+func (x *deployRun) notifyTerminal(ctx context.Context) {
+	if x.notified || x.notifyFn == nil {
+		return
+	}
+	x.notified = true
+	x.notifyFn(context.WithoutCancel(ctx), x.d)
 }
 
 func (x *deployRun) run(ctx context.Context) error {
@@ -91,6 +103,7 @@ func (x *deployRun) run(ctx context.Context) error {
 	if err := x.save(); err != nil {
 		return err
 	}
+	x.notifyTerminal(ctx)
 	if result != DeployHealthy {
 		return fmt.Errorf("core %s: %s: %s", x.o.Kind, result, reason)
 	}

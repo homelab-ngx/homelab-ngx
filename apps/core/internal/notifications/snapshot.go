@@ -11,7 +11,7 @@ const historyDepth = 200
 
 // Snapshot is the read-only view served to the dashboard. History lists
 // delivery attempts oldest first. failing_channels is derived: a channel fails
-// when its latest attempt failed, since the first failure of that streak.
+// when its latest attempted delivery failed, since the first failure of that streak.
 func (n *Notifier) Snapshot(ctx context.Context) (NotificationsSnapshot, error) {
 	out := NotificationsSnapshot{
 		Open:            map[string]OpenProblem{},
@@ -32,6 +32,9 @@ func (n *Notifier) Snapshot(ctx context.Context) (NotificationsSnapshot, error) 
 	for i := len(entries) - 1; i >= 0; i-- { // oldest first
 		e := entries[i]
 		for _, d := range e.Deliveries {
+			if d.Filtered {
+				continue
+			}
 			out.History = append(out.History, NotificationHistoryEntry{
 				At: d.At, Channel: d.Channel, Severity: e.Severity, Title: e.Title, Ok: d.OK, Error: d.Error,
 			})
@@ -44,6 +47,15 @@ func (n *Notifier) Snapshot(ctx context.Context) (NotificationsSnapshot, error) 
 		} else if _, failing := out.FailingChannels[h.Channel]; !failing {
 			out.FailingChannels[h.Channel] = ChannelFailure{Since: h.At, Error: h.Error}
 		}
+	}
+	if out.ReadUpTo, err = n.st.ReadUpTo(ctx); err != nil {
+		return out, err
+	}
+	if out.LatestID, err = n.st.LatestID(ctx); err != nil {
+		return out, err
+	}
+	if out.Unread, err = n.st.CountUnread(ctx, out.ReadUpTo); err != nil {
+		return out, err
 	}
 	return out, nil
 }

@@ -1328,12 +1328,12 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Open problems, failing channels and recent deliveries. */
+        /** Open problems, failing channels, unread count and recent deliveries. */
         get: operations["getNotifications"];
         put?: never;
         /**
          * Send a notification, or report/resolve a deduplicated problem.
-         * @description Single write entry point for scripts and units (`homelab notify`). `502` when every channel failed to deliver.
+         * @description Single write entry point for scripts and units (`homelab notify`). `502` when every attempted channel failed to deliver.
          */
         post: operations["applyNotification"];
         delete?: never;
@@ -1351,6 +1351,40 @@ export interface paths {
         };
         /** Notification history with delivery attempts (newest first). */
         get: operations["listNotificationLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/read": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark notification history read through an entry id. */
+        post: operations["markNotificationsRead"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/notifications/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Live notification events: an initial snapshot, then new entries and updated snapshots. */
+        get: operations["streamNotifications"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3150,6 +3184,7 @@ export interface components {
             /** Format: date-time */
             created_at: string;
             enabled: boolean;
+            filter: components["schemas"]["ChannelFilter"];
             /** @description Whether a token is stored; the token itself is never returned. */
             has_token: boolean;
             /** Format: int64 */
@@ -3166,12 +3201,23 @@ export interface components {
             /** Format: date-time */
             since: string;
         };
+        ChannelFilter: {
+            /**
+             * @description Minimum severity sent externally: all (alerts and info) or alert (alerts only). Open problems are always sent.
+             * @enum {string}
+             */
+            min_severity?: "all" | "alert";
+            /** @description Event kinds held back from this channel (updates, stacks, backups, services, security). Open problems are always sent. */
+            muted?: ("updates" | "stacks" | "backups" | "services" | "security")[];
+        };
         ChannelInput: {
             /** @description Webhook over https with a self-signed certificate: its pin. */
             cert_sha256?: string;
             /** @description Remove the stored token. */
             clear_token?: boolean;
             enabled?: boolean;
+            /** @description External delivery filter. Absent defaults on add and keeps the stored filter on edit. */
+            filter?: components["schemas"]["ChannelFilter"];
             /**
              * @description Set when adding; a channel keeps its kind.
              * @enum {string}
@@ -4043,6 +4089,19 @@ export interface components {
             /** @description Secure Boot is on. The image's kernel is not signed, so the installed system only starts with it off. */
             secure_boot: boolean;
         };
+        MarkReadRequest: {
+            /**
+             * Format: int64
+             * @description Log entry id to mark read through; 0 marks all current entries read.
+             */
+            up_to?: number;
+        };
+        MarkReadResponse: {
+            /** Format: int64 */
+            read_up_to: number;
+            /** Format: int64 */
+            unread: number;
+        };
         MetricFrames: {
             /** @description Each point's time in unix seconds, oldest first. */
             at: number[];
@@ -4190,6 +4249,7 @@ export interface components {
             at: string;
             channel: string;
             error: string;
+            filtered?: boolean;
             ok: boolean;
         };
         NotificationHistoryEntry: {
@@ -4208,24 +4268,36 @@ export interface components {
             at: string;
             body: string;
             deliveries: components["schemas"]["NotificationDelivery"][];
+            event?: string;
             /** Format: int64 */
             id: number;
             /** @description Problem key; null for plain sends. */
             key: string | null;
             /** @enum {string} */
             kind: "sent" | "opened" | "reminded" | "resolved";
+            path?: string;
             /** @enum {string} */
             severity: "alert" | "info";
             title: string;
+        };
+        NotificationPing: {
+            /** Format: date-time */
+            time: string;
         };
         NotificationsSnapshot: {
             failing_channels: {
                 [key: string]: components["schemas"]["ChannelFailure"];
             };
             history: components["schemas"]["NotificationHistoryEntry"][];
+            /** Format: int64 */
+            latest_id: number;
             open: {
                 [key: string]: components["schemas"]["OpenProblem"];
             };
+            /** Format: int64 */
+            read_up_to: number;
+            /** Format: int64 */
+            unread: number;
         };
         NotifyRequest: {
             /**
@@ -4234,6 +4306,8 @@ export interface components {
              */
             action: "send" | "report" | "resolve";
             body?: string;
+            /** @description Stable dotted event identifier, e.g. core.update. */
+            event?: string;
             /** @description Stable problem key, e.g. audit:disk. */
             key?: string;
             /** @description Dashboard path to open from the notification. */
@@ -12586,6 +12660,121 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NotificationLogEntry"][];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    markNotificationsRead: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MarkReadRequest"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarkReadResponse"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": {
+                        code?: string;
+                        detail?: string;
+                        instance?: string;
+                        /** Format: int32 */
+                        status: number;
+                        title: string;
+                        type: string;
+                    } & {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    streamNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": ({
+                        data: components["schemas"]["NotificationLogEntry"];
+                        /**
+                         * @description The event name.
+                         * @constant
+                         */
+                        event: "entry";
+                        /** @description The event ID. */
+                        id?: number | string;
+                        /** @description The retry time in milliseconds. */
+                        retry?: number;
+                    } | {
+                        data: components["schemas"]["NotificationPing"];
+                        /**
+                         * @description The event name.
+                         * @constant
+                         */
+                        event: "ping";
+                        /** @description The event ID. */
+                        id?: number | string;
+                        /** @description The retry time in milliseconds. */
+                        retry?: number;
+                    } | {
+                        data: components["schemas"]["NotificationsSnapshot"];
+                        /**
+                         * @description The event name.
+                         * @constant
+                         */
+                        event: "snapshot";
+                        /** @description The event ID. */
+                        id?: number | string;
+                        /** @description The retry time in milliseconds. */
+                        retry?: number;
+                    })[];
                 };
             };
             /** @description Error */

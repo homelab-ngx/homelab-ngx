@@ -24,7 +24,7 @@ describe("attentionItems", () => {
       attentionItems({
         services: [svc("media-plex.service", "active", { stack: "media" }), svc("media-old.service", "failed", { stack: "media", masked: true })],
         coreServices: [svc("homelab-daemon.service", "active")],
-        notifications: { open: {}, failing_channels: {}, history: [] },
+        notifications: { open: {}, failing_channels: {}, history: [], latest_id: 0, read_up_to: 0, unread: 0 },
         stacks: [stack("media", "up_to_date")],
         settingsStatus: { tiles: { domain: { state: "ok" } } },
         storage: { pools: [{ name: "tank", disks: [disk("sda", "rw", { passed: true, bad_sectors: 0 })] } as Schema<"Pool">], unassigned: [] } as unknown as Schema<"StorageStatus">,
@@ -41,6 +41,9 @@ describe("attentionItems", () => {
         open: { "disk:sdb:smart": { count: 1, opened_at: "2026-01-01T00:00:00Z", title: "Disk" } },
         failing_channels: { ntfy: { error: "502", since: "2026-01-01T00:00:00Z" } },
         history: [],
+        latest_id: 0,
+        read_up_to: 0,
+        unread: 0,
       },
       stacks: [stack("media", "commits_available"), stack("home", "needs_approval")],
       settingsStatus: { tiles: { updates: { state: "info" } } },

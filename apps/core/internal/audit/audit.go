@@ -586,7 +586,14 @@ func (s *Service) finish(ctx context.Context, id int64) {
 	if result == ResultPartial {
 		body += " Some areas could not be audited."
 	}
-	if _, err := s.notify.Send(ctx, notifications.Message{Severity: sev, Title: title, Body: body, Path: "/settings/security"}); err != nil {
+	if _, err := s.notify.Send(ctx, notifications.Message{
+		Severity: sev,
+		Title:    title,
+		Body:     body,
+		Path:     "/settings/security",
+		Event:    "security.audit",
+		Key:      fmt.Sprintf("security:audit:%d", id),
+	}); err != nil && !errors.Is(err, notifications.ErrNoChannels) {
 		s.log.Warn("security audit: notification not sent", "error", err)
 	}
 }

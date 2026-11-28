@@ -311,6 +311,12 @@ func TestRoomFor(t *testing.T) {
 type fakeNotifier struct {
 	scope   string
 	current []notifications.Problem
+	sent    []notifications.Message
+}
+
+func (f *fakeNotifier) Send(_ context.Context, m notifications.Message) (string, error) {
+	f.sent = append(f.sent, m)
+	return "", nil
 }
 
 func (f *fakeNotifier) Reconcile(_ context.Context, scope string, current []notifications.Problem) (notifications.Result, error) {

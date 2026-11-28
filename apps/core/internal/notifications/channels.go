@@ -41,10 +41,11 @@ type Channel struct {
 	Server string `json:"server,omitempty"`
 	Topic  string `json:"topic,omitempty"`
 	// URL and CertSHA256: webhook.
-	URL        string    `json:"url,omitempty"`
-	CertSHA256 string    `json:"cert_sha256,omitempty" doc:"Pin for a self-signed certificate: SHA-256 of its DER encoding, lowercase hex."`
-	HasToken   bool      `json:"has_token" doc:"Whether a token is stored; the token itself is never returned."`
-	CreatedAt  time.Time `json:"created_at"`
+	URL        string        `json:"url,omitempty"`
+	CertSHA256 string        `json:"cert_sha256,omitempty" doc:"Pin for a self-signed certificate: SHA-256 of its DER encoding, lowercase hex."`
+	HasToken   bool          `json:"has_token" doc:"Whether a token is stored; the token itself is never returned."`
+	Filter     ChannelFilter `json:"filter"`
+	CreatedAt  time.Time     `json:"created_at"`
 }
 
 // ChannelInput adds or changes a channel.
@@ -52,13 +53,14 @@ type ChannelInput struct {
 	Name string      `json:"name" minLength:"1" maxLength:"64"`
 	Kind ChannelKind `json:"kind" doc:"Set when adding; a channel keeps its kind."`
 	// Enabled: absent means enabled when adding and unchanged when editing.
-	Enabled    *bool  `json:"enabled,omitempty"`
-	Server     string `json:"server,omitempty" doc:"ntfy server; empty is https://ntfy.sh."`
-	Topic      string `json:"topic,omitempty" doc:"ntfy topic."`
-	URL        string `json:"url,omitempty" doc:"Webhook address the payload is POSTed to."`
-	CertSHA256 string `json:"cert_sha256,omitempty" doc:"Webhook over https with a self-signed certificate: its pin."`
-	Token      string `json:"token,omitempty" doc:"Bearer token (ntfy access token or webhook token). Empty keeps the stored one when editing."`
-	ClearToken bool   `json:"clear_token,omitempty" doc:"Remove the stored token."`
+	Enabled    *bool          `json:"enabled,omitempty"`
+	Server     string         `json:"server,omitempty" doc:"ntfy server; empty is https://ntfy.sh."`
+	Topic      string         `json:"topic,omitempty" doc:"ntfy topic."`
+	URL        string         `json:"url,omitempty" doc:"Webhook address the payload is POSTed to."`
+	CertSHA256 string         `json:"cert_sha256,omitempty" doc:"Webhook over https with a self-signed certificate: its pin."`
+	Token      string         `json:"token,omitempty" doc:"Bearer token (ntfy access token or webhook token). Empty keeps the stored one when editing."`
+	ClearToken bool           `json:"clear_token,omitempty" doc:"Remove the stored token."`
+	Filter     *ChannelFilter `json:"filter,omitempty" doc:"External delivery filter. Absent defaults on add and keeps the stored filter on edit."`
 }
 
 // ChannelTest is the answer of one test send.
@@ -68,10 +70,11 @@ type ChannelTest struct {
 }
 
 type channelConfig struct {
-	Server     string `json:"server,omitempty"`
-	Topic      string `json:"topic,omitempty"`
-	URL        string `json:"url,omitempty"`
-	CertSHA256 string `json:"cert_sha256,omitempty"`
+	Server     string        `json:"server,omitempty"`
+	Topic      string        `json:"topic,omitempty"`
+	URL        string        `json:"url,omitempty"`
+	CertSHA256 string        `json:"cert_sha256,omitempty"`
+	Filter     ChannelFilter `json:"filter,omitzero"`
 }
 
 type channelSecret struct {
@@ -119,13 +122,21 @@ func httpURL(field, raw string) (*url.URL, error) {
 	return u, nil
 }
 
-// check validates in for kind and returns the stored settings.
-func check(kind ChannelKind, in ChannelInput) (string, channelConfig, error) {
+// check validates in for kind and returns the stored settings, falling back
+// to baseFilter when in.Filter is nil.
+func check(kind ChannelKind, in ChannelInput, baseFilter ChannelFilter) (string, channelConfig, error) {
 	name := strings.TrimSpace(in.Name)
 	if name == "" || len(name) > 64 || strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 || r == 0x7f }) {
 		return "", channelConfig{}, invalidf("name: 1 to 64 printable characters")
 	}
-	var c channelConfig
+	f := baseFilter
+	if in.Filter != nil {
+		if err := in.Filter.Validate(); err != nil {
+			return "", channelConfig{}, err
+		}
+		f = *in.Filter
+	}
+	c := channelConfig{Filter: f.Normalize()}
 	switch kind {
 	case KindNtfy:
 		c.Server = strings.TrimRight(strings.TrimSpace(in.Server), "/")
@@ -183,7 +194,7 @@ func view(row store.NotificationChannel, hasToken bool) Channel {
 	return Channel{
 		ID: row.ID, Name: row.Name, Kind: ChannelKind(row.Kind), Enabled: row.Enabled,
 		Server: cfg.Server, Topic: cfg.Topic, URL: cfg.URL, CertSHA256: cfg.CertSHA256,
-		HasToken: hasToken, CreatedAt: time.UnixMilli(row.CreatedAt),
+		HasToken: hasToken, Filter: cfg.Filter.Normalize(), CreatedAt: time.UnixMilli(row.CreatedAt),
 	}
 }
 
@@ -213,7 +224,7 @@ func isUnique(err error) bool {
 
 // Create adds a channel.
 func (c *Channels) Create(ctx context.Context, in ChannelInput) (Channel, error) {
-	name, cfg, err := check(in.Kind, in)
+	name, cfg, err := check(in.Kind, in, ChannelFilter{})
 	if err != nil {
 		return Channel{}, err
 	}
@@ -254,7 +265,9 @@ func (c *Channels) Update(ctx context.Context, id int64, in ChannelInput) (Chann
 	if in.Kind != "" && in.Kind != kind {
 		return Channel{}, invalidf("kind: a channel keeps its kind; add a new one")
 	}
-	name, cfg, err := check(kind, in)
+	var oldCfg channelConfig
+	_ = json.Unmarshal([]byte(row.Config), &oldCfg)
+	name, cfg, err := check(kind, in, oldCfg.Filter)
 	if err != nil {
 		return Channel{}, err
 	}
@@ -330,7 +343,9 @@ func (c *Channels) Targets(ctx context.Context) ([]Target, error) {
 	var out []Target
 	for _, r := range rows {
 		if r.Enabled {
-			out = append(out, Target{Name: r.Name, Sender: c.sender(r)})
+			var cfg channelConfig
+			_ = json.Unmarshal([]byte(r.Config), &cfg)
+			out = append(out, Target{Name: r.Name, Sender: c.sender(r), Filter: cfg.Filter.Normalize()})
 		}
 	}
 	return out, nil

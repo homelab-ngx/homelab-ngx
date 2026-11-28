@@ -8,6 +8,7 @@ import (
 	"slices"
 	"time"
 
+	"homelab-ngx.com/core/internal/notifications"
 	"homelab-ngx.com/core/internal/storage/bcachefs"
 )
 
@@ -102,6 +103,7 @@ func (s *Service) failed(rec removal, err error) {
 	}}
 	s.opMu.Unlock()
 	s.invalidate()
+	s.notifyRemoval(s.bg, rec, err)
 }
 
 func (s *Service) setPhase(op *poolOp, phase string) {
@@ -160,6 +162,32 @@ func (s *Service) remove(ctx context.Context, op *poolOp) {
 	}
 	s.opMu.Unlock()
 	s.invalidate()
+	s.notifyRemoval(clean, rec, err)
+}
+
+func (s *Service) notifyRemoval(ctx context.Context, rec removal, err error) {
+	if s.notify == nil {
+		return
+	}
+	msg := notifications.Message{
+		Severity: notifications.Info,
+		Title:    "Disk " + rec.Name + " removed from pool",
+		Body:     rec.Disk,
+		Path:     "/storage",
+		Event:    "storage.disk",
+		Key:      "disk-remove:" + rec.Name,
+	}
+	if err != nil {
+		msg.Severity = notifications.Alert
+		msg.Title = "Disk " + rec.Name + " removal failed"
+		msg.Body = err.Error()
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if _, nerr := s.notify.Send(ctx, msg); nerr != nil && !errors.Is(nerr, notifications.ErrNoChannels) {
+		s.log.Warn("storage notification not sent", "disk", rec.Disk, "error", nerr)
+	}
 }
 
 // evacuate waits for the kernel to move the disk's data away, reading how

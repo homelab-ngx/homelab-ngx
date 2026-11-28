@@ -19,6 +19,9 @@ type NotifyRequest struct {
 	Action NotifyRequestAction `json:"action" doc:"send pushes one message; report opens or updates a deduplicated problem (needs key and title); resolve closes one (needs key)."`
 	Body   string              `json:"body,omitempty"`
 
+	// Event Stable dotted event identifier, e.g. `core.update`.
+	Event string `json:"event,omitempty" doc:"Stable dotted event identifier, e.g. core.update."`
+
 	// Key Stable problem key, e.g. `audit:disk`.
 	Key string `json:"key,omitempty" doc:"Stable problem key, e.g. audit:disk."`
 
@@ -52,6 +55,24 @@ type NotifyResponse struct {
 	Resolved []string `json:"resolved"`
 }
 
+// MarkReadRequest advances the read marker to at least UpTo (0 marks up to
+// the latest log entry).
+type MarkReadRequest struct {
+	UpTo int64 `json:"up_to,omitempty" minimum:"0" doc:"Log entry id to mark read through; 0 marks all current entries read."`
+}
+
+// MarkReadResponse returns the persisted read marker and remaining unread count.
+type MarkReadResponse struct {
+	ReadUpTo int64 `json:"read_up_to"`
+	Unread   int   `json:"unread"`
+}
+
+// NotificationPing is sent periodically over the notification SSE stream so
+// idle connections stay open through proxies.
+type NotificationPing struct {
+	Time time.Time `json:"time"`
+}
+
 // OpenProblem is one open problem in the snapshot.
 type OpenProblem struct {
 	Count    int       `json:"count"`
@@ -81,15 +102,19 @@ type NotificationHistoryEntry struct {
 type NotificationsSnapshot struct {
 	FailingChannels map[string]ChannelFailure  `json:"failing_channels"`
 	History         []NotificationHistoryEntry `json:"history"`
+	LatestID        int64                      `json:"latest_id"`
 	Open            map[string]OpenProblem     `json:"open"`
+	ReadUpTo        int64                      `json:"read_up_to"`
+	Unread          int                        `json:"unread"`
 }
 
-// NotificationDelivery is one delivery attempt of a log entry.
+// NotificationDelivery is one delivery attempt (or filter skip) of a log entry.
 type NotificationDelivery struct {
-	At      time.Time `json:"at"`
-	Channel string    `json:"channel"`
-	Error   string    `json:"error"`
-	Ok      bool      `json:"ok"`
+	At       time.Time `json:"at"`
+	Channel  string    `json:"channel"`
+	Error    string    `json:"error"`
+	Filtered bool      `json:"filtered,omitempty"`
+	Ok       bool      `json:"ok"`
 }
 
 // NotificationLogEntry is one notification log entry with its deliveries.
@@ -97,11 +122,13 @@ type NotificationLogEntry struct {
 	At         time.Time              `json:"at"`
 	Body       string                 `json:"body"`
 	Deliveries []NotificationDelivery `json:"deliveries"`
+	Event      string                 `json:"event,omitempty"`
 	Id         int64                  `json:"id"`
 
 	// Key Problem key; null for plain sends.
 	Key      *string                  `json:"key" doc:"Problem key; null for plain sends."`
 	Kind     NotificationLogEntryKind `json:"kind"`
+	Path     string                   `json:"path,omitempty"`
 	Severity Severity                 `json:"severity"`
 	Title    string                   `json:"title"`
 }

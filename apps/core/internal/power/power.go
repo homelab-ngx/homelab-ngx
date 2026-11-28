@@ -10,6 +10,7 @@ package power
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -21,6 +22,7 @@ import (
 
 	"homelab-ngx.com/core/internal/cmdrunner"
 	"homelab-ngx.com/core/internal/httpx"
+	"homelab-ngx.com/core/internal/notifications"
 )
 
 // Stacks is the stacks the sequence stops (*stacks.Service).
@@ -96,6 +98,7 @@ type Service struct {
 	meta    Meta
 	r       cmdrunner.Runner
 	busy    []func(context.Context) []string
+	notify  Notifier
 	log     *slog.Logger
 	now     func() time.Time
 	bootID  string
@@ -331,6 +334,7 @@ func (s *Service) sequence(ctx context.Context, a PowerAction, kill bool) bool {
 	s.st = PowerStatus{Action: a, Phase: phase, StartedAt: &now, Steps: []PowerStep{}}
 	s.downSeen = make(chan struct{})
 	s.mu.Unlock()
+	s.emitAction(ctx, a, "")
 
 	if len(bnames) > 0 {
 		for _, n := range bnames {
@@ -511,7 +515,46 @@ func (s *Service) fail(msg string) {
 	s.log.Error("shutdown failed", "error", msg)
 	s.mu.Lock()
 	s.st.Phase, s.st.Error = PhaseFailed, msg
+	action := s.st.Action
 	s.mu.Unlock()
+	s.emitAction(s.ctx, action, msg)
+}
+
+// Notifier receives power transition events (*notifications.Notifier).
+type Notifier interface {
+	Send(ctx context.Context, m notifications.Message) (string, error)
+}
+
+// SetNotifier sets the notification sink for host power events.
+func (s *Service) SetNotifier(n Notifier) { s.notify = n }
+
+func (s *Service) emitAction(ctx context.Context, a PowerAction, failMsg string) {
+	if s.notify == nil {
+		return
+	}
+	sev := notifications.Info
+	title := "Host rebooting"
+	if a == PowerOff {
+		title = "Host shutting down"
+	}
+	if failMsg != "" {
+		sev = notifications.Alert
+		title = "Host reboot failed"
+		if a == PowerOff {
+			title = "Host poweroff failed"
+		}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	nctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if _, err := s.notify.Send(nctx, notifications.Message{
+		Severity: sev, Title: title, Body: failMsg,
+		Path: "/settings/system", Event: "host.power", Key: "host:power",
+	}); err != nil && !errors.Is(err, notifications.ErrNoChannels) {
+		s.log.Warn("power notification not sent", "error", err)
+	}
 }
 
 // Status is the shutdown under way, if any, with what the countdown needs.

@@ -10,6 +10,23 @@ import (
 	"strings"
 )
 
+const countUnreadNotifications = `-- name: CountUnreadNotifications :one
+SELECT COUNT(*) FROM notifications n
+WHERE n.id > ?
+  AND NOT (
+    n.kind IN ('opened', 'reminded')
+    AND n.key IS NOT NULL
+    AND EXISTS (SELECT 1 FROM notification_problems p WHERE p.key = n.key)
+  )
+`
+
+func (q *Queries) CountUnreadNotifications(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRowContext(ctx, countUnreadNotifications, id)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const deleteNotificationChannel = `-- name: DeleteNotificationChannel :execrows
 DELETE FROM notification_channels WHERE id = ?
 `
@@ -51,7 +68,8 @@ func (q *Queries) GetNotificationChannel(ctx context.Context, id int64) (Notific
 }
 
 const insertNotification = `-- name: InsertNotification :one
-INSERT INTO notifications (at, key, kind, severity, title, body) VALUES (?, ?, ?, ?, ?, ?)
+INSERT INTO notifications (at, key, kind, event, path, severity, title, body)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 RETURNING id
 `
 
@@ -59,6 +77,8 @@ type InsertNotificationParams struct {
 	At       int64
 	Key      *string
 	Kind     string
+	Event    string
+	Path     string
 	Severity string
 	Title    string
 	Body     string
@@ -69,6 +89,8 @@ func (q *Queries) InsertNotification(ctx context.Context, arg InsertNotification
 		arg.At,
 		arg.Key,
 		arg.Kind,
+		arg.Event,
+		arg.Path,
 		arg.Severity,
 		arg.Title,
 		arg.Body,
@@ -115,7 +137,8 @@ func (q *Queries) InsertNotificationChannel(ctx context.Context, arg InsertNotif
 }
 
 const insertNotificationDelivery = `-- name: InsertNotificationDelivery :exec
-INSERT INTO notification_deliveries (notification_id, at, channel, ok, error) VALUES (?, ?, ?, ?, ?)
+INSERT INTO notification_deliveries (notification_id, at, channel, ok, filtered, error)
+VALUES (?, ?, ?, ?, ?, ?)
 `
 
 type InsertNotificationDeliveryParams struct {
@@ -123,6 +146,7 @@ type InsertNotificationDeliveryParams struct {
 	At             int64
 	Channel        string
 	Ok             bool
+	Filtered       bool
 	Error          string
 }
 
@@ -132,9 +156,21 @@ func (q *Queries) InsertNotificationDelivery(ctx context.Context, arg InsertNoti
 		arg.At,
 		arg.Channel,
 		arg.Ok,
+		arg.Filtered,
 		arg.Error,
 	)
 	return err
+}
+
+const latestNotificationID = `-- name: LatestNotificationID :one
+SELECT CAST(COALESCE(MAX(id), 0) AS INTEGER) FROM notifications
+`
+
+func (q *Queries) LatestNotificationID(ctx context.Context) (int64, error) {
+	row := q.db.QueryRowContext(ctx, latestNotificationID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const listNotificationChannels = `-- name: ListNotificationChannels :many
@@ -173,7 +209,7 @@ func (q *Queries) ListNotificationChannels(ctx context.Context) ([]NotificationC
 }
 
 const listNotificationDeliveries = `-- name: ListNotificationDeliveries :many
-SELECT id, notification_id, at, channel, ok, error FROM notification_deliveries WHERE notification_id IN (/*SLICE:ids*/?)
+SELECT id, notification_id, at, channel, ok, error, filtered FROM notification_deliveries WHERE notification_id IN (/*SLICE:ids*/?)
 ORDER BY notification_id, id
 `
 
@@ -203,6 +239,7 @@ func (q *Queries) ListNotificationDeliveries(ctx context.Context, ids []int64) (
 			&i.Channel,
 			&i.Ok,
 			&i.Error,
+			&i.Filtered,
 		); err != nil {
 			return nil, err
 		}
@@ -251,7 +288,7 @@ func (q *Queries) ListNotificationProblems(ctx context.Context) ([]NotificationP
 }
 
 const listNotifications = `-- name: ListNotifications :many
-SELECT id, at, "key", kind, severity, title, body FROM notifications ORDER BY at DESC, id DESC LIMIT ?
+SELECT id, at, "key", kind, severity, title, body, event, path FROM notifications ORDER BY at DESC, id DESC LIMIT ?
 `
 
 func (q *Queries) ListNotifications(ctx context.Context, limit int64) ([]Notification, error) {
@@ -271,6 +308,8 @@ func (q *Queries) ListNotifications(ctx context.Context, limit int64) ([]Notific
 			&i.Severity,
 			&i.Title,
 			&i.Body,
+			&i.Event,
+			&i.Path,
 		); err != nil {
 			return nil, err
 		}
@@ -286,7 +325,7 @@ func (q *Queries) ListNotifications(ctx context.Context, limit int64) ([]Notific
 }
 
 const listNotificationsBefore = `-- name: ListNotificationsBefore :many
-SELECT id, at, "key", kind, severity, title, body FROM notifications WHERE id < ? ORDER BY id DESC LIMIT ?
+SELECT id, at, "key", kind, severity, title, body, event, path FROM notifications WHERE id < ? ORDER BY id DESC LIMIT ?
 `
 
 type ListNotificationsBeforeParams struct {
@@ -311,6 +350,8 @@ func (q *Queries) ListNotificationsBefore(ctx context.Context, arg ListNotificat
 			&i.Severity,
 			&i.Title,
 			&i.Body,
+			&i.Event,
+			&i.Path,
 		); err != nil {
 			return nil, err
 		}
