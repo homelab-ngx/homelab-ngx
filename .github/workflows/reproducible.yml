@@ -90,6 +90,22 @@ jobs:
           cp image/out/core/homelab-core_"$VERSION".raw "$rel/core/"
           (cd "$rel" && LC_ALL=C sha256sum homelab-ngx_"$VERSION".img homelab_"$VERSION".* core/homelab-core_"$VERSION".raw > "$out/SHA256SUMS")
           printf '%s\n' "$VERSION" > "$out/VERSION"
+          {
+            LC_ALL=C sha256sum image/out/initrd.cpio.zst
+            python3 -c '
+          import hashlib, struct, sys
+          data = open(sys.argv[1], "rb").read()
+          pe = struct.unpack_from("<I", data, 0x3C)[0]
+          nsec = struct.unpack_from("<H", data, pe + 6)[0]
+          opt = struct.unpack_from("<H", data, pe + 20)[0]
+          off = pe + 24 + opt
+          print(f"{hashlib.sha256(data[:off + nsec * 40]).hexdigest()}  PE-headers ({off + nsec * 40} bytes)")
+          for i in range(nsec):
+              name, vsz, vaddr, rsz, roff = struct.unpack_from("<8sIIII", data, off + i * 40)
+              sec = data[roff:roff + rsz]
+              print(f"{hashlib.sha256(sec).hexdigest()}  {name.rstrip(bytes(1)).decode()} ({rsz} bytes)")
+          ' "$rel/homelab_$VERSION.efi"
+          } > "$out/DETAILS"
           { echo "### Runner ${{ matrix.runner }} ($VERSION)"; echo '```'; cat "$out/SHA256SUMS"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -120,7 +136,11 @@ jobs:
           v1=$(cat "$RUNNER_TEMP/r1/VERSION")
           v2=$(cat "$RUNNER_TEMP/r2/VERSION")
           [ "$v1" = "$v2" ] || { echo "::error::runners built different versions: $v1 vs $v2"; exit 1; }
-          diff -u "$RUNNER_TEMP/r1/SHA256SUMS" "$RUNNER_TEMP/r2/SHA256SUMS"
+          if ! diff -u "$RUNNER_TEMP/r1/SHA256SUMS" "$RUNNER_TEMP/r2/SHA256SUMS"; then
+            echo "=== artifact details diff ==="
+            diff -u "$RUNNER_TEMP/r1/DETAILS" "$RUNNER_TEMP/r2/DETAILS" || true
+            exit 1
+          fi
           {
             echo "## Reproducible build: $v1"
             echo '```'

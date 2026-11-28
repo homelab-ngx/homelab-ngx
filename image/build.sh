@@ -99,6 +99,21 @@ if ! $sudo test -e "$buildroot/.ready"; then
   $sudo touch "$buildroot/.ready"
 fi
 
+# mkosi 27.1 concatenates microcode files in directory order (fixed upstream
+# in b27c908b13). Patch the build root until Snapshot= moves past 27.1.
+nspawn /usr/bin/python3 -c '
+import pathlib, py_compile, mkosi
+p = pathlib.Path(mkosi.__file__)
+s = p.read_text()
+t = s.replace("for p in amd.iterdir():", "for p in sorted(amd.iterdir()):").replace(
+    "for p in intel.iterdir():", "for p in sorted(intel.iterdir()):"
+)
+if t != s:
+    p.write_text(t)
+    for opt in (0, 1):
+        py_compile.compile(str(p), optimize=opt, doraise=True)
+'
+
 echo "image $version (snapshot $snapshot, $(nspawn /usr/bin/mkosi --version))"
 mkdir -p "$out/core"
 # An earlier build of the same version leaves root files with other UUIDs,
